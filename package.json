@@ -1,0 +1,43 @@
+{
+  "name": "browser-extension-bisect",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Binary-search faulty browser extensions across Chrome and Firefox.",
+  "type": "module",
+  "scripts": {
+    "dev": "wxt",
+    "dev:firefox": "wxt -b firefox",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "typecheck": "wxt prepare && vue-tsc --noEmit",
+    "test:unit": "node scripts/run-unit-tests.mjs",
+    "build:chrome": "cross-env EXT_TEST_MODE=1 wxt build",
+    "build:firefox": "cross-env EXT_TEST_MODE=1 wxt build -b firefox",
+    "build:all": "npm run build:chrome && npm run build:firefox",
+    "build:prod:chrome": "wxt build",
+    "build:prod:firefox": "wxt build -b firefox",
+    "test:e2e": "node tests/e2e/verify.mjs --json",
+    "agent:verify:chrome": "npm run build:chrome && node tests/e2e/verify.mjs --browser=chrome --json",
+    "agent:verify:firefox": "npm run build:firefox && node tests/e2e/verify.mjs --browser=firefox --json",
+    "agent:verify": "npm run lint && npm run typecheck && npm run test:unit && npm run build:all && npm run test:e2e",
+    "agent:inspect": "node tests/e2e/inspect.mjs",
+    "postinstall": "wxt prepare"
+  },
+  "dependencies": {
+    "@webext-core/messaging": "^2.3.0",
+    "vue": "^3.5.29"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.5",
+    "@vitejs/plugin-vue": "^6.0.11",
+    "@vue/test-utils": "^2.4.6",
+    "@wxt-dev/module-vue": "^1.0.3",
+    "cross-env": "^10.1.0",
+    "happy-dom": "^20.0.11",
+    "puppeteer": "^24.37.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "vue-tsc": "^3.2.5",
+    "wxt": "^0.21.5"
+  }
+}
