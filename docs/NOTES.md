@@ -1,0 +1,102 @@
+# Notes
+
+Gotchas, oddities, and verified findings that are not open issues (`ISSUES.md`).
+Read this before a live or coding session — the quirks below cost real time to rediscover.
+
+<!--
+NOTES.md MAINTENANCE GUIDE (FOR AGENTS & CONTRIBUTORS)
+
+PURPOSE & SCOPE
+- Audience: Future LLM agents and developers before coding, debugging, or running live sessions.
+- Is: A dense operational reference of verified gotchas, non-obvious invariants, environment/tooling quirks, and fragile coupling that cost real time to rediscover.
+- Is NOT: An issue tracker (`ISSUES.md`), architecture log (ADRs), changelog, TODO list, or general API tutorial.
+
+UPDATE TRIGGERS
+Update this file at the end of a session (or immediately during work) whenever you:
+- Discover and verify a non-obvious failure mode, race, timeout, platform quirk, or workaround.
+- Change a default, path, config key, ordering invariant, or constraint already documented here.
+- Fix a bug whose regression prevention relies on preserving a hidden constraint (cite `(ISS-NNN, fixed YYYY-MM-DD)`).
+- Retire a component, flag, or workaround, making its existing note obsolete.
+
+INCLUSION / EXCLUSION CRITERIA
+- Include:
+  * Silent failure modes and ordering invariants ("must run X before Y because Z silently breaks").
+  * Host/OS/tool/SDK version quirks, port/path/permissions traps, and test-harness constraints.
+  * Intentional design traps where the "obvious" refactor breaks a subtle contract.
+- Exclude:
+  * Open bugs, unverified theories, or unresolved regressions (file in `ISSUES.md` instead).
+  * Routine feature summaries, git-history narration, or facts obvious from reading one short function.
+  * Speculative advice not directly observed in code, logs, or test runs.
+
+STRUCTURE & FORMATTING
+- Top-level structure: Keep `# Notes` and the short preamble visible; keep all entries under `## <component-or-area>` headings.
+- Headings: Use short, lowercase component/area names (no `###` subheadings; omit empty `##` sections).
+- Numbering/IDs: Do NOT assign numeric IDs (no `NOTE-01`). Use unnumbered `- ` bullets under each `##` heading.
+- Sub-items: Keep bullets flat. Use indented numbered items (`  1. `) only for 2-4 tightly coupled consequences of a single root cause.
+- Bullet anatomy:
+  `- **<Bold lead-in rule or quirk>** [(YYYY-MM-DD[, ref])]: <mechanism, what breaks if violated, exact symbol/path/workaround>.`
+- Dates & versions: Use ISO `YYYY-MM-DD` for time-sensitive observations or fixes; pin exact versions when version-specific (e.g., `SDK 2.x`).
+- Cross-links: Put symbols, files, keys, and env vars in inline backticks; reference `(ISS-NNN, fixed YYYY-MM-DD)` or `(ADR-NNN)` inline when relevant.
+
+QUALITY & STYLE RULES
+- Tone & tense: Terse, factual, imperative or present tense for active invariants; past tense only for the observed failure/repro.
+- Brevity: Target 1-4 sentences (one paragraph) per bullet.
+- Evidence required: State concrete thresholds, paths, error behaviors, and symbols rather than vague adjectives ("slow", "broken"). Always pair a prohibition ("never do X") with its failure mode and the safe alternative.
+
+LIFECYCLE & WORKFLOW
+- Add: Append a new bullet under the most specific existing `## <component-or-area>` (or create a new `##` section). Merge closely related facts into one bullet instead of fragmenting.
+- Edit in place: When behavior, defaults, or paths change, rewrite the existing bullet in place and update its date. Never append a second bullet that contradicts an older one.
+- Promote/Migrate: Move unresolved defects to `ISSUES.md`. If an architectural choice gets an ADR, link `(ADR-NNN)` and keep only the operational footgun here.
+- Retire: Delete bullets when the underlying component or quirk is removed, unless residual disk/state cleanup remains relevant (narrow the note to that residue).
+
+ANTI-PATTERNS
+- Dumping raw terminal logs, multi-paragraph essays, or fenced code blocks into bullets.
+- Recording unverified guesses, open bugs, or personal workspace state irrelevant to other sessions.
+- Writing "Do not change X" without explaining *what breaks* and *what to do instead*.
+- Leaving stale bullets intact after refactoring, or leaving empty `##` sections behind.
+
+EXAMPLE LAYOUT (4-SPACE INDENTED)
+
+    ## worker-runtime
+
+    - **Flush queue state before releasing the process lock** (`runtime.stop`, 2026-05-14): `clear_dirty_flags` is unscoped; releasing the lock first lets a newly spawned worker lose dirty state written concurrently. Always join background threads and flush while the lock is held.
+    - **Loopback probes must target `127.0.0.1`, not `localhost`** (ISS-12, fixed 2026-06-02): On dual-stack hosts where the service binds IPv4 only, `localhost` stalls on IPv6 connect timeouts (~1 s per request). Pass URLs through `net.ipv4_loopback` before calling the HTTP client.
+-->
+
+---
+
+## vitest
+
+- **Never run Vitest in watch mode** (2026-11-24): `npx vitest` starts a watcher and hangs an agent session; always run `npm run test:unit`, which spawns `vitest run` through `scripts/run-unit-tests.mjs`.
+- **Windows drive-letter casing loads two Vitest copies** (2026-11-24): a shell that spawns with a lowercase cwd (`d:\...`) while Node resolves modules as `D:\...` fails every test with `Vitest failed to define a suite` / `Cannot read properties of undefined (reading 'config')`. `scripts/run-unit-tests.mjs` normalizes the cwd via `realpathSync.native(process.cwd())`; keep `test:unit` routed through it.
+- **Import WXT test helpers from their subpaths only** (2026-11-24): `WxtVitest` comes from `wxt/testing/vitest-plugin` and `fakeBrowser` from `wxt/testing/fake-browser`; the `wxt/testing` barrel no longer exists, so bare imports break typecheck and runtime.
+- **`WxtVitest()` does not install `@vitejs/plugin-vue`** (2026-11-24): `vitest.config.ts` registers `vue()` explicitly so `.vue` SFCs compile; removing it silently fails every popup test.
+
+## unit-test-bridge
+
+- **`fakeBrowser.runtime.sendMessage` lacks the promise-returning listener protocol** (2026-11-24): `@webext-core/messaging` round-trips hang in unit tests; call `installMessagingBridge()` from `tests/unit/helpers/messaging-bridge.ts` first, and reset between tests with `messenger.removeAllListeners()` plus `fakeBrowser.reset()`.
+
+## wxt
+
+- **Firefox identity is configured in `wxt.config.ts`, never in generated manifests** (2026-11-24): the manifest callback adds `browser_specific_settings.gecko.id` only for `browser === 'firefox'`; edits to `.output/*/manifest.json` are lost on the next build.
+
+## test-builds
+
+- **Test hooks are compiled in only under `EXT_TEST_MODE=1`** (2026-11-24): `?tabId=` handling, the `data-ext-bisect-tab-id` marker, and `[EXT_BG_ERR]` logging exist only in `build:chrome`/`build:firefox` output; `build:prod:*` strips them, so E2E assertions must target test-mode builds.
+
+## e2e-chrome
+
+- **Install Chrome extensions after launch, never via launch arguments** (2026-11-24): passing `enableExtensions: [path]` inside `launch()` crashes the browser on Windows with `Extensions.loadUnpacked: Target closed`. Launch with `enableExtensions: true`, `pipe: true`, and `--enable-unsafe-extension-debugging`, then call `browser.installExtension(extPath)`.
+- **CDP-only Puppeteer APIs must stay behind the `browserName` branch** (2026-11-24): `page.triggerExtensionAction()`, `browser.extensions()`, `frame.extensionRealms()`, and `service_worker` targets do not exist over Firefox BiDi and throw; `tests/e2e/harness.mjs` is the only place that touches them.
+
+## e2e-firefox
+
+- **`page.goto` never resolves for `moz-extension://` documents over BiDi** (2026-11-24): `waitUntil: 'domcontentloaded' | 'load'` hangs forever; use `gotoExtensionPage()` / `reloadExtensionPage()`, which navigate with `commit` (with a Chrome fallback) and then poll for the app-root element.
+- **`page.url()` returns `about:blank` for extension documents over BiDi** (2026-11-24): read `location.href` via `page.evaluate` whenever the URL matters.
+- **Determinism requires the pinned extension UUID** (2026-11-24): launch with `xpinstall.signatures.required: false` and `extensions.webextensions.uuids` mapping the manifest `gecko.id` to `FIXED_FIREFOX_UUID`; `installExtension()` must return that same id or the session is invalid.
+
+## e2e-harness
+
+- **Every run must stay local and clean up** (2026-11-24): `browser.close()` and the fixture-server shutdown live in `finally` blocks so no headless browsers leak; `verify.mjs` wipes `.agent-artifacts/` at the start of each run; all pages come from `startFixtureServer()` on `127.0.0.1:0`, never live third-party sites.
+- **Behaviour changes must update both test layers** (2026-11-24): every extension behaviour change extends the Vitest tests in `tests/unit/` and the `runScenario` steps in `tests/e2e/verify.mjs`; updating only one layer lets the gate pass against stale expectations.
+
