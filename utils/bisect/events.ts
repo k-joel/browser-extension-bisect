@@ -1,5 +1,14 @@
 import { storage } from 'wxt/utils/storage';
-import type { BisectEvent, BisectLog, CapabilityReport, SessionStatus, SessionView, Trial, Verdict } from './domain';
+import type {
+  BisectEvent,
+  BisectLog,
+  CapabilityReport,
+  ManualBatch,
+  SessionStatus,
+  SessionView,
+  Trial,
+  Verdict,
+} from './domain';
 import { type AnsweredTrial, clearedOf, estimateTrials, narrowSuspects, nextOutcome } from './engine';
 
 export const BISECT_LOG_KEY = 'local:bisectLog' as const;
@@ -82,6 +91,7 @@ interface SessionAccumulator {
   ambiguityIds: string[];
   abortReason: SessionView['abortReason'];
   testTab: SessionView['testTab'];
+  manualBatch: ManualBatch | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -145,6 +155,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       trial.appliedAt = event.at;
       trial.errors = event.payload.errors;
       trial.manual = event.payload.manual === true;
+      acc.manualBatch = trial.manual ? (event.payload.manualBatch ?? null) : null;
       acc.status = trial.manual ? 'awaiting-manual-toggle' : 'awaiting-verdict';
       return;
     }
@@ -159,6 +170,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       trial.verdict = null;
       trial.appliedAt = null;
       trial.errors = [];
+      acc.manualBatch = null;
       resetOutcome(acc);
       acc.status = 'trial';
       return;
@@ -178,6 +190,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       return;
     case 'session-resumed': {
       if (event.payload.reason === 'manual-verified') {
+        acc.manualBatch = null;
         acc.status = 'awaiting-verdict';
         return;
       }
@@ -194,6 +207,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       acc.status = 'inconclusive';
       return;
     case 'session-reset':
+      acc.manualBatch = null;
       acc.status = acc.abortReason === null ? 'restored' : 'aborted';
       return;
   }
@@ -261,6 +275,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     ambiguityIds: [],
     abortReason: null,
     testTab: null,
+    manualBatch: null,
     createdAt: 0,
     updatedAt: 0,
   };
@@ -283,6 +298,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     ambiguityIds: acc.ambiguityIds,
     abortReason: acc.abortReason,
     testTab: acc.testTab,
+    manualBatch: acc.manualBatch,
     progress:
       acc.originalEnabledIds.length === 0
         ? null

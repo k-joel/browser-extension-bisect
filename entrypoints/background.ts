@@ -4,6 +4,7 @@ import type { BisectConfig, ManagementPort, RestoreResult, TestTabBinding } from
 import { readBisectLog } from '@/utils/bisect/events';
 import { createFirefoxPort } from '@/utils/bisect/firefox-port';
 import {
+  acceptRestore,
   applyTrial,
   bindTestTab,
   confirmManualState,
@@ -173,6 +174,7 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('confirmManualState', () => confirmManualState(sessionDependencies()));
   messenger.onMessage('recordExternalBaseline', () => recordExternalBaseline(sessionDependencies()));
   messenger.onMessage('verifyRestore', (): Promise<RestoreResult> => verifyRestore(sessionDependencies()));
+  messenger.onMessage('acceptRestore', () => acceptRestore(sessionDependencies()));
   messenger.onMessage('openAddonManager', () => openAddonManager());
 
   void deleteLegacyStorageKeys();

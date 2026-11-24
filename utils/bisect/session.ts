@@ -10,6 +10,7 @@ import type {
   DriftReport,
   EnabledStateMap,
   ManagementPort,
+  ManualBatch,
   RestoreResult,
   SessionView,
   TargetState,
@@ -149,6 +150,17 @@ export function nextTrialTarget(view: SessionView): TargetState {
 
 export { partitionSuspects };
 
+/**
+ * The assisted adapter's `ManualBatch` is only the residual diff against the current
+ * state, which is empty for the half of the pool that is already off. The session
+ * records the whole target instead, so the checklist and the "n of m matched"
+ * progress cover every candidate the trial cares about — including the cleared ones
+ * that must stay enabled.
+ */
+function targetBatchOf(target: TargetState): ManualBatch {
+  return { enableIds: [...target.enabled], disableIds: [...target.disabled] };
+}
+
 async function applyAndRecord(
   dependencies: ResolvedDependencies,
   log: BisectLog,
@@ -166,6 +178,7 @@ async function applyAndRecord(
       round,
       errors: [],
       manual: true,
+      manualBatch: targetBatchOf(target),
     });
   }
   return appendAndPersist(started, 'trial-applied', dependencies.now(), { round, errors: result.errors });
@@ -269,6 +282,81 @@ export function verifyRestore(rawDependencies: SessionDependencies): Promise<Res
     const view = viewOf(await requireLog());
     return dependencies.port.restore(touchedOriginalMap(view));
   });
+}
+
+/**
+ * Assisted restore cannot finish on its own: a candidate may be gone, and the user
+ * may legitimately decide that what is left is fine. The explicit accept records the
+ * remaining differences and the outstanding errors, and never upgrades them to a
+ * complete restore — `restored` stays false so the audit stays honest.
+ */
+export function acceptRestore(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+    const result = await dependencies.port.restore(touchedOriginalMap(view));
+
+    return viewOf(
+      await appendAndPersist(log, 'session-reset', dependencies.now(), {
+        restored: result.complete,
+        errors: result.errors,
+        manualIds: result.manualIds,
+        accepted: true,
+      }),
+    );
+  });
+}
+
+export interface ManualStateWatcherOptions {
+  dependencies: SessionDependencies;
+  /** Coalesces a burst of `onEnabled`/`onDisabled` events into one re-verify. */
+  debounceMs?: number;
+  onDrift(drift: DriftReport): void;
+}
+
+export const MANUAL_STATE_DEBOUNCE_MS = 150;
+
+/**
+ * `management` fires one event per toggle, and the user flips several extensions in
+ * a row. Debouncing keeps the panel from re-reading `getAll()` once per extension,
+ * and the drift the watcher reports is the same one Verify checks, so the progress
+ * counter and the gate cannot disagree.
+ */
+export function createManualStateWatcher({
+  dependencies,
+  debounceMs = MANUAL_STATE_DEBOUNCE_MS,
+  onDrift,
+}: ManualStateWatcherOptions): () => void {
+  const resolved = resolveDependencies(dependencies);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  const reverify = async (): Promise<void> => {
+    timer = null;
+    try {
+      const view = viewOf(await requireLog());
+      const trial = view.currentTrial;
+      if (trial === null || view.status !== 'awaiting-manual-toggle') return;
+      onDrift(await resolved.port.verifyState(trial.targetState));
+    } catch {
+      // A closed session or an unreadable log simply stops the watcher's work.
+    }
+  };
+
+  const schedule = (): void => {
+    if (timer !== null) clearTimeout(timer);
+    timer = setTimeout(() => void reverify(), debounceMs);
+  };
+
+  const unsubscribe = resolved.port.watchEvents((event) => {
+    if (event.type === 'enabled' || event.type === 'disabled') schedule();
+  });
+
+  return () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    unsubscribe();
+  };
 }
 
 export function startSession(rawDependencies: SessionDependencies, request: StartSessionRequest): Promise<SessionView> {
@@ -378,6 +466,7 @@ export function retryTrial(
           round: trial.round,
           errors: [],
           manual: true,
+          manualBatch: targetBatchOf(trial.targetState),
         })
       : await appendAndPersist(retried, 'trial-applied', dependencies.now(), {
           round: trial.round,

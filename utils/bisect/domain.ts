@@ -125,7 +125,7 @@ export interface BisectEventPayloads {
   };
   'baseline-recorded': { mode: BaselineMode; verdict: Verdict };
   'trial-started': { round: number; enabledIds: string[]; disabledIds: string[]; manual?: boolean };
-  'trial-applied': { round: number; errors: ToggleError[]; manual?: boolean };
+  'trial-applied': { round: number; errors: ToggleError[]; manual?: boolean; manualBatch?: ManualBatch };
   'verdict-recorded': { round: number; verdict: Verdict };
   'trial-retried': { round: number; reason?: string };
   'verdict-undone': { round: number };
@@ -133,7 +133,7 @@ export interface BisectEventPayloads {
   'session-resumed': { reason: string };
   'session-completed': { culpritId: string };
   'session-inconclusive': { ambiguityIds: string[]; reason: string };
-  'session-reset': { restored: boolean; errors: RestoreError[]; manualIds?: string[] };
+  'session-reset': { restored: boolean; errors: RestoreError[]; manualIds?: string[]; accepted?: boolean };
 }
 
 export type BisectEventType = keyof BisectEventPayloads;
@@ -208,6 +208,12 @@ export interface SessionView {
   abortReason: AbortReason | null;
   testTab: TestTabBinding | null;
   progress: SessionProgress | null;
+  /**
+   * The batch the user still has to apply by hand, or `null` when nothing is
+   * pending. The reducer derives it from the applied `trial-applied` event, so a
+   * closed and reopened panel shows the same checklist.
+   */
+  manualBatch: ManualBatch | null;
   createdAt: number;
   updatedAt: number;
 }

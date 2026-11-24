@@ -128,3 +128,89 @@ describe('firefox port capabilities', () => {
     expect(capability.selfInstallType).toBe('admin');
   });
 });
+
+/**
+ * ADR-008's enterprise-policy exception: an `admin` install may call `setEnabled`,
+ * so Firefox must stop asking the user and behave exactly like Chrome. These cases
+ * run both adapters against the same expectations, which is what makes the routing
+ * a contract rather than a coincidence.
+ */
+const POLICY_SELF = makeExtensionInfo({ id: 'self-id', name: 'Extension Bisect', installType: 'admin' });
+
+const POLICY_ADAPTERS = [
+  {
+    name: 'chrome-port',
+    create: (surface: Surface): ManagementPort => createChromePort({ management: surface }),
+  },
+  {
+    name: 'firefox-port (admin install)',
+    create: (surface: Surface): ManagementPort => createFirefoxPort({ management: surface, debounceMs: 5 }),
+  },
+];
+
+function policySurface(options: { setEnabledError?: (id: string, enabled: boolean) => Error | null } = {}): Surface {
+  return createFakeManagement({
+    self: POLICY_SELF,
+    extensions: [
+      makeExtensionInfo({ id: 'aaaa', name: 'Alpha' }),
+      makeExtensionInfo({ id: 'bbbb', name: 'Bravo' }),
+      POLICY_SELF,
+    ],
+    ...options,
+  });
+}
+
+function allOff(): { enabled: string[]; disabled: string[]; allOutsideSuspectsEnabled: boolean } {
+  return { enabled: [], disabled: ['aaaa', 'bbbb'], allOutsideSuspectsEnabled: true };
+}
+
+describe.each(POLICY_ADAPTERS)('$name enterprise-policy automated path', ({ create }) => {
+  it('reports canAutoToggle so the session never asks for a manual batch', async () => {
+    const port = create(policySurface());
+
+    await expect(port.getCapabilities()).resolves.toMatchObject({ canAutoToggle: true, selfInstallType: 'admin' });
+  });
+
+  it('applies the target state through the automated diff', async () => {
+    const surface = policySurface();
+    const port = create(surface);
+
+    const result = await port.applyTargetState(allOff());
+
+    expect(result).toEqual({ applied: ['aaaa', 'bbbb'], errors: [], ok: true });
+    expect('enableIds' in result).toBe(false);
+    expect(surface.setEnabledCalls).toEqual([
+      { id: 'aaaa', enabled: false },
+      { id: 'bbbb', enabled: false },
+    ]);
+  });
+
+  it('keeps the shared per-id error mapping instead of a manual checklist', async () => {
+    const port = create(policySurface({ setEnabledError: (id) => (id === 'aaaa' ? new Error('blocked') : null) }));
+
+    const result = await port.applyTargetState(allOff());
+
+    expect(result).toMatchObject({ applied: ['bbbb'], ok: false });
+    expect((result as { errors: { extensionId: string }[] }).errors[0]).toMatchObject({ extensionId: 'aaaa' });
+  });
+
+  it('restores through the automated path and reports what it could not re-enable', async () => {
+    const surface = policySurface();
+    const port = create(surface);
+    await port.applyTargetState(allOff());
+
+    const restored = await port.restore({ aaaa: true, bbbb: true });
+
+    expect(restored).toMatchObject({ complete: true, restoredIds: ['aaaa', 'bbbb'] });
+  });
+
+  it('verifies the state with the shared comparison and no pending-manual category', async () => {
+    const port = create(policySurface());
+
+    const drift = await port.verifyState(allOff());
+
+    expect(drift.inSync).toBe(false);
+    expect(drift.pendingManualToggles).toEqual(['aaaa', 'bbbb']);
+    expect(drift.unexpectedToggles).toEqual([]);
+  });
+});

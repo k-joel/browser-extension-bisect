@@ -76,6 +76,7 @@ export interface ProtocolMap {
   confirmManualState(): SessionView;
   recordExternalBaseline(): SessionView;
   verifyRestore(): RestoreResult;
+  acceptRestore(): SessionView;
   openAddonManager(): AddonManagerResult;
 }
 

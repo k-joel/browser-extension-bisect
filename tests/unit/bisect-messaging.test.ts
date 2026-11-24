@@ -4,6 +4,7 @@ import { registerBackgroundHandlers } from '@/entrypoints/background';
 import { createChromePort } from '@/utils/bisect/chrome-port';
 import { DEFAULT_BISECT_CONFIG, readBisectConfig, updateBisectConfig } from '@/utils/bisect/config';
 import type { ManagementPort } from '@/utils/bisect/domain';
+import { readBisectLog } from '@/utils/bisect/events';
 import { resetSessionQueue } from '@/utils/bisect/session';
 import { messenger } from '@/utils/messaging';
 import { createFakeManagement, makeExtensionInfo } from './helpers/fake-management';
@@ -271,6 +272,30 @@ describe('session messaging protocol', () => {
     expect(applied.status).toBe('awaiting-verdict');
     expect(reloaded).toEqual({ ok: true });
     expect(reloads).toEqual([tab.id]);
+  });
+
+  it('round-trips acceptRestore as an explicit acceptance of the remaining differences', async () => {
+    const port: ManagementPort = {
+      ...defaultPort(),
+      restore: async () => ({
+        restoredIds: ['bbbb'],
+        manualIds: ['aaaa'],
+        errors: [],
+        complete: false,
+      }),
+    };
+    registerPort(port);
+    await messenger.sendMessage('startSession', { candidateIds: ['aaaa'], baselineMode: 'auto', testTab: null });
+
+    const accepted = await messenger.sendMessage('acceptRestore');
+
+    expect(accepted.status).toBe('restored');
+    const log = await readBisectLog();
+    expect(log?.events.at(-1)?.payload).toMatchObject({
+      restored: false,
+      manualIds: ['aaaa'],
+      accepted: true,
+    });
   });
 
   it('rejects a verdict when no session exists without leaving the panel stuck', async () => {
