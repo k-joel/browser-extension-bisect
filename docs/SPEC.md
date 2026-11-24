@@ -315,6 +315,12 @@ is the final confirmation trial. The suspect set strictly shrinks until that poi
 final confirmation still shows the symptom, or the suspect set becomes empty, the session
 ends `inconclusive`; it never blames the last suspect.
 
+The **disabled** half is the last `floor(n / 2)` suspects, so an odd pool gives its extra
+candidate to the enabled half and `n = 3` is 2 enabled / 1 disabled. Only that reading
+satisfies the worked `N = 24` example, where Trial 4 must enable 7–8 and disable 9 alone;
+reading the code block above as "the first `mid` suspects are enabled" would enable 7 alone
+and disable 8–9, which contradicts the trace. The trace is the authoritative test reference.
+
 Step count:
 
 - Baseline: 1 trial.

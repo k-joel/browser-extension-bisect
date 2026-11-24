@@ -144,6 +144,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [015](#adr-015-report-non-single-culprit-outcomes-as-inconclusive) | Report non-single-culprit outcomes as inconclusive |
 | [016](#adr-016-keep-user-exclusions-out-of-candidate-eligibility) | Keep user exclusions out of candidate eligibility |
 | [017](#adr-017-store-the-test-tab-url-as-nullable) | Store the test tab URL as nullable |
+| [018](#adr-018-take-the-disabled-half-of-a-partition-from-the-tail-of-the-pool) | Take the disabled half of a partition from the tail of the pool |
 
 ---
 
@@ -552,6 +553,30 @@ Eligibility is **intrinsic only**: `self`, `theme-or-app`, `disabled-at-start`, 
 **Bad**: The user cannot tell two tabs apart by URL, so a stale binding is harder to notice; the E2E assertions can only compare the id, and any future feature that needs the URL will need a permission change plus a schema bump.
 
 **Mitigations**: The pre-flight consent screen shows the binding and offers a rebind, and the session still reloads by id; the rationale is recorded in `docs/SPEC.md` §Storage and §Test tab, `docs/TECH_DESIGN.md` §9.1, and `docs/NOTES.md`.
+
+---
+
+## ADR-018: Take the disabled half of a partition from the tail of the pool
+
+**Status**: Accepted
+**Date**: 2026-11-26
+**Deciders**: ISS-004 implementation session (LLM-driven, user-approved)
+
+### Context
+
+`docs/SPEC.md` §Partition loop and `docs/TECH_DESIGN.md` §6.3 both write the partition as `mid = floor(n / 2)` with the enabled half first, but the two documents' own prose and the mandated worked example disagree on which half `mid` counts. Read as "the first `mid` suspects are enabled", `n = 3` yields 1 enabled / 2 disabled and the `N = 24` trace in §6.5 becomes unreachable: its Trial 4 needs 7–8 enabled and 9 disabled alone, and its "#7 needs a sixth trial" variant depends on that. Read as "the last `mid` are disabled", every row of the trace reproduces exactly. §6.5 is the reference `docs/SPEC.md` §Partition loop and `docs/ISSUES.md` ISS-004 both point tests at.
+
+### Decision
+
+`partitionSuspects` gives the **last** `floor(n / 2)` suspects to the disabled half, so an odd pool's extra candidate is enabled and `n = 3` is 2 enabled / 1 disabled. A lone suspect is disabled alone, which is the final confirmation trial. `docs/SPEC.md` §Partition loop and `docs/TECH_DESIGN.md` §6.3 were corrected to state the disabled half explicitly; §6.5 is authoritative wherever they still disagree.
+
+### Consequences
+
+**Good**: The implementation matches the mandated trace batch for batch, including the sixth-trial variant, so the reference test asserts the specification rather than the code; the enabled half keeps the wider suspect coverage on every odd step, which is what the trace requires for its 3-suspect step.
+
+**Bad**: The prose formula and the code now need to be read together, and a future reader may still "simplify" the slice bounds back to the literal first-`mid` reading; the E2E and unit tests are the only guard.
+
+**Mitigations**: `tests/unit/bisect-engine.test.ts` asserts the full `N = 24` trace and the `#7` sixth-trial variant, and `docs/NOTES.md` §partition-loop records why the naive reading must not be reintroduced.
 
 ---
 

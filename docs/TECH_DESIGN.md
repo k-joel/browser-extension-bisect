@@ -291,10 +291,15 @@ At every trial, the target state is:
 
 ```text
 all candidates outside suspects: enabled
-suspects[0 .. mid-1]:             enabled
-suspects[mid ..]:                 disabled
+suspects[0 .. n-mid-1]:           enabled      (n - mid = ceil(n / 2) suspects)
+suspects[n-mid ..]:               disabled     (mid = floor(n / 2) suspects)
 mid = floor(suspects.length / 2)
 ```
+
+The disabled half is the **tail** of the pool, so an odd pool gives its extra candidate to
+the enabled half. Reading the block as "the first `mid` suspects are enabled" instead would
+contradict the worked example in §6.5, where Trial 4 enables 7–8 and disables 9 alone; the
+trace in §6.5 is the authoritative reference.
 
 For `suspects.length === 1`, this yields `enabled = []`, `disabled = [suspect]`,
 which is the final confirmation trial.

@@ -127,10 +127,18 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Pre-flight consent screen listing exactly the extensions the baseline will disable, the culprit-stays-disabled and Restore policy, the bound test tab, and an explicit "Start baseline" action; nothing is toggled before that click ([ADR-013](DECISIONS.md)).
 - Automated all-off baseline on Chrome: every candidate is disabled, non-candidates are left untouched, the bound test tab is reloaded and awaited with a timeout, and the baseline verdict is appended to the bisect log.
 - Baseline question with the labels "Problem persists" and "Problem is gone": `persists` aborts as a host issue and restores, `gone` advances, and `N = 1` resolves the culprit directly from the baseline with the culprit left disabled ([ADR-014](DECISIONS.md)).
+- Automated half-split partition loop on Chrome, driven to completion after a clean baseline: each trial enables the first half of the suspect pool and disables the second, every cleared extension is re-enabled, and the suspect pool strictly shrinks until one candidate remains ([ADR-010](DECISIONS.md)).
+- Trial screen with the question, the exact verdict labels "Problem persists" and "Problem is gone", the progress reading "Trial N of ~M · S suspects", a Retry action that re-applies the same batch without recording a verdict, and a manual test-tab reload.
+- Inline trial summary listing every answered batch with its verdict, so the search is legible without a separate history screen (the dedicated history screen is ISS-007).
+- Culprit identification with a final confirmation trial when the last partition left the lone suspect enabled; the culprit is recorded and left disabled with Restore prominent ([ADR-013](DECISIONS.md)).
+- Inconclusive outcome with the ambiguity set and a reason when the verdicts contradict a single culprit — an empty suspect set or a final confirmation that still shows the symptom — instead of blaming the last suspect ([ADR-015](DECISIONS.md)).
+- `utils/bisect/engine.ts`: the pure, platform-neutral search (partition, target state, suspect-set update, step-count estimate, completion and contradiction decisions) and the documented session transition table, testable without a browser.
+- `retryTrial` on the typed messaging protocol, with the background as the only writer.
+- Chrome E2E scenario `partition-loop` that searches to a known culprit with the harness acting as the human oracle, asserting the culprit is left disabled and Restore re-enables it.
 - Host-issue screen explaining that no installed extension is implicated, with Restore.
 - Restore, visible on the picker and on every session screen: re-enables only the extensions the session touched, reports per-extension failures, and never claims a full restore when a re-enable failed ([ADR-013](DECISIONS.md), [ADR-017](DECISIONS.md)).
 - Session view rehydrated from the bisect log on panel open, so closing or reloading the panel keeps the session and its screen.
-- Seven session messages (`getSession`, `startSession`, `applyTrial`, `submitVerdict`, `resetSession`, `bindTestTab`, `reloadTestTab`) on the typed messaging protocol, with the background as the only writer.
+- Eight session messages (`getSession`, `startSession`, `applyTrial`, `submitVerdict`, `retryTrial`, `resetSession`, `bindTestTab`, `reloadTestTab`) on the typed messaging protocol, with the background as the only writer.
 - Versioned bisect config in `local:bisectConfig` with the documented fallback, a serialized writer owned by the background, and first-start deletion of the legacy `enabled`, `interactionCount`, and `settings` keys.
 - `management` and Chrome `sidePanel` permissions, plus Chrome's `side_panel.default_path` and Firefox's `sidebar_action` panel metadata.
 - `ManagementPort` contract with Chrome and Firefox adapters behind one shared eligibility filter and ordering helper, and an injectable management surface so adapters are testable without a browser.

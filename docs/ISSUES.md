@@ -158,15 +158,15 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: After a clean baseline on Chrome, run the half-split search to completion. Each trial enables the first half of the suspect pool and disables the second half, keeps every cleared extension enabled, and asks for a verdict. The suspect pool shrinks until one candidate remains; a final confirmation decides whether to name the culprit. The culprit is left disabled; a contradiction produces an inconclusive result with the ambiguity set. The user can retry a trial without recording a verdict.
 - **Blocked by**: ISS-003.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, b26992c). The disabled half takes `floor(n / 2)` from the tail of the pool, because the mandated `N = 24` trace in `TECH_DESIGN.md:356-369` needs 7–9 enabled / 10–12 disabled at `n = 3`; see `NOTES.md` §partition-loop.
 
-- [ ] Partition uses `mid = floor(n / 2)`; non-suspects stay enabled; the suspect pool strictly shrinks each round.
-- [ ] `persists` keeps the enabled half; `gone` keeps the disabled half; cleared extensions stay enabled in later trials.
-- [ ] Final confirmation runs when the lone suspect is enabled; the culprit is recorded and left disabled.
-- [ ] Contradictions (empty suspect set or a persisting final confirmation) produce `inconclusive` with the remaining ambiguity set and a reason, never a silent blame.
-- [ ] Progress reads "Trial N of ~M · S suspects"; history entries show the batches and verdicts; retry re-applies the same target state without recording a verdict.
-- [ ] Unit tests cover the `N = 24` worked example, step counts, `N = 2`, `N = 3`, contradictions, and retry; the Chrome E2E scenario asserts the known culprit, culprit-left-disabled, and restore.
-- [ ] The quality gates pass.
+- [x] Partition uses `mid = floor(n / 2)`; non-suspects stay enabled; the suspect pool strictly shrinks each round.
+- [x] `persists` keeps the enabled half; `gone` keeps the disabled half; cleared extensions stay enabled in later trials.
+- [x] Final confirmation runs when the lone suspect is enabled; the culprit is recorded and left disabled.
+- [x] Contradictions (empty suspect set or a persisting final confirmation) produce `inconclusive` with the remaining ambiguity set and a reason, never a silent blame.
+- [x] Progress reads "Trial N of ~M · S suspects"; history entries show the batches and verdicts; retry re-applies the same target state without recording a verdict.
+- [x] Unit tests cover the `N = 24` worked example, step counts, `N = 2`, `N = 3`, contradictions, and retry; the Chrome E2E scenario asserts the known culprit, culprit-left-disabled, and restore.
+- [x] The quality gates pass.
 
 ### ISS-005: Firefox assisted baseline
 
