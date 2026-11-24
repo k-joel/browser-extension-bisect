@@ -1,5 +1,20 @@
-import type { CapabilityReport, ManagementPort } from './domain';
-import { createNotImplementedMethods, listSharedCandidates, type PortDependencies } from './management-port';
+import type {
+  CapabilityReport,
+  DriftReport,
+  EnabledStateMap,
+  ManagementPort,
+  RestoreResult,
+  TargetState,
+  ToggleResult,
+} from './domain';
+import {
+  applySharedTargetState,
+  createNotImplementedWatchEvents,
+  listSharedCandidates,
+  type PortDependencies,
+  restoreSharedState,
+  verifySharedState,
+} from './management-port';
 
 export type ChromePortOptions = PortDependencies;
 
@@ -15,6 +30,9 @@ export function createChromePort({ management }: ChromePortOptions): ManagementP
       };
     },
     listCandidates: () => listSharedCandidates(management),
-    ...createNotImplementedMethods(),
+    applyTargetState: (target: TargetState): Promise<ToggleResult> => applySharedTargetState(management, target),
+    verifyState: (expected: TargetState): Promise<DriftReport> => verifySharedState(management, expected),
+    restore: (original: EnabledStateMap): Promise<RestoreResult> => restoreSharedState(management, original),
+    ...createNotImplementedWatchEvents(),
   };
 }

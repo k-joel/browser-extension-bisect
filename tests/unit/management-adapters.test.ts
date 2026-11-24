@@ -79,24 +79,26 @@ describe.each(ADAPTERS)('$name candidate listing', ({ create }) => {
     expect(typeof port.watchEvents).toBe('function');
   });
 
-  it.each(['applyTargetState', 'verifyState', 'restore'] as const)(
-    'rejects with not implemented for %s',
-    async (method) => {
-      const { port } = portFor(create);
-
-      const target = port[method] as (...args: unknown[]) => Promise<unknown>;
-
-      await expect(target({ enabled: [], disabled: [], allOutsideSuspectsEnabled: true })).rejects.toThrow(
-        'not implemented',
-      );
-    },
-  );
-
   it('throws not implemented when watching events', () => {
     const { port } = portFor(create);
 
     expect(() => port.watchEvents(() => undefined)).toThrow(new Error('not implemented'));
   });
+});
+
+describe('firefox port assisted stubs', () => {
+  const surface = createFakeManagement({ self: SELF, extensions: [SELF] });
+  const port = createFirefoxPort({ management: surface });
+  const target = { enabled: [], disabled: [], allOutsideSuspectsEnabled: true };
+
+  it.each(['applyTargetState', 'verifyState', 'restore'] as const)(
+    'rejects with not implemented for %s until ISS-005 lands the assisted path',
+    async (method) => {
+      const call = port[method] as (...args: unknown[]) => Promise<unknown>;
+
+      await expect(call(target)).rejects.toThrow('not implemented');
+    },
+  );
 });
 
 describe('chrome port capabilities', () => {
