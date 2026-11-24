@@ -8,7 +8,10 @@ defineProps<{
   restoreSummaryHeadline: string | null;
 }>();
 
-const emit = defineEmits<(event: 'restore') => void>();
+const emit = defineEmits<{
+  (event: 'restore'): void;
+  (event: 'history'): void;
+}>();
 </script>
 
 <template>
@@ -26,5 +29,17 @@ const emit = defineEmits<(event: 'restore') => void>();
     <div class="actions">
       <button type="button" data-testid="completed-restore" :disabled="busy" @click="emit('restore')">Restore</button>
     </div>
+
+    <div class="actions">
+      <button type="button" data-testid="completed-history" :disabled="busy" @click="emit('history')">
+        Show the session history
+      </button>
+      <button type="button" data-testid="completed-replay" disabled aria-describedby="completed-replay-note">
+        Correct a verdict and replay
+      </button>
+    </div>
+    <p id="completed-replay-note" class="note" data-testid="completed-replay-note">
+      Replay is not available yet. The history lists every trial so the conclusion is already legible.
+    </p>
   </section>
 </template>

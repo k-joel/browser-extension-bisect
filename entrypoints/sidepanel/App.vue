@@ -2,6 +2,7 @@
 import { computed, onMounted, ref } from 'vue';
 import type {
   BisectConfig,
+  BisectLog,
   CandidateExtension,
   CapabilityReport,
   DriftReport,
@@ -13,6 +14,7 @@ import type {
   Verdict,
 } from '@/utils/bisect/domain';
 import { messenger, type SessionMutationResult } from '@/utils/messaging';
+import { type CopyStatus, copyText, MANUAL_COPY_MESSAGE } from './clipboard';
 import AssistedBaseline from './components/AssistedBaseline.vue';
 import AssistedRestore from './components/AssistedRestore.vue';
 import AssistedTrial from './components/AssistedTrial.vue';
@@ -20,6 +22,7 @@ import BaselineScreen from './components/BaselineScreen.vue';
 import CandidatePicker from './components/CandidatePicker.vue';
 import CapabilityReportView from './components/CapabilityReport.vue';
 import CompletedScreen from './components/CompletedScreen.vue';
+import HistoryScreen from './components/HistoryScreen.vue';
 import HostIssueScreen from './components/HostIssueScreen.vue';
 import InconclusiveScreen from './components/InconclusiveScreen.vue';
 import NoSession from './components/NoSession.vue';
@@ -28,6 +31,7 @@ import RestoredScreen from './components/RestoredScreen.vue';
 import RestorePanel from './components/RestorePanel.vue';
 import SessionProgress from './components/SessionProgress.vue';
 import TrialScreen from './components/TrialScreen.vue';
+import { buildHistory, type HistoryModel, renderBisectReport, serializeBisectLog } from './history';
 import {
   baselineModeFor,
   buildPickerRows,
@@ -63,6 +67,9 @@ const manualDrift = ref<DriftReport | null>(null);
 const addonManagerMessage = ref<string | null>(null);
 const assistedRestore = ref<RestoreResult | null>(null);
 const restoreAccepted = ref(false);
+const historyOpen = ref(false);
+const historyLog = ref<BisectLog | null>(null);
+const copyStatus = ref<CopyStatus | null>(null);
 
 const excludedIds = computed(() => config.value?.excludedExtensionIds ?? []);
 
@@ -88,7 +95,13 @@ const capabilityNote = computed(() => {
   return 'Assisted mode: this browser does not let the add-on toggle extensions, so you apply the baseline yourself.';
 });
 
-const screen = computed(() => resolveScreen({ session: session.value, preflightOpen: preflightOpen.value }));
+const screen = computed(() =>
+  resolveScreen({ session: session.value, preflightOpen: preflightOpen.value, historyOpen: historyOpen.value }),
+);
+
+const historyModel = computed<HistoryModel | null>(() =>
+  session.value === null ? null : buildHistory(session.value, historyLog.value),
+);
 
 const culprits = computed(() => (session.value === null ? [] : session.value.candidateOrder));
 
@@ -119,6 +132,12 @@ const manualProgressAnnouncement = computed(() => {
   return `${progress.done} of ${progress.total} done. ${plural(progress.remainingIds.length, 'extension')} still to toggle.`;
 });
 
+const historyAnnouncement = computed(() => {
+  const model = historyModel.value;
+  if (model === null) return 'No session history yet.';
+  return `${plural(model.entries.length, 'entry', 'entries')} in the history. ${model.outcome.label}.`;
+});
+
 const announcement = computed(() => {
   if (state.value === 'loading') return 'Loading extensions…';
   if (state.value === 'error') return 'Extensions could not be loaded';
@@ -139,6 +158,8 @@ const announcement = computed(() => {
       return 'No single culprit was identified; the remaining candidates are listed.';
     case 'host-issue':
       return 'No extension is implicated; this is a browser or machine issue.';
+    case 'history':
+      return historyAnnouncement.value;
     case 'completed':
       return `Culprit identified: ${culprit.value?.name ?? session.value?.culpritId ?? 'unknown'}. It is still disabled.`;
     case 'restored':
@@ -357,6 +378,41 @@ async function reloadTestTab(): Promise<void> {
   reloadMessage.value = result.ok ? 'The test tab reloaded.' : (result.error ?? 'The test tab could not be reloaded.');
 }
 
+async function openHistory(): Promise<void> {
+  copyStatus.value = null;
+  historyLog.value = await run(() => messenger.sendMessage('getLog'));
+  historyOpen.value = true;
+}
+
+function closeHistory(): void {
+  historyOpen.value = false;
+  copyStatus.value = null;
+}
+
+async function publishCopy(label: string, text: string): Promise<void> {
+  const outcome = await copyText(text);
+  copyStatus.value =
+    outcome === 'copied'
+      ? { kind: 'copied', message: `${label} is on the clipboard.`, text: null }
+      : { kind: 'error', message: MANUAL_COPY_MESSAGE, text };
+}
+
+async function copyLogJson(): Promise<void> {
+  const log = await run(() => messenger.sendMessage('getLog'));
+  if (log === null) return;
+  historyLog.value = log;
+  await publishCopy('The bisect log', serializeBisectLog(log));
+}
+
+async function copyReport(): Promise<void> {
+  const log = await run(() => messenger.sendMessage('getLog'));
+  if (log === null) return;
+  const model = session.value === null ? null : buildHistory(session.value, log);
+  if (model === null) return;
+  historyLog.value = log;
+  await publishCopy('The report', renderBisectReport(model));
+}
+
 defineExpose({ load });
 
 onMounted(load);
@@ -431,6 +487,17 @@ onMounted(load);
         @retry-trial="retryTrial"
         @verdict="submitVerdict"
         @reload="reloadTestTab"
+        @history="openHistory"
+      />
+
+      <HistoryScreen
+        v-else-if="screen === 'history' && historyModel !== null"
+        :model="historyModel"
+        :busy="busy"
+        :copy-status="copyStatus"
+        @back="closeHistory"
+        @copy-log="copyLogJson"
+        @copy-report="copyReport"
       />
 
       <InconclusiveScreen
@@ -439,6 +506,7 @@ onMounted(load);
         :busy="busy"
         :restore-summary-headline="restoreSummary?.headline ?? null"
         @restore="restore"
+        @history="openHistory"
       />
 
       <HostIssueScreen
@@ -455,6 +523,7 @@ onMounted(load);
         :busy="busy"
         :restore-summary-headline="restoreSummary?.headline ?? null"
         @restore="restore"
+        @history="openHistory"
       />
 
       <RestoredScreen v-else-if="screen === 'restored'" :summary="restoreSummary" :busy="busy" @restore="restore" />

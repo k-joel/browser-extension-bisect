@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (event: 'retry-trial'): void;
   (event: 'verdict', verdict: Verdict): void;
   (event: 'reload'): void;
+  (event: 'history'): void;
 }>();
 
 const asking = computed(() => isTrialQuestion(props.session));
@@ -141,6 +142,12 @@ const question = computed(() => {
     <p v-if="ambiguity.length > 0" class="error" data-testid="trial-ambiguity">
       Ambiguous candidates: {{ ambiguity.join(', ') }}
     </p>
+
+    <div class="actions">
+      <button type="button" data-testid="trial-history-open" :disabled="busy" @click="emit('history')">
+        Show the full session history
+      </button>
+    </div>
 
     <TrialHistory :rows="history" />
   </section>

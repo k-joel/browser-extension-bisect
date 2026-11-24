@@ -157,6 +157,19 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
   };
 }
 
+describe('history screen routing', () => {
+  it('routes an open history to the history screen from any session screen', () => {
+    const view = sessionView({ status: 'completed', culpritId: 'bbbb' });
+
+    expect(resolveScreen({ session: view, preflightOpen: false, historyOpen: true })).toBe('history');
+    expect(resolveScreen({ session: view, preflightOpen: false })).toBe('completed');
+  });
+
+  it('keeps the picker when there is no session, so the history cannot be opened empty', () => {
+    expect(resolveScreen({ session: null, preflightOpen: false, historyOpen: true })).toBe('picker');
+  });
+});
+
 describe('assisted trial screen routing', () => {
   it('routes a manual partition batch to the assisted trial screen', () => {
     const view = sessionView({

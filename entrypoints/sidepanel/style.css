@@ -126,6 +126,16 @@ body {
   border-radius: var(--radius);
 }
 
+.search textarea {
+  padding: var(--space-2);
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  resize: vertical;
+}
+
 .list {
   display: flex;
   flex-direction: column;
@@ -214,6 +224,10 @@ body {
 .history-heading {
   margin: 0;
   font-weight: 600;
+}
+
+.history[data-kind="baseline"] {
+  background: var(--surface-muted);
 }
 
 .assisted {
