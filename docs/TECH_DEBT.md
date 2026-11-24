@@ -179,11 +179,11 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## Summary
 
-- **Last Updated:** 2026-11-23
+- **Last Updated:** 2026-11-25
 - **Last Full Audit:** 2026-11-23 | **Stacks:** Node/TypeScript | **Audit Checks:** 4 PASS / 3 FAIL / 5 N/A
-- **Open Debt:** 5 total (P0: 0, P1: 0, P2: 1, P3: 4)
+- **Open Debt:** 6 total (P0: 0, P1: 0, P2: 1, P3: 5)
 - **Trend:** Baseline
-- **Open by Category:** dependency: 1, code: 2, infrastructure: 2
+- **Open by Category:** dependency: 1, code: 3, infrastructure: 2
 - **Top 3 to Pay Down First:**
   1. `DEBT-2026-004` — 16 dev-tree CVEs (5 moderate, 11 high); `npm audit fix` clears part without breaking, the rest needs two major bumps.
   2. `DEBT-2026-002` — unused `getContentStatus` surface misleads callers; wire it in or delete it (XS).
@@ -200,6 +200,7 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 | DEBT-2026-002 | P3 | Identified | code | dead_code | `getContentStatus` message surface has no sender (dead code) | `entrypoints/background.ts:16-38`, `utils/messaging.ts:10-19` | XS | LOW | 2026-11-23 |
 | DEBT-2026-005 | P3 | Identified | infrastructure | build_warnings | Firefox build warns about missing `data_collection_permissions` | `wxt.config.ts` (Firefox manifest branch) | XS | LOW | 2026-11-23 |
 | DEBT-2026-003 | P3 | Identified | infrastructure | missing_pipeline | No CI pipeline or CODEOWNERS; the gate runs only locally | repo root (no `.github/`, no `CODEOWNERS`) | S | LOW | 2026-11-23 |
+| DEBT-2026-006 | P3 | Identified | code | duplicate_code | The `user-excluded` contract is encoded in both the port and the picker presentation layer | `utils/bisect/management-port.ts`, `entrypoints/sidepanel/presentation.ts` | XS | LOW | 2026-11-25 |
 
 ## Debt Details
 
@@ -242,6 +243,16 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 - **Evidence:** `npm run build:firefox` (2026-11-23, WXT 0.21.5) emits `WARN Firefox requires data_collection_permissions for new extensions from November 3, 2025`; existing extensions are exempt for now.
 - **Impact Rationale:** Non-zero build warning and a future AMO publishing blocker for new extensions; no runtime effect today — LOW (2/10).
 - **Remediation Target:** Declare `data_collection_permissions` in the Firefox manifest branch, or set `suppressWarnings.firefoxDataCollection` in `wxt.config.ts` if none apply; verify the Firefox build emits no warning and `npm run agent:verify` stays green.
+
+### DEBT-2026-006: The `user-excluded` contract is encoded twice
+
+- **Category / Subcategory:** code / duplicate_code
+- **Status / Priority:** Identified / P3 (Impact: LOW, Effort: XS)
+- **Location:** `utils/bisect/management-port.ts` (`resolveIneligibleReason`), `entrypoints/sidepanel/presentation.ts` (`buildPickerRows`, `intrinsicIneligible`)
+- **Dates:** Created 2026-11-25 | Updated 2026-11-25
+- **Evidence:** `ManagementPort.listCandidates` reports a config exclusion as `ineligible`/`user-excluded`, and the picker converts that same entry back into a selectable row so the checkbox can be cleared again (ADR-016).
+- **Impact Rationale:** Changing the exclusion contract — or adding a sixth reason — needs edits in two modules plus `docs/SPEC.md`, and a missed edit silently hides a candidate from the picker — LOW (3/10).
+- **Remediation Target:** Decide before ISS-003 consumes the lists whether `user-excluded` belongs in the port's `ineligible` output at all; then delete the compensating branch and update the eligibility, presentation, component, and E2E assertions together. Tracked as ISS-016.
 
 ### DEBT-2026-003: No CI pipeline or CODEOWNERS; the gate runs only locally
 

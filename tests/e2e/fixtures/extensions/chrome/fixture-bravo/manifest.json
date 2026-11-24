@@ -1,0 +1,6 @@
+{
+  "manifest_version": 3,
+  "name": "Fixture Bravo",
+  "version": "2.0.0",
+  "description": "Second enabled regular fixture extension for deterministic ordering."
+}

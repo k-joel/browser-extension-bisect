@@ -79,10 +79,15 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 ## management-adapter
 
 - **`fakeBrowser` has no `management` API** (2026-11-24): `@webext-core/fake-browser` implements storage and messaging only, so adapter tests cannot call or stub `fakeBrowser.management`; inject the management surface into the adapter (or use the fake management port) to test Chrome error mapping and Firefox assisted verification without a browser.
+- **Chrome `management.setEnabled` works from an extension page, Firefox rejects it** (2026-11-25): from `sidepanel.html`, Chrome disabled a fixture via `browser.management.setEnabled(id, false)` and `getAll()` reflected `enabled: false`; Firefox threw `setEnabled can only be used for themes or by addons installed by enterprise policy`. Never write an E2E step that assumes a Firefox extension toggle.
+- **Firefox `about:addons` is not scriptable in this build** (2026-11-25): the page exposes `categories-box`, `discovery-pane`, and `panel-list`, but no `addon-manager` and no `addon-card` elements, so `setView({view:'addons://list/extension'})` and shadow-root row automation do not exist. Real assisted-mode E2E must use the documented test-mode driver (ISS-005) rather than the privileged UI.
+- **Theme manifests need integer colours and are `type: "theme"`** (2026-11-25): a Chrome theme fixture with `"#102030"` strings fails install with `Invalid value for theme colors - colors must be integers`; use `[16, 32, 48]` arrays. Firefox ships four built-in themes that always appear in `getAll()` as `type: "theme"`, three of them `enabled: false`.
 
 ## wxt
 
 - **Firefox identity is configured in `wxt.config.ts`, never in generated manifests** (2026-11-24): the manifest callback adds `browser_specific_settings.gecko.id` only for `browser === 'firefox'`; edits to `.output/*/manifest.json` are lost on the next build.
+- **The side panel entrypoint is `entrypoints/sidepanel/index.html`** (2026-11-25): WXT matches `sidepanel.html`, `sidepanel/index.html`, and `*.sidepanel.html`; the `<meta name="manifest.type" content="sidepanel">` tag maps to the `sidepanel` type. WXT then emits `side_panel.default_path` **and auto-adds the `sidePanel` permission** on Chrome MV3, and `sidebar_action` with `default_panel`/`default_icon`/`default_title` on Firefox. Declaring `sidePanel` in `wxt.config.ts` too is harmless.
+- **`<meta name="manifest.*">` values are JSON5-parsed** (2026-11-25): `manifest.default_icon` must be a JSON object (`{"16":"icon/16.png",...}`) to reach `sidebar_action.default_icon`; a bare path string works only for the single-value form.
 
 ## test-builds
 
@@ -92,15 +97,20 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - **Install Chrome extensions after launch, never via launch arguments** (2026-11-24): passing `enableExtensions: [path]` inside `launch()` crashes the browser on Windows with `Extensions.loadUnpacked: Target closed`. Launch with `enableExtensions: true`, `pipe: true`, and `--enable-unsafe-extension-debugging`, then call `browser.installExtension(extPath)`.
 - **CDP-only Puppeteer APIs must stay behind the `browserName` branch** (2026-11-24): `page.triggerExtensionAction()`, `browser.extensions()`, `frame.extensionRealms()`, and `service_worker` targets do not exist over Firefox BiDi and throw; `tests/e2e/harness.mjs` is the only place that touches them.
+- **`waitUntil: 'commit'` is Firefox-only** (2026-11-25): `page.goto(url, { waitUntil: 'commit' })` throws `Unknown value for options.waitUntil` on Chrome. `gotoExtensionPage()` already falls back to `domcontentloaded`; any ad-hoc navigation must do the same.
 
 ## e2e-firefox
 
 - **`page.goto` never resolves for `moz-extension://` documents over BiDi** (2026-11-24): `waitUntil: 'domcontentloaded' | 'load'` hangs forever; use `gotoExtensionPage()` / `reloadExtensionPage()`, which navigate with `commit` (with a Chrome fallback) and then poll for the app-root element.
 - **`page.url()` returns `about:blank` for extension documents over BiDi** (2026-11-24): read `location.href` via `page.evaluate` whenever the URL matters.
 - **Determinism requires the pinned extension UUID** (2026-11-24): launch with `xpinstall.signatures.required: false` and `extensions.webextensions.uuids` mapping the manifest `gecko.id` to `FIXED_FIREFOX_UUID`; `installExtension()` must return that same id or the session is invalid.
+- **BiDi `webExtension.install` can only install temporary add-ons** (2026-11-25): a temporary add-on is always enabled and cannot be disabled through `management`, and an add-on whose `strict_min_version` exceeds the browser is rejected at install (`is not compatible with application version`). So an "already disabled" regular-extension fixture is Chrome-only; the Firefox E2E asserts the theme/app exclusion instead and reports which path ran.
 
 ## e2e-harness
 
 - **Every run must stay local and clean up** (2026-11-24): `browser.close()` and the fixture-server shutdown live in `finally` blocks so no headless browsers leak; `verify.mjs` wipes `.agent-artifacts/` at the start of each run; all pages come from `startFixtureServer()` on `127.0.0.1:0`, never live third-party sites.
 - **Behaviour changes must update both test layers** (2026-11-24): every extension behaviour change extends the Vitest tests in `tests/unit/` and the `runScenario` steps in `tests/e2e/verify.mjs`; updating only one layer lets the gate pass against stale expectations.
+- **The side panel is opened by direct navigation, never by the toolbar action** (2026-11-25): while `entrypoints/popup/` exists, Chrome's toolbar action opens the popup, so `setPanelBehavior({ openPanelOnActionClick: true })` is not asserted yet (ADR-009 defers it to ISS-013). `openSurface()` navigates straight to `sidepanel.html` on both browsers.
+- **Fixture extension ids are not stable in Chrome** (2026-11-25): an unpacked Chrome extension's id derives from its path, so it changes if the fixtures directory moves. Read the id from `installExtension()`'s return value and compare the candidate rows against that, never against a hard-coded id.
+- **`globalThis.browser` is absent inside a page context** (2026-11-25): WXT rewrites the `browser` identifier at build time from an auto-import, so `page.evaluate(() => browser.management...)` throws `browser is not defined`. Use `globalThis.browser ?? globalThis.chrome` in evaluated code.
 

@@ -1,3 +1,7 @@
+import { createChromePort } from '@/utils/bisect/chrome-port';
+import { deleteLegacyStorageKeys, readBisectConfig, updateBisectConfig } from '@/utils/bisect/config';
+import type { ManagementPort } from '@/utils/bisect/domain';
+import { createFirefoxPort } from '@/utils/bisect/firefox-port';
 import type { ContentStatus } from '@/utils/messaging';
 import { messenger } from '@/utils/messaging';
 import { applyStateUpdate, readState, recordInteraction } from '@/utils/state';
@@ -29,8 +33,21 @@ async function resolveContentStatus(targetTabId?: number): Promise<ContentStatus
   return readContentStatus(activeTab.id);
 }
 
-export default defineBackground(() => {
-  attachTestModeErrorLogging();
+function readExcludedExtensionIds(): Promise<readonly string[]> {
+  return readBisectConfig().then((config) => config.excludedExtensionIds);
+}
+
+export function createManagementPort(): ManagementPort {
+  const dependencies = { management: browser.management, getExcludedExtensionIds: readExcludedExtensionIds };
+  return import.meta.env.FIREFOX ? createFirefoxPort(dependencies) : createChromePort(dependencies);
+}
+
+export interface BackgroundDependencies {
+  managementPort?: ManagementPort;
+}
+
+export function registerBackgroundHandlers(dependencies: BackgroundDependencies = {}): void {
+  const port = dependencies.managementPort ?? createManagementPort();
 
   messenger.onMessage('getState', () => readState());
   messenger.onMessage('updateState', ({ data }) => applyStateUpdate(data));
@@ -38,5 +55,16 @@ export default defineBackground(() => {
   messenger.onMessage('getContentStatus', ({ data }) => resolveContentStatus(data));
   messenger.onMessage('getTabId', ({ sender }) => sender.tab?.id ?? null);
 
+  messenger.onMessage('getCapabilities', () => port.getCapabilities());
+  messenger.onMessage('listCandidates', () => port.listCandidates());
+  messenger.onMessage('getConfig', () => readBisectConfig());
+  messenger.onMessage('updateConfig', ({ data }) => updateBisectConfig(data));
+
+  void deleteLegacyStorageKeys();
+}
+
+export default defineBackground(() => {
+  attachTestModeErrorLogging();
+  registerBackgroundHandlers();
   console.info('[EXT_BG_READY]');
 });

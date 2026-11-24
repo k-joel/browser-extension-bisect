@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "Fixture Alpha",
+  "version": "1.2.3",
+  "description": "Enabled regular fixture extension for the bisect candidate list.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fixture-alpha@browser-extension-bisect.test"
+    }
+  }
+}

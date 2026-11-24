@@ -2,21 +2,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { startFixtureServer } from './fixture-server.mjs';
+import { ELIGIBLE_FIXTURES, FIXTURES, fixturesFor } from './fixtures/fixtures.mjs';
 import {
   BACKGROUND_READY_LOG,
   collectErrors,
-  EXTENSION_MARKER_ATTRIBUTE,
+  disableExtensionThroughSurface,
   launchTestBrowser,
+  readCandidateState,
   reloadExtensionPage,
-  waitForAttribute,
+  SIDEPANEL_ROOT_SELECTOR,
   waitForLog,
 } from './harness.mjs';
 
 const ARTIFACTS_DIR = path.resolve('.agent-artifacts');
-const STATUS_SELECTOR = '[data-testid="status"]';
-const TOGGLE_SELECTOR = '[data-testid="toggle-enabled"]';
-const RECORD_SELECTOR = '[data-testid="record-interaction"]';
-const BATCH_SIZE_SELECTOR = '[data-testid="batch-size"]';
+const SEARCH_SELECTOR = '[data-testid="candidate-search"]';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -40,59 +39,138 @@ async function resetArtifactsDir() {
   await fs.mkdir(ARTIFACTS_DIR, { recursive: true });
 }
 
-function textOf(page, selector) {
-  return page.$eval(selector, (node) => node.textContent?.trim() ?? '');
-}
-
-async function waitForSelectorText(page, selector, expected, timeout = 15000) {
+async function waitForCandidateState(surface, predicate, timeout = 20000) {
   const deadline = Date.now() + timeout;
   let last = null;
   while (Date.now() < deadline) {
-    last = await textOf(page, selector).catch(() => null);
-    if (last?.includes(expected)) return last;
+    last = await readCandidateState(surface).catch(() => null);
+    if (last !== null && predicate(last)) return last;
     await sleep(100);
   }
-  throw new Error(`Timed out waiting for "${selector}" to contain "${expected}" (last: ${JSON.stringify(last)})`);
+  throw new Error(`Timed out waiting for the candidate list (last: ${JSON.stringify(last)})`);
 }
 
-async function runScenario({ page, popup, session }) {
+async function setSearch(surface, value) {
+  await surface.$eval(
+    SEARCH_SELECTOR,
+    (node, next) => {
+      node.value = next;
+      node.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    value,
+  );
+  await sleep(150);
+}
+
+async function runScenario({ surface, session, installed }) {
   const steps = [];
   const record = (name, ok, details = {}) => {
     steps.push({ name, ok, ...details });
     if (!ok) throw new Error(`Step failed: ${name} ${JSON.stringify(details)}`);
   };
 
-  const initialMarker = await waitForAttribute(page, EXTENSION_MARKER_ATTRIBUTE, 15000);
-  record('content-script-injects', initialMarker !== null, { marker: initialMarker });
-  record('content-script-default-enabled', initialMarker === 'enabled', { marker: initialMarker });
+  const expectedEligible = ELIGIBLE_FIXTURES.map((fixture) => fixture.name);
+  const expectedBrowser = session.browserName;
 
-  await popup.waitForSelector(STATUS_SELECTOR, { timeout: 15000 });
-  const initialStatus = await textOf(popup, STATUS_SELECTOR);
-  record('popup-renders-stored-state', initialStatus.includes('enabled'), { status: initialStatus });
+  const initial = await waitForCandidateState(surface, (state) => state.state === 'ready');
 
-  await popup.click(TOGGLE_SELECTOR);
-  const disabledStatus = await waitForSelectorText(popup, STATUS_SELECTOR, 'disabled');
-  record('popup-toggle-mutates-state', disabledStatus.includes('disabled'), { status: disabledStatus });
+  record('sidepanel-loads-directly', initial.state === 'ready', { state: initial.state });
 
-  const disabledMarker = await waitForAttribute(page, EXTENSION_MARKER_ATTRIBUTE, 15000);
-  record('page-reflects-storage-change', disabledMarker === 'disabled', { marker: disabledMarker });
-
-  await popup.click(RECORD_SELECTOR);
-  const recordedStatus = await waitForSelectorText(popup, STATUS_SELECTOR, '1 interactions');
-  record('popup-records-interaction', recordedStatus.includes('1 interactions'), { status: recordedStatus });
-
-  const batchInput = await popup.$(BATCH_SIZE_SELECTOR);
-  record('popup-batch-size-input-present', batchInput !== null);
-  await batchInput.evaluate((node) => {
-    node.value = '4';
-    node.dispatchEvent(new Event('change', { bubbles: true }));
+  record('capability-report-renders', initial.browser === expectedBrowser, {
+    browser: initial.browser,
+    toggleMode: initial.toggleMode,
   });
-  await waitForSelectorText(popup, '[data-testid="settings-json"]', '"batchSize":4');
 
-  await reloadExtensionPage(popup, { selector: STATUS_SELECTOR });
-  const persistedStatus = await waitForSelectorText(popup, STATUS_SELECTOR, 'disabled');
-  record('state-persists-across-reload', persistedStatus.includes('disabled'), { status: persistedStatus });
-  await waitForSelectorText(popup, '[data-testid="settings-json"]', '"batchSize":4');
+  record('capability-toggle-mode-uses-a-known-mode', /Automatic|Assisted/.test(initial.toggleMode ?? ''), {
+    toggleMode: initial.toggleMode,
+  });
+
+  record(
+    'candidate-list-matches-fixtures',
+    JSON.stringify(initial.eligible.map((row) => row.name)) === JSON.stringify(expectedEligible),
+    { expected: expectedEligible, actual: initial.eligible.map((row) => row.name) },
+  );
+
+  record(
+    'candidate-ids-match-installed-fixtures',
+    initial.eligible.every((row, index) => row.id === installed[index]?.id),
+    { ids: initial.eligible.map((row) => row.id), installed: installed.map((entry) => entry.id) },
+  );
+
+  record(
+    'candidate-rows-start-selected',
+    initial.eligible.every((row) => row.selected === 'true'),
+    {
+      selected: initial.eligible.map((row) => row.selected),
+    },
+  );
+
+  record(
+    'self-listed-as-ineligible',
+    initial.ineligible.some((row) => row.reason === 'This add-on'),
+    {
+      ineligible: initial.ineligible,
+    },
+  );
+
+  record(
+    'theme-listed-as-ineligible',
+    initial.ineligible.some((row) => row.reason === 'Theme or app'),
+    {
+      ineligible: initial.ineligible,
+    },
+  );
+
+  const dormantExpected = session.browserName === 'chrome';
+  record(
+    'disabled-fixture-reported-disabled-at-start',
+    initial.ineligible.some((row) => row.reason === 'Disabled at start') === dormantExpected,
+    { expected: dormantExpected, ineligible: initial.ineligible },
+  );
+
+  await setSearch(surface, 'bravo');
+  const filtered = await readCandidateState(surface);
+  record(
+    'search-filters-by-display-name',
+    JSON.stringify(filtered.eligible.map((row) => row.name)) === JSON.stringify([FIXTURES.bravo.name]),
+    { actual: filtered.eligible.map((row) => row.name) },
+  );
+  record('search-updates-live-announcement', /1 of 2 candidates/.test(filtered.live ?? ''), { live: filtered.live });
+
+  await setSearch(surface, 'zzz');
+  const noMatch = await readCandidateState(surface);
+  record('search-reports-no-match', noMatch.searchEmpty !== null && noMatch.eligible.length === 0, {
+    searchEmpty: noMatch.searchEmpty,
+  });
+
+  await setSearch(surface, '');
+  const restored = await waitForCandidateState(surface, (state) => state.eligible.length === 2);
+  record('search-clears-back-to-full-list', restored.eligible.length === 2, { count: restored.eligible.length });
+
+  await surface.$eval('[data-testid="candidate-row"] [data-testid="candidate-checkbox"]', (node) => node.click());
+  const excluded = await waitForCandidateState(surface, (state) =>
+    state.eligible.some((row) => row.selected === 'false'),
+  );
+  record(
+    'exclusion-persists-through-messaging',
+    excluded.eligible.some((row) => row.selected === 'false'),
+    {
+      selected: excluded.eligible.map((row) => row.selected),
+    },
+  );
+  record(
+    'excluded-row-shows-a-reason',
+    excluded.eligible.filter((row) => row.selected === 'false').every((row) => row.reason === 'Excluded by you'),
+    { eligible: excluded.eligible },
+  );
+
+  await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+  const afterReload = await waitForCandidateState(surface, (state) => state.state === 'ready');
+  record(
+    'exclusion-survives-panel-reload',
+    afterReload.eligible.some((row) => row.selected === 'false'),
+    { eligible: afterReload.eligible },
+  );
 
   const errors = collectErrors(session.recorder);
   record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
@@ -103,9 +181,9 @@ async function runScenario({ page, popup, session }) {
   return { steps };
 }
 
-async function captureFailure(popup, page, browserName, scenario) {
+async function captureFailure(surface, page, browserName, scenario) {
   const file = path.join(ARTIFACTS_DIR, `failure-${browserName}-${scenario}.png`);
-  for (const target of [popup, page]) {
+  for (const target of [surface, page]) {
     if (target === null) continue;
     try {
       await target.screenshot({ path: file, fullPage: false });
@@ -119,30 +197,31 @@ async function captureFailure(popup, page, browserName, scenario) {
 
 async function summarizeDom(page) {
   try {
-    return await page.evaluate(() => {
-      const describe = (element) => {
-        const id = element.id === '' ? '' : `#${element.id}`;
+    return await page.evaluate(() => ({
+      title: document.title,
+      nodes: Array.from(document.querySelectorAll('[data-testid]')).map((element) => {
         const testId = element.getAttribute('data-testid');
-        const suffix = testId === null ? '' : `[data-testid="${testId}"]`;
-        return `${element.tagName.toLowerCase()}${id}${suffix}="${(element.textContent ?? '').trim().slice(0, 60)}"`;
-      };
-      return {
-        title: document.title,
-        root: document.documentElement.outerHTML.slice(0, 1200),
-        nodes: Array.from(document.querySelectorAll('[data-testid]')).map(describe),
-      };
-    });
+        return `${element.tagName.toLowerCase()}[data-testid="${testId}"]="${(element.textContent ?? '').trim().slice(0, 60)}"`;
+      }),
+    }));
   } catch {
     return null;
   }
 }
 
 async function runBrowser(browserName, options) {
-  const fixture = await startFixtureServer();
-  const result = { browser: browserName, ok: false, scenario: options.scenario ?? 'default', steps: [], errors: null };
+  const fixtureServer = await startFixtureServer();
+  const result = {
+    browser: browserName,
+    ok: false,
+    scenario: options.scenario ?? 'candidate-picker',
+    firefoxPath: browserName === 'firefox' ? null : undefined,
+    steps: [],
+    errors: null,
+  };
 
   let session = null;
-  let popup = null;
+  let surface = null;
   let page = null;
 
   try {
@@ -153,11 +232,29 @@ async function runBrowser(browserName, options) {
       if (!ready) throw new Error('Background service worker never reported readiness');
     }
 
-    page = await session.newPage();
-    await page.goto(`${fixture.url}/`, { waitUntil: 'domcontentloaded' });
+    const installed = await session.installFixtures(fixturesFor(browserName));
+    const eligibleInstalled = installed.filter((entry) =>
+      ELIGIBLE_FIXTURES.some((fixture) => fixture.dir === entry.dir),
+    );
+    const dormantInstalled = installed.find((entry) => entry.dir === FIXTURES.dormant.dir) ?? null;
 
-    popup = await session.openPopup(page);
-    const { steps } = await runScenario({ page, popup, session });
+    surface = await session.openSurface();
+
+    if (browserName === 'chrome') {
+      if (dormantInstalled === null) throw new Error('The dormant fixture was not installed');
+      const disabled = await disableExtensionThroughSurface(surface, dormantInstalled.id);
+      if (!disabled.ok || disabled.enabled !== false) {
+        throw new Error(`Chrome could not disable the dormant fixture: ${JSON.stringify(disabled)}`);
+      }
+      await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+    }
+
+    result.firefoxPath = browserName === 'firefox' ? 'management.getAll (temporary add-ons; no toggling)' : undefined;
+
+    page = await session.newPage();
+    await page.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+
+    const { steps } = await runScenario({ surface, session, installed: eligibleInstalled });
     result.steps = steps;
     result.ok = true;
   } catch (error) {
@@ -168,13 +265,13 @@ async function runBrowser(browserName, options) {
     result.errors = {
       message: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? (error.stack ?? null) : null,
-      screenshot: await captureFailure(popup, page, browserName, options.scenario ?? 'default'),
-      dom: page === null ? null : await summarizeDom(popup ?? page),
+      screenshot: await captureFailure(surface, page, browserName, options.scenario ?? 'candidate-picker'),
+      dom: surface === null ? null : await summarizeDom(surface),
       ...errors,
     };
   } finally {
     if (session !== null) await session.close().catch(() => undefined);
-    await fixture.close().catch(() => undefined);
+    await fixtureServer.close().catch(() => undefined);
   }
 
   return result;
@@ -182,7 +279,8 @@ async function runBrowser(browserName, options) {
 
 function printHuman(results) {
   for (const result of results) {
-    console.log(`[${result.ok ? 'PASS' : 'FAIL'}] ${result.browser}`);
+    console.log(`[${result.ok ? 'PASS' : 'FAIL'}] ${result.browser} (${result.scenario})`);
+    if (result.firefoxPath) console.log(`  firefoxPath: ${result.firefoxPath}`);
     for (const step of result.steps) {
       console.log(`  ${step.ok ? 'PASS' : 'FAIL'} ${step.name}`);
     }

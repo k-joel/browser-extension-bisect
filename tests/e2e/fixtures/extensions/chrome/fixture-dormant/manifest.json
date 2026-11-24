@@ -1,0 +1,6 @@
+{
+  "manifest_version": 3,
+  "name": "Fixture Dormant",
+  "version": "1.0.0",
+  "description": "Regular fixture extension that the harness disables before the side panel loads."
+}

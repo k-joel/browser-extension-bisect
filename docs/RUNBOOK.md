@@ -174,6 +174,8 @@ Runs the complete gate: lint, typecheck, unit tests, both test-mode builds, and 
 - **`Extension build missing at ...\.output\chrome-mv3. Run "npm run build:chrome" first.`**: E2E was invoked without builds. Fix: run `npm run agent:verify` (which builds first) or `npm run build:all` before `npm run test:e2e`.
 - **Chrome aborts with `Extensions.loadUnpacked: Target closed` on launch**: an extension path was passed via `enableExtensions: [path]` (or `--load-extension`) at launch. Fix: keep the harness's post-launch `browser.installExtension(extPath)` and launch only with `enableExtensions: true` + `pipe: true` + `--enable-unsafe-extension-debugging`.
 - **A browser's steps time out or the background never logs `[EXT_BG_READY]`**: capture state per browser with RUN-005 before changing any code.
+- **`candidate-list-matches-fixtures` fails on only one browser**: fixture names must stay identical across `tests/e2e/fixtures/extensions/chrome/**` and `.../firefox/**`, because `expectedEligibleNames()` in `tests/e2e/fixtures/fixtures.mjs` derives the expectation from the fixture catalog. Compare the fixture manifests first.
+- **`disabled-fixture-reported-disabled-at-start` fails on Firefox**: expected. Firefox BiDi can only install temporary, always-enabled add-ons, so the step asserts the *absence* of a `Disabled at start` row there; the reason is only exercised on Chrome (ISS-014).
 
 ---
 

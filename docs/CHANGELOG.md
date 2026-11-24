@@ -122,6 +122,13 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 ### Added
 
 - Cross-browser Browser Extension Bisect add-on built on WXT, producing Chrome (Manifest V3) and Firefox (Manifest V2) builds from one TypeScript codebase.
+- Side panel UI (`side panel` on Chrome, `sidebar_action` on Firefox) rendering the no-session screen, the capability report, and the candidate picker, replacing the popup as the product surface ([ADR-009](DECISIONS.md)).
+- Candidate picker with display-name search, per-extension include/exclude checkboxes, deterministic name-then-id ordering, and a "Not eligible" list that explains every exclusion (theme or app, disabled at start, policy-locked, this add-on, excluded by you).
+- Versioned bisect config in `local:bisectConfig` with the documented fallback, a serialized writer owned by the background, and first-start deletion of the legacy `enabled`, `interactionCount`, and `settings` keys.
+- `management` and Chrome `sidePanel` permissions, plus Chrome's `side_panel.default_path` and Firefox's `sidebar_action` panel metadata.
+- `ManagementPort` contract with Chrome and Firefox adapters behind one shared eligibility filter and ordering helper, and an injectable management surface so adapters are testable without a browser.
+- Four typed messages (`getCapabilities`, `listCandidates`, `getConfig`, `updateConfig`) on the existing messaging protocol.
+- E2E fixture extensions and a multi-install harness path, with a direct `sidepanel.html` navigation that asserts the candidate list on both browsers.
 - Popup with an enable/disable switch, an interaction counter, and a persisted batch-size setting, all backed by typed local storage.
 - Content script on all pages that renders a `data-ext-bisect-state` DOM marker and keeps it in sync with stored state.
 - Test-mode builds (`EXT_TEST_MODE=1`) with `?tabId=` popup targeting and `[EXT_BG_ERR]` error logging for automation; production builds strip these hooks.

@@ -5,9 +5,11 @@ import puppeteer from 'puppeteer';
 export const EXTENSION_MARKER_ATTRIBUTE = 'data-ext-bisect-state';
 export const EXTENSION_TAB_ID_ATTRIBUTE = 'data-ext-bisect-tab-id';
 export const POPUP_ROOT_SELECTOR = '[data-testid="popup-root"]';
+export const SIDEPANEL_ROOT_SELECTOR = '[data-testid="sidepanel-root"]';
 export const BACKGROUND_READY_LOG = '[EXT_BG_READY]';
 export const BACKGROUND_ERROR_PREFIX = '[EXT_BG_ERR]';
 export const FIXED_FIREFOX_UUID = '11111111-2222-3333-4444-555555555555';
+export const FIXTURE_EXTENSIONS_DIR = path.resolve('tests/e2e/fixtures/extensions');
 
 const BENIGN_MESSAGE_PATTERNS = [/favicon\.ico/i];
 const MAX_RECORDED_ENTRIES = 200;
@@ -194,6 +196,12 @@ async function launchChrome({ headless, recorder, extPath }) {
       await gotoExtensionPage(fallback, `${extensionOrigin}/popup.html`);
       return fallback;
     },
+    async openSurface() {
+      const page = await browser.newPage();
+      attachPageListeners(page, recorder, 'sidepanel');
+      await gotoExtensionPage(page, `${extensionOrigin}/sidepanel.html`, { selector: SIDEPANEL_ROOT_SELECTOR });
+      return page;
+    },
   };
 }
 
@@ -235,6 +243,12 @@ async function launchFirefox({ headless, recorder, extPath }) {
       await gotoExtensionPage(popup, `${extensionOrigin}/popup.html${query}`);
       return popup;
     },
+    async openSurface() {
+      const page = await browser.newPage();
+      attachPageListeners(page, recorder, 'sidepanel');
+      await gotoExtensionPage(page, `${extensionOrigin}/sidepanel.html`, { selector: SIDEPANEL_ROOT_SELECTOR });
+      return page;
+    },
   };
 }
 
@@ -253,6 +267,14 @@ export async function launchTestBrowser({ browserName, headless = true }) {
     browserName,
     recorder,
     extPath,
+    async installFixtures(fixtures) {
+      const installed = [];
+      for (const fixture of fixtures) {
+        const id = await session.browser.installExtension(path.join(FIXTURE_EXTENSIONS_DIR, browserName, fixture.dir));
+        installed.push({ ...fixture, id });
+      }
+      return installed;
+    },
     async newPage(url) {
       const page = await session.browser.newPage();
       attachPageListeners(page, recorder, 'page:test');
@@ -276,4 +298,39 @@ export function collectErrors(recorder) {
     ),
     requestFailures: recorder.requestFailures,
   };
+}
+
+export async function disableExtensionThroughSurface(page, extensionId) {
+  return page.evaluate(async (id) => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    try {
+      await api.management.setEnabled(id, false);
+      const target = (await api.management.getAll()).find((entry) => entry.id === id);
+      return { ok: true, enabled: target?.enabled ?? null };
+    } catch (error) {
+      return { ok: false, enabled: null, message: String(error?.message ?? error) };
+    }
+  }, extensionId);
+}
+
+export async function readCandidateState(page) {
+  return page.evaluate(() => ({
+    state: document.querySelector('[data-testid="sidepanel-root"]')?.getAttribute('data-state') ?? 'missing',
+    live: document.querySelector('[data-testid="sidepanel-live"]')?.textContent?.trim() ?? null,
+    browser: document.querySelector('[data-testid="capability-browser"]')?.textContent?.trim() ?? null,
+    toggleMode: document.querySelector('[data-testid="capability-toggle-mode"]')?.textContent?.trim() ?? null,
+    eligible: Array.from(document.querySelectorAll('[data-testid="candidate-row"]')).map((node) => ({
+      id: node.getAttribute('data-extension-id'),
+      name: node.querySelector('[data-testid="candidate-name"]')?.textContent?.trim() ?? '',
+      selected: node.getAttribute('data-selected'),
+      reason: node.querySelector('[data-testid="candidate-reason"]')?.textContent?.trim() ?? null,
+    })),
+    ineligible: Array.from(document.querySelectorAll('[data-testid="ineligible-row"]')).map((node) => ({
+      id: node.getAttribute('data-extension-id'),
+      name: node.querySelector('[data-testid="ineligible-name"]')?.textContent?.trim() ?? '',
+      reason: node.querySelector('[data-testid="ineligible-reason"]')?.textContent?.trim() ?? '',
+    })),
+    eligibleEmpty: document.querySelector('[data-testid="eligible-empty"]')?.textContent?.trim() ?? null,
+    searchEmpty: document.querySelector('[data-testid="search-empty"]')?.textContent?.trim() ?? null,
+  }));
 }

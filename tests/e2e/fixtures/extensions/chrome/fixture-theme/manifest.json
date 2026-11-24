@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Fixture Theme",
+  "version": "1.0.0",
+  "description": "Theme fixture that must be reported as not eligible with the theme-or-app reason.",
+  "theme": {
+    "colors": {
+      "frame": [16, 32, 48],
+      "toolbar": [32, 48, 64],
+      "tab_text": [240, 240, 240],
+      "bookmark_text": [224, 224, 224]
+    }
+  }
+}

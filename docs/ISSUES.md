@@ -100,6 +100,27 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - **Cause**: `utils/storage.ts:11-21` defines the settings scaffold; the only writers are `utils/state.ts:27` and the popup input, and nothing reads them to drive extension management.
 - **Suggested fix**: Implement batch toggling in `entrypoints/background.ts` via the `management` API (adding the `management` permission in `wxt.config.ts`), then extend `tests/unit/` and the scenarios in `tests/e2e/verify.mjs`.
 
+### ISS-014: Firefox E2E cannot assert a disabled regular-extension candidate
+
+- **Symptom**: The "disabled at start" ineligible reason is only asserted on Chrome; the Firefox E2E run installs no fixture that can reach that state, so a Firefox regression in that eligibility clause passes the gate.
+- **Where flagged**: 2026-11-25, ISS-002 side panel E2E work.
+- **Cause**: `tests/e2e/harness.mjs` installs fixtures through WebDriver BiDi `webExtension.install`, which only creates temporary add-ons that are always enabled; `management.setEnabled` rejects Firefox extension targets that are not policy-installed, an incompatible `strict_min_version` is refused at install, and `about:addons` exposes no `addon-manager`/`addon-card` elements to script.
+- **Suggested fix**: Ship the documented test-mode manual-toggle driver (`utils/bisect/test-driver.ts`, ISS-005) and give it a disabled-fixture hook, then extend `tests/e2e/fixtures/fixtures.mjs` so the Firefox run asserts `Disabled at start` too.
+
+### ISS-015: Theme fixtures collide with Firefox's four built-in themes in E2E assertions
+
+- **Symptom**: The Firefox run reports five `Theme or app` ineligible rows (four built-in themes plus the fixture), so an assertion that counts ineligible rows or assumes exactly one theme passes on Chrome and fails on Firefox.
+- **Where flagged**: 2026-11-25, ISS-002 E2E work.
+- **Cause**: `tests/e2e/fixtures/fixtures.mjs` cannot restrict `management.getAll()`; Firefox always exposes `default-theme`, `firefox-compact-light`, `firefox-compact-dark`, and `firefox-alpenglow`.
+- **Suggested fix**: Keep every theme assertion in `tests/e2e/verify.mjs` existential (`some(row => row.reason === 'Theme or app')`) rather than count-based, and note the built-in themes in `docs/NOTES.md`.
+
+### ISS-016: Excluded candidates return to the eligible list, so the picker shows a reason on an eligible row
+
+- **Symptom**: After a user unchecks a candidate, the row stays in the picker list with `data-selected="false"` and a "Excluded by you" chip, while `listCandidates` reports the same extension as `ineligible`/`user-excluded`; two sources describe the same state.
+- **Where flagged**: 2026-11-25, ISS-002 candidate picker work.
+- **Cause**: `utils/bisect/management-port.ts` treats a config exclusion as an eligibility failure, and `entrypoints/sidepanel/presentation.ts` re-merges those rows into the picker so the checkbox can be cleared again.
+- **Suggested fix**: Decide the contract before ISS-003 consumes the lists — either keep user-excluded extensions out of `ineligible` (a picker-only concept) or render them exactly once from `ineligible`, then update the eligibility tests, the component tests, and `docs/SPEC.md` §Candidate eligibility together.
+
 ---
 
 ## Tickets
@@ -113,7 +134,7 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Open the side panel on Chrome and the sidebar on Firefox and see the capability report plus the candidate picker. The background enumerates installed extensions, filters out ineligible ones with a reason, and returns eligible and ineligible lists through the typed messaging protocol. The user can search, select, and exclude candidates, and the selection persists in the versioned bisect config. Nothing is toggled in this ticket.
 - **Blocked by**: None (can start immediately).
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-24, ISS-002 slice). Automatic toggle capability is reported but untested until ISS-003; ISS-014/015/016 track E2E and picker-contract follow-ups.
 
 - [ ] Both targets build with a side panel/sidebar document and declare `management` and Chrome `sidePanel`; the scaffold's popup and host access may remain until ISS-013.
 - [ ] The panel renders the no-session screen, capability report, and candidate picker with stable test ids and accessible names.

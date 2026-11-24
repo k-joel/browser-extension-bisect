@@ -503,3 +503,28 @@ When the final confirmation contradicts the single-culprit assumption, stop and 
 
 **Mitigations**: Explain the possible causes in the UI; offer restore and a fresh session; keep the report copyable; leave the engine's partition boundary ready for a ddmin fallback.
 
+---
+
+## ADR-016: Keep user-excluded extensions selectable in the candidate picker
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: ISS-002 implementation session (LLM-driven)
+
+### Context
+
+`listCandidates` is specified to return `{ eligible, ineligible }` with a `user-excluded` reason, so a config exclusion is reported exactly like an intrinsic exclusion (theme, disabled, policy-locked, self). The candidate picker, however, has to let the user clear an exclusion again — an ineligible-only row would strand the extension with no control to re-include it. The two requirements pull in opposite directions: one list wants the exclusion reported as a failure, the UI wants it as a selection the user can reverse.
+
+### Decision
+
+Keep `listCandidates` honest: an extension whose id is in `config.excludedExtensionIds` is reported in `ineligible` with reason `user-excluded`. In the UI, treat `user-excluded` differently from the intrinsic reasons: `buildPickerRows` re-merges those entries into the selectable candidate list as unchecked rows, and `intrinsicIneligible` excludes them from the "Not eligible" section. Every exclusion reason therefore still has exactly one visible home, and every selectable row has a checkbox.
+
+### Consequences
+
+**Good**: Every eligibility clause is observable through one seam (`listCandidates`); the picker never strands an extension; the "Not eligible" section only holds extensions the user cannot act on.
+
+**Bad**: Two modules now encode the same state (the port reports `user-excluded`, the presentation layer converts it back into a row), so a future change to the exclusion contract must touch both — tracked as ISS-016.
+
+**Mitigations**: Keep `buildPickerRows` and `intrinsicIneligible` pure and unit-tested; note the contract in `docs/ARCH.md` §4.1 and §6.3; resolve the duplication before ISS-003 consumes the lists.
+
+

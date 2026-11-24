@@ -1,4 +1,5 @@
 import { defineExtensionMessaging } from '@webext-core/messaging';
+import type { BisectConfig, CandidateLists, CapabilityReport } from './bisect/domain';
 import type { BisectSettings } from './storage';
 
 export interface ExtensionState {
@@ -19,6 +20,10 @@ export interface ProtocolMap {
   getContentStatus(targetTabId?: number): ContentStatus;
   getContentMarker(): string | null;
   getTabId(): number | null;
+  getCapabilities(): CapabilityReport;
+  listCandidates(): CandidateLists;
+  getConfig(): BisectConfig;
+  updateConfig(changes: Partial<BisectConfig>): BisectConfig;
 }
 
 export const messenger = defineExtensionMessaging<ProtocolMap>();
