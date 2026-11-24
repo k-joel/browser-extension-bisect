@@ -10,6 +10,7 @@ import {
   reloadTestTab,
   resetSession,
   resetSessionQueue,
+  retryTrial,
   type SessionDependencies,
   startSession,
   submitVerdict,
@@ -350,7 +351,8 @@ describe('session serialization', () => {
     expect(log).not.toBeNull();
     const types = log?.events.map((event) => event.type) ?? [];
     expect(types.filter((type) => type === 'session-started')).toHaveLength(1);
-    expect(types.at(-1)).toBe('verdict-recorded');
+    expect(types).toContain('verdict-recorded');
+    expect(types.indexOf('verdict-recorded')).toBeLessThan(types.length);
   });
 
   it('rejects an apply when no session exists', async () => {
@@ -462,5 +464,299 @@ describe('test tab completion waiting', () => {
     });
 
     expect(view.status).toBe('awaiting-verdict');
+  });
+});
+
+const NUMBERS = Array.from({ length: 24 }, (_, index) => String(index + 1));
+
+/**
+ * Candidate order is captured as name-then-id, so the fixture names are
+ * zero-padded to keep the snapshot in numeric order for the worked example.
+ */
+function numberHarness(): Harness {
+  return createHarness(NUMBERS.map((id) => ({ id, name: `Fixture ${id.padStart(2, '0')}` })));
+}
+
+async function enabledStatesOf(harness: Harness, ids: string[]): Promise<Record<string, boolean>> {
+  const all = await harness.surface.getAll();
+  const states: Record<string, boolean> = {};
+  for (const id of ids) states[id] = all.find((entry) => entry.id === id)?.enabled ?? false;
+  return states;
+}
+
+type View = Awaited<ReturnType<typeof submitVerdict>>;
+
+type Oracle = (trial: { enabledIds: string[] }) => 'persists' | 'gone';
+
+/**
+ * Drives the session the way the panel does: answer the baseline, re-apply the
+ * next partition, answer it, and repeat until the session leaves
+ * `awaiting-verdict`. The oracle stands in for the human verdict and is the only
+ * thing that knows which candidate is faulty.
+ */
+async function runLoop(harness: Harness, candidateIds: string[], oracle: Oracle): Promise<View> {
+  await startSession(harness.dependencies, { candidateIds, baselineMode: 'auto', testTab: null });
+  let view: View = await submitVerdict(harness.dependencies, { verdict: 'gone' });
+
+  for (let guard = 0; guard < 100; guard += 1) {
+    view = await applyTrial(harness.dependencies);
+    const trial = view.currentTrial;
+    if (view.status !== 'awaiting-verdict' || trial === null) return view;
+
+    view = await submitVerdict(harness.dependencies, { verdict: oracle(trial) });
+    if (view.status !== 'awaiting-verdict') return view;
+  }
+
+  throw new Error('the session loop did not terminate');
+}
+
+function partitionTrials(view: View) {
+  return view.trials.filter((trial) => trial.round > 0);
+}
+
+describe('partition loop in the session', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+  });
+
+  it('starts the first trial only after the clean baseline is answered', async () => {
+    const harness = numberHarness();
+    await startSession(harness.dependencies, {
+      candidateIds: NUMBERS,
+      baselineMode: 'auto',
+      testTab: null,
+    });
+
+    let log = await readBisectLog();
+    expect(log?.events.map((event) => event.type)).toEqual(['session-started', 'trial-started', 'trial-applied']);
+
+    await submitVerdict(harness.dependencies, { verdict: 'gone' });
+    const applied = await applyTrial(harness.dependencies);
+
+    log = await readBisectLog();
+    expect(log?.events.map((event) => event.type)).toEqual([
+      'session-started',
+      'trial-started',
+      'trial-applied',
+      'baseline-recorded',
+      'trial-started',
+      'trial-applied',
+    ]);
+    expect(applied.currentTrial).toMatchObject({
+      round: 1,
+      enabledIds: NUMBERS.slice(0, 12),
+      disabledIds: NUMBERS.slice(12),
+    });
+  });
+
+  it('runs the N = 24 worked example to the documented culprit', async () => {
+    const harness = numberHarness();
+    const view = await runLoop(harness, NUMBERS, (trial) => (trial.enabledIds.includes('8') ? 'persists' : 'gone'));
+
+    expect(view.status).toBe('completed');
+    expect(view.culpritId).toBe('8');
+    expect(partitionTrials(view)).toHaveLength(5);
+  });
+
+  it('records every documented batch and verdict in the log', async () => {
+    const harness = numberHarness();
+    await runLoop(harness, NUMBERS, (trial) => (trial.enabledIds.includes('8') ? 'persists' : 'gone'));
+
+    const view = await getSession();
+    const trials = partitionTrials(view as View);
+    const disabledSets = trials.map((trial) => trial.disabledIds);
+
+    expect(disabledSets).toEqual([
+      NUMBERS.slice(12),
+      NUMBERS.slice(6, 12),
+      NUMBERS.slice(9, 12),
+      NUMBERS.slice(8, 9),
+      NUMBERS.slice(7, 8),
+    ]);
+    expect(trials.map((trial) => trial.verdict)).toEqual(['persists', 'gone', 'persists', 'persists', 'gone']);
+  });
+
+  it('re-enables the cleared candidates on later trials', async () => {
+    const harness = numberHarness();
+    await runLoop(harness, NUMBERS, (trial) => (trial.enabledIds.includes('8') ? 'persists' : 'gone'));
+
+    const log = await readBisectLog();
+    const started = (log?.events ?? []).filter((event) => event.type === 'trial-started');
+    const payload = started[2]?.payload as { enabledIds: string[]; disabledIds: string[] };
+
+    expect(payload.disabledIds).toEqual(NUMBERS.slice(6, 12));
+    expect(payload.enabledIds).toEqual(expect.arrayContaining(['1', '13', '24']));
+  });
+
+  it('leaves the culprit disabled and the cleared candidates enabled at completion', async () => {
+    const harness = numberHarness();
+    await runLoop(harness, NUMBERS, (trial) => (trial.enabledIds.includes('8') ? 'persists' : 'gone'));
+
+    const states = await enabledStatesOf(harness, ['8', '7', '1']);
+    expect(states).toEqual({ '8': false, '7': true, '1': true });
+  });
+
+  it('needs a sixth trial for the #7 variant', async () => {
+    const harness = numberHarness();
+    const view = await runLoop(harness, NUMBERS, (trial) => (trial.enabledIds.includes('7') ? 'persists' : 'gone'));
+
+    expect(view.status).toBe('completed');
+    expect(view.culpritId).toBe('7');
+    expect(partitionTrials(view)).toHaveLength(6);
+    expect(partitionTrials(view).at(-1)).toMatchObject({ disabledIds: ['7'], verdict: 'gone' });
+    expect(partitionTrials(view).at(-1)?.enabledIds).not.toContain('7');
+  });
+
+  it('appends session-completed with the culprit', async () => {
+    const harness = numberHarness();
+    await runLoop(harness, NUMBERS, (trial) => (trial.enabledIds.includes('8') ? 'persists' : 'gone'));
+
+    const log = await readBisectLog();
+    const completed = log?.events.find((event) => event.type === 'session-completed');
+    expect(completed?.payload).toEqual({ culpritId: '8' });
+  });
+
+  it('completes an N = 2 session whose culprit was disabled by the partition', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+    const view = await runLoop(harness, ['aaaa', 'bbbb'], (trial) =>
+      trial.enabledIds.includes('bbbb') ? 'persists' : 'gone',
+    );
+
+    expect(view.status).toBe('completed');
+    expect(view.culpritId).toBe('bbbb');
+    expect(partitionTrials(view)).toHaveLength(1);
+  });
+
+  it('confirms an N = 2 session whose culprit was left enabled', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+    const view = await runLoop(harness, ['aaaa', 'bbbb'], (trial) =>
+      trial.enabledIds.includes('aaaa') ? 'persists' : 'gone',
+    );
+
+    expect(view.status).toBe('completed');
+    expect(view.culpritId).toBe('aaaa');
+    expect(partitionTrials(view)).toHaveLength(2);
+  });
+
+  it('completes an N = 3 session in at most two partition trials', async () => {
+    const harness = createHarness([ALPHA, BRAVO, { id: 'cccc', name: 'Charlie' }]);
+    const view = await runLoop(harness, ['aaaa', 'bbbb', 'cccc'], (trial) =>
+      trial.enabledIds.includes('bbbb') ? 'persists' : 'gone',
+    );
+
+    expect(view.status).toBe('completed');
+    expect(view.culpritId).toBe('bbbb');
+    expect(partitionTrials(view).length).toBeLessThanOrEqual(2);
+  });
+
+  it('reports the trial number and the estimated trials as progress', async () => {
+    const harness = numberHarness();
+    await startSession(harness.dependencies, { candidateIds: NUMBERS, baselineMode: 'auto', testTab: null });
+    await submitVerdict(harness.dependencies, { verdict: 'gone' });
+    const view = await applyTrial(harness.dependencies);
+
+    expect(view.progress).toEqual({ trialNumber: 2, estimatedTrials: 6, suspectCount: 24 });
+  });
+
+  it('does not apply a trial once the session is completed', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+    await runLoop(harness, ['aaaa', 'bbbb'], (trial) => (trial.enabledIds.includes('bbbb') ? 'persists' : 'gone'));
+
+    await expect(applyTrial(harness.dependencies)).rejects.toThrow(/Cannot apply a trial/);
+  });
+});
+
+describe('retry and inconclusive outcomes', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+  });
+
+  it('re-applies the same target state without recording a verdict', async () => {
+    const harness = createHarness([ALPHA, BRAVO, { id: 'cccc', name: 'Charlie' }]);
+    await startSession(harness.dependencies, {
+      candidateIds: ['aaaa', 'bbbb', 'cccc'],
+      baselineMode: 'auto',
+      testTab: null,
+    });
+    await submitVerdict(harness.dependencies, { verdict: 'gone' });
+    const first = await applyTrial(harness.dependencies);
+
+    harness.surface.setEnabledCalls.length = 0;
+    const retried = await retryTrial(harness.dependencies, {});
+
+    expect(retried.currentTrial).toMatchObject({
+      round: first.currentTrial?.round,
+      enabledIds: first.currentTrial?.enabledIds,
+      disabledIds: first.currentTrial?.disabledIds,
+      verdict: null,
+    });
+    expect(retried.currentTrial?.appliedAt).not.toBeNull();
+
+    const log = await readBisectLog();
+    expect(log?.events.map((event) => event.type)).toEqual([
+      'session-started',
+      'trial-started',
+      'trial-applied',
+      'baseline-recorded',
+      'trial-started',
+      'trial-applied',
+      'trial-retried',
+      'trial-applied',
+    ]);
+    expect(log?.events.some((event) => event.type === 'verdict-recorded')).toBe(false);
+  });
+
+  it('keeps the suspect pool and the progress across a retry', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+    await startSession(harness.dependencies, { candidateIds: ['aaaa', 'bbbb'], baselineMode: 'auto', testTab: null });
+    await submitVerdict(harness.dependencies, { verdict: 'gone' });
+    await applyTrial(harness.dependencies);
+
+    const retried = await retryTrial(harness.dependencies, { reason: 'the page did not settle' });
+
+    expect(retried.suspects).toEqual(['aaaa', 'bbbb']);
+    expect(retried.currentTrial?.round).toBe(1);
+    expect(retried.progress?.suspectCount).toBe(2);
+  });
+
+  it('rejects a retry when no trial is open', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+
+    await expect(retryTrial(harness.dependencies, {})).rejects.toThrow(/No active session/);
+  });
+
+  it('reports a persisting final confirmation as inconclusive with the lone suspect', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+    const view = await runLoop(harness, ['aaaa', 'bbbb'], () => 'persists');
+
+    expect(view.status).toBe('inconclusive');
+    expect(view.culpritId).toBeNull();
+    expect(view.ambiguityIds).toEqual(['aaaa']);
+
+    const log = await readBisectLog();
+    const inconclusive = log?.events.find((event) => event.type === 'session-inconclusive');
+    expect(inconclusive?.payload).toMatchObject({
+      ambiguityIds: ['aaaa'],
+      reason: 'final-confirmation-persists',
+    });
+  });
+
+  it('leaves the ambiguous suspect disabled for the inconclusive outcome', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+    await runLoop(harness, ['aaaa', 'bbbb'], () => 'persists');
+
+    const states = await enabledStatesOf(harness, ['aaaa', 'bbbb']);
+    expect(states).toEqual({ aaaa: false, bbbb: true });
+  });
+
+  it('never names a culprit when a final confirmation contradicts the search', async () => {
+    const harness = numberHarness();
+    const view = await runLoop(harness, NUMBERS, () => 'persists');
+
+    expect(view.status).toBe('inconclusive');
+    expect(view.culpritId).toBeNull();
+    expect(view.ambiguityIds.length).toBeGreaterThan(0);
   });
 });

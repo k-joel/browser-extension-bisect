@@ -1,5 +1,6 @@
 import { storage } from 'wxt/utils/storage';
 import type { BisectEvent, BisectLog, CapabilityReport, SessionStatus, SessionView, Trial, Verdict } from './domain';
+import { type AnsweredTrial, clearedOf, estimateTrials, narrowSuspects, nextOutcome } from './engine';
 
 export const BISECT_LOG_KEY = 'local:bisectLog' as const;
 
@@ -84,13 +85,23 @@ interface SessionAccumulator {
   updatedAt: number;
 }
 
-function suspectsFromVerdict(acc: SessionAccumulator, trial: Trial, verdict: Verdict): string[] {
-  const half = verdict === 'persists' ? trial.enabledIds : trial.disabledIds;
-  return acc.suspects.filter((id) => half.includes(id));
+function suspectsFromVerdict(trial: Trial, verdict: Verdict, suspects: readonly string[]): string[] {
+  const partition = { enabled: trial.enabledIds, disabled: trial.disabledIds };
+  return narrowSuspects(suspects, partition, verdict);
 }
 
-function isSingleSuspectResolved(trial: Trial, verdict: Verdict, suspects: string[]): boolean {
-  return suspects.length === 1 && verdict === 'gone' && trial.disabledIds.includes(suspects[0] as string);
+function toAnsweredTrial(trial: Trial | undefined): AnsweredTrial | null {
+  if (trial === undefined || trial.verdict === null) return null;
+  return {
+    enabledIds: trial.enabledIds,
+    disabledIds: trial.disabledIds,
+    verdict: trial.verdict,
+  };
+}
+
+function resetOutcome(acc: SessionAccumulator): void {
+  acc.culpritId = null;
+  acc.ambiguityIds = [];
 }
 
 function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
@@ -140,11 +151,11 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       const trial = acc.trials.at(-1);
       if (trial === undefined) return;
       if (trial.verdict !== null) acc.suspects = [...acc.suspectsBeforeTrial];
-      acc.cleared = acc.originalEnabledIds.filter((id) => !acc.suspects.includes(id));
+      acc.cleared = clearedOf(acc.originalEnabledIds, acc.suspects);
       trial.verdict = null;
       trial.appliedAt = null;
       trial.errors = [];
-      acc.culpritId = null;
+      resetOutcome(acc);
       acc.status = 'trial';
       return;
     }
@@ -153,8 +164,8 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       if (trial === undefined) return;
       trial.verdict = null;
       acc.suspects = [...acc.suspectsBeforeTrial];
-      acc.cleared = acc.originalEnabledIds.filter((id) => !acc.suspects.includes(id));
-      acc.culpritId = null;
+      acc.cleared = clearedOf(acc.originalEnabledIds, acc.suspects);
+      resetOutcome(acc);
       acc.status = 'awaiting-verdict';
       return;
     }
@@ -200,25 +211,28 @@ function applyVerdict(acc: SessionAccumulator, verdict: Verdict): void {
   const trial = acc.trials.at(-1);
   if (trial === undefined) return;
   trial.verdict = verdict;
-  acc.suspects = suspectsFromVerdict(acc, trial, verdict);
-  acc.cleared = acc.originalEnabledIds.filter((id) => !acc.suspects.includes(id));
+  acc.suspects = suspectsFromVerdict(trial, verdict, acc.suspects);
+  acc.cleared = clearedOf(acc.originalEnabledIds, acc.suspects);
 
-  if (isSingleSuspectResolved(trial, verdict, acc.suspects)) {
-    acc.culpritId = acc.suspects[0] as string;
+  const outcome = nextOutcome({
+    suspects: acc.suspects,
+    cleared: acc.cleared,
+    lastTrial: toAnsweredTrial(trial),
+  });
+
+  if (outcome.kind === 'completed') {
+    acc.culpritId = outcome.culpritId;
+    acc.ambiguityIds = [];
     acc.status = 'completed';
     return;
   }
-  if (acc.suspects.length === 0) {
-    acc.ambiguityIds = [...acc.suspectsBeforeTrial];
+  if (outcome.kind === 'inconclusive') {
+    acc.culpritId = null;
+    acc.ambiguityIds = outcome.ambiguityIds;
     acc.status = 'inconclusive';
     return;
   }
   acc.status = 'awaiting-verdict';
-}
-
-function estimateTrials(candidateCount: number): number {
-  if (candidateCount <= 1) return 1;
-  return 1 + Math.ceil(Math.log2(candidateCount));
 }
 
 export function reduceLog(log: BisectLog | null): SessionView | null {

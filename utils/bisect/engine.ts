@@ -67,11 +67,7 @@ export function buildTargetState(partition: TrialPartition, cleared: readonly st
   };
 }
 
-export function narrowSuspects(
-  suspects: readonly string[],
-  partition: TrialPartition,
-  verdict: Verdict,
-): string[] {
+export function narrowSuspects(suspects: readonly string[], partition: TrialPartition, verdict: Verdict): string[] {
   const kept = verdict === 'persists' ? partition.enabled : partition.disabled;
   return suspects.filter((id) => kept.includes(id));
 }

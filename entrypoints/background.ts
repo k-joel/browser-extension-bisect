@@ -9,6 +9,7 @@ import {
   getSession,
   reloadTestTab,
   resetSession,
+  retryTrial,
   type SessionDependencies,
   SessionError,
   startSession,
@@ -129,6 +130,10 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('submitVerdict', async ({ data }): Promise<SessionMutationResult> => {
     const session = await submitVerdict(sessionDependencies(), data);
     return { session, restore: await readRestoreOutcome() };
+  });
+  messenger.onMessage('retryTrial', async ({ data }): Promise<SessionMutationResult> => {
+    const session = await retryTrial(sessionDependencies(), data ?? {});
+    return { session, restore: null };
   });
   messenger.onMessage('resetSession', async ({ data }): Promise<SessionMutationResult> => {
     const session = await resetSession(sessionDependencies(), data);

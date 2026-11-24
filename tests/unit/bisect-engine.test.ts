@@ -36,7 +36,10 @@ interface Step {
   suspectCountAfter: number;
 }
 
-function runSearch(candidates: string[], oracle: (partition: { enabled: string[] }) => Verdict): {
+function runSearch(
+  candidates: string[],
+  oracle: (partition: { enabled: string[] }) => Verdict,
+): {
   steps: Step[];
   culpritId: string | null;
   ambiguityIds: string[];

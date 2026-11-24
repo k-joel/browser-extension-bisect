@@ -48,8 +48,10 @@ export type PanelScreen =
   | 'picker'
   | 'preflight'
   | 'baseline'
+  | 'trial'
   | 'host-issue'
   | 'completed'
+  | 'inconclusive'
   | 'restored'
   | 'progress';
 
@@ -148,12 +150,89 @@ export function isBaselineQuestion(view: SessionView): boolean {
   return view.status === 'awaiting-verdict' && trial !== null && trial.round === 0 && trial.verdict === null;
 }
 
+/**
+ * True once the baseline question is answered and the search still has work to do:
+ * either no partition trial exists yet, or the last one was answered. The panel
+ * then owes the user the next partition.
+ */
+export function needsNextTrial(view: SessionView): boolean {
+  if (view.status !== 'awaiting-verdict') return false;
+  const trial = view.currentTrial;
+  if (trial === null) return view.suspects.length > 0;
+  return trial.verdict !== null && view.suspects.length > 0;
+}
+
+export function isTrialQuestion(view: SessionView): boolean {
+  const trial = view.currentTrial;
+  return view.status === 'awaiting-verdict' && trial !== null && trial.round > 0 && trial.verdict === null;
+}
+
+export function nextTrialNumber(view: SessionView): number {
+  const rounds = view.trials.map((trial) => trial.round);
+  return rounds.length === 0 ? 1 : Math.max(...rounds) + 1;
+}
+
+export interface PartitionPreview {
+  enabled: string[];
+  disabled: string[];
+}
+
+export function partitionPreview(suspects: readonly string[]): PartitionPreview {
+  const disabledCount = Math.max(1, Math.floor(suspects.length / 2));
+  const boundary = Math.max(0, suspects.length - disabledCount);
+  return { enabled: suspects.slice(0, boundary), disabled: suspects.slice(boundary) };
+}
+
+export interface TrialSummaryRow {
+  round: number;
+  enabledNames: string[];
+  disabledNames: string[];
+  verdictLabel: string;
+}
+
+export function describeTrialHistory(view: SessionView): TrialSummaryRow[] {
+  return view.trials
+    .filter((trial) => trial.round > 0)
+    .map((trial) => ({
+      round: trial.round,
+      enabledNames: trial.enabledIds.map((id) => findCandidate(view.candidateOrder, id)?.name ?? id),
+      disabledNames: trial.disabledIds.map((id) => findCandidate(view.candidateOrder, id)?.name ?? id),
+      verdictLabel: trial.verdict === null ? 'Awaiting your verdict' : VERDICT_LABELS[trial.verdict],
+    }));
+}
+
+export type InconclusiveReason = 'final-confirmation-persists' | 'verdict-contradiction';
+
+const INCONCLUSIVE_TEXT: Record<InconclusiveReason, string> = {
+  'final-confirmation-persists':
+    'The last trial disabled the only remaining suspect and the problem still happened, so the evidence contradicts a single culprit.',
+  'verdict-contradiction': 'The verdicts eliminated every suspect, so no single extension explains the problem.',
+};
+
+export function inconclusiveReasonOf(view: SessionView): InconclusiveReason {
+  const answered = view.currentTrial;
+  if (answered !== null && answered.disabledIds.length === 1 && answered.verdict === 'persists') {
+    return 'final-confirmation-persists';
+  }
+  return 'verdict-contradiction';
+}
+
+export function describeInconclusiveReason(reason: InconclusiveReason): string {
+  return INCONCLUSIVE_TEXT[reason];
+}
+
+export function ambiguityNames(view: SessionView): string[] {
+  return view.ambiguityIds.map((id) => findCandidate(view.candidateOrder, id)?.name ?? id);
+}
+
 export function resolveScreen({ session, preflightOpen }: ScreenInput): PanelScreen {
   if (session === null) return preflightOpen ? 'preflight' : 'picker';
   if (session.status === 'restored') return 'restored';
   if (session.status === 'aborted' && session.abortReason === 'host-issue') return 'host-issue';
   if (session.status === 'completed' && session.culpritId !== null) return 'completed';
+  if (session.status === 'inconclusive') return 'inconclusive';
   if (isBaselineQuestion(session)) return 'baseline';
+  if (isTrialQuestion(session) || needsNextTrial(session)) return 'trial';
   return 'progress';
 }
 

@@ -56,6 +56,7 @@ export interface ProtocolMap {
   startSession(request: StartSessionRequest): SessionView;
   applyTrial(): SessionView;
   submitVerdict(payload: { verdict: Verdict }): SessionMutationResult;
+  retryTrial(payload: { reason?: string }): SessionMutationResult;
   resetSession(payload: { restore: boolean }): SessionMutationResult;
   bindTestTab(payload: BindTestTabRequest): BisectConfig;
   reloadTestTab(): ReloadTestTabResult;

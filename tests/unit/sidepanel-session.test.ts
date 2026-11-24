@@ -292,15 +292,15 @@ describe('side panel baseline', () => {
     ]);
   });
 
-  it('advances past the baseline question when the symptom is gone and N > 1', async () => {
+  it('advances to the first partition trial when the symptom is gone and N > 1', async () => {
     const harness = await mountHarness({ tabId: 5 });
     await startBaseline(harness);
 
     await harness.wrapper.get('[data-testid="verdict-gone"]').trigger('click');
     await flushPromises();
 
-    expect(screenOf(harness.wrapper)).toBe('progress');
-    expect(harness.wrapper.get('[data-testid="progress-count"]').text()).toContain('2 suspects');
+    expect(screenOf(harness.wrapper)).toBe('trial');
+    expect(harness.wrapper.get('[data-testid="trial-progress"]').text()).toContain('2 suspects');
     const log = await readBisectLog();
     expect(log?.events.at(-1)?.type).toBe('baseline-recorded');
   });
@@ -452,5 +452,237 @@ describe('side panel restore', () => {
     for (const id of ['baseline-screen', 'baseline-question', 'verdict-persists', 'verdict-gone', 'baseline-reload']) {
       expect(baselineIds).toContain(id);
     }
+  });
+});
+
+interface LoopHarness extends Harness {
+  verdict: (choice: 'persists' | 'gone') => Promise<void>;
+  applyTrial: () => Promise<void>;
+}
+
+async function readEnabledStates(surface: FakeManagement, ids: string[]): Promise<Record<string, boolean>> {
+  const all = await surface.getAll();
+  const states: Record<string, boolean> = {};
+  for (const id of ids) states[id] = all.find((entry) => entry.id === id)?.enabled ?? false;
+  return states;
+}
+
+async function startLoop(options: HarnessOptions = { tabId: 5 }): Promise<LoopHarness> {
+  const harness = await mountHarness(options);
+  await startBaseline(harness);
+
+  return {
+    ...harness,
+    async verdict(choice) {
+      await harness.wrapper.get(`[data-testid="verdict-${choice}"]`).trigger('click');
+      await flushPromises();
+    },
+    async applyTrial() {
+      await harness.wrapper.get('[data-testid="trial-apply"]').trigger('click');
+      await flushPromises();
+    },
+  };
+}
+
+describe('side panel trial screen', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+    messenger.removeAllListeners();
+    installMessagingBridge();
+  });
+
+  it('offers the first trial after a clean baseline', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+
+    expect(screenOf(harness.wrapper)).toBe('trial');
+    expect(harness.wrapper.find('[data-testid="trial-apply"]').exists()).toBe(true);
+    expect(harness.wrapper.get('[data-testid="trial-plan-enabled"]').text()).toContain('Alpha Blocker');
+  });
+
+  it('asks the trial question with the exact verdict labels once applied', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+
+    expect(screenOf(harness.wrapper)).toBe('trial');
+    expect(harness.wrapper.get('[data-testid="trial-question"]').text()).toContain('Does the problem still happen');
+    expect(harness.wrapper.get('[data-testid="verdict-persists"]').text()).toBe('Problem persists');
+    expect(harness.wrapper.get('[data-testid="verdict-gone"]').text()).toBe('Problem is gone');
+  });
+
+  it('reads progress as "Trial N of ~M · S suspects"', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+
+    const progress = harness.wrapper.get('[data-testid="trial-progress"]').text();
+    expect(progress).toMatch(/^Trial \d+ of ~\d+ · \d+ suspects?$/);
+    expect(progress).toContain('Trial 2 of ~2');
+    expect(progress).toContain('2 suspects');
+  });
+
+  it('shows the applied batch as the enabled and disabled sets', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+
+    expect(harness.wrapper.get('[data-testid="trial-enabled"]').text()).toBe('Alpha Blocker');
+    expect(harness.wrapper.get('[data-testid="trial-disabled"]').text()).toBe('Bravo Reader');
+  });
+
+  it('re-applies the same batch on retry and stays on the question', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+
+    harness.surface.setEnabledCalls.length = 0;
+    await harness.wrapper.get('[data-testid="trial-retry"]').trigger('click');
+    await flushPromises();
+
+    expect(screenOf(harness.wrapper)).toBe('trial');
+    expect(harness.wrapper.find('[data-testid="verdict-persists"]').exists()).toBe(true);
+    const log = await readBisectLog();
+    expect(log?.events.map((event) => event.type)).toContain('trial-retried');
+    expect(log?.events.some((event) => event.type === 'verdict-recorded')).toBe(false);
+  });
+
+  it('keeps Restore visible on the trial screen', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+
+    expect(harness.wrapper.get('[data-testid="restore-panel"]').isVisible()).toBe(true);
+    expect(harness.wrapper.get('[data-testid="restore-button"]').attributes('disabled')).toBeUndefined();
+  });
+
+  it('shows the inline trial history with the batches and verdicts', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+    await harness.verdict('persists');
+
+    const rows = harness.wrapper.findAll('[data-testid="trial-history-row"]');
+    expect(rows.length).toBeGreaterThan(0);
+    const first = rows[0];
+    expect(first?.get('[data-testid="trial-history-round"]').text()).toBe('Trial 1');
+    expect(first?.get('[data-testid="trial-history-enabled"]').text()).toContain('Alpha Blocker');
+    expect(first?.get('[data-testid="trial-history-disabled"]').text()).toContain('Bravo Reader');
+    expect(first?.get('[data-testid="trial-history-verdict"]').text()).toBe('Problem persists');
+  });
+});
+
+describe('side panel completion', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+    messenger.removeAllListeners();
+    installMessagingBridge();
+  });
+
+  it('names the culprit, leaves it disabled, and keeps Restore prominent', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+    await harness.verdict('gone');
+
+    expect(screenOf(harness.wrapper)).toBe('completed');
+    expect(harness.wrapper.get('[data-testid="culprit-name"]').text()).toBe('Bravo Reader');
+    expect(harness.wrapper.get('[data-testid="culprit-detail"]').text()).toContain('still disabled');
+
+    const states = await readEnabledStates(harness.surface, ['aaaa', 'bbbb']);
+    expect(states).toEqual({ aaaa: true, bbbb: false });
+    expect(harness.wrapper.find('[data-testid="completed-restore"]').exists()).toBe(true);
+  });
+
+  it('confirms a culprit that the partition left enabled with one more trial', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+    await harness.verdict('persists');
+    await harness.applyTrial();
+
+    expect(harness.wrapper.get('[data-testid="trial-question"]').text()).toContain(
+      'The last remaining candidate extension is disabled',
+    );
+    expect(harness.wrapper.get('[data-testid="trial-disabled"]').text()).toBe('Alpha Blocker');
+
+    await harness.verdict('gone');
+
+    expect(screenOf(harness.wrapper)).toBe('completed');
+    expect(harness.wrapper.get('[data-testid="culprit-name"]').text()).toBe('Alpha Blocker');
+    const states = await readEnabledStates(harness.surface, ['aaaa', 'bbbb']);
+    expect(states).toEqual({ aaaa: false, bbbb: true });
+  });
+
+  it('restores the culprit from the completed screen', async () => {
+    const harness = await startLoop();
+    await harness.verdict('gone');
+    await harness.applyTrial();
+    await harness.verdict('gone');
+
+    await harness.wrapper.get('[data-testid="completed-restore"]').trigger('click');
+    await flushPromises();
+
+    expect(screenOf(harness.wrapper)).toBe('restored');
+    const states = await readEnabledStates(harness.surface, ['aaaa', 'bbbb']);
+    expect(states).toEqual({ aaaa: true, bbbb: true });
+  });
+});
+
+/**
+ * Drives the N = 2 session where the culprit was left enabled and every final
+ * confirmation still reports the problem, which is the contradiction path.
+ */
+async function runContradictionLoop(harness: LoopHarness): Promise<void> {
+  await harness.verdict('gone');
+  await harness.applyTrial();
+  await harness.verdict('persists');
+  await harness.applyTrial();
+  await harness.verdict('persists');
+}
+
+describe('side panel inconclusive', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+    messenger.removeAllListeners();
+    installMessagingBridge();
+  });
+
+  it('reports a persisting final confirmation without blaming the suspect', async () => {
+    const harness = await startLoop();
+    await runContradictionLoop(harness);
+
+    expect(screenOf(harness.wrapper)).toBe('inconclusive');
+    expect(harness.wrapper.get('[data-testid="inconclusive-reason"]').text()).toContain(
+      'The last trial disabled the only remaining suspect',
+    );
+    const entries = harness.wrapper.findAll('[data-testid="inconclusive-ambiguity-entry"]');
+    expect(entries.map((entry) => entry.get('[data-testid="inconclusive-ambiguity-name"]').text())).toEqual([
+      'Alpha Blocker',
+    ]);
+    expect(harness.wrapper.find('[data-testid="culprit-name"]').exists()).toBe(false);
+  });
+
+  it('keeps Restore available on the inconclusive screen', async () => {
+    const harness = await startLoop();
+    await runContradictionLoop(harness);
+
+    await harness.wrapper.get('[data-testid="inconclusive-restore"]').trigger('click');
+    await flushPromises();
+
+    expect(screenOf(harness.wrapper)).toBe('restored');
+    const states = await readEnabledStates(harness.surface, ['aaaa', 'bbbb']);
+    expect(states).toEqual({ aaaa: true, bbbb: true });
+  });
+
+  it('lists the ambiguity set from the session view', async () => {
+    const harness = await startLoop();
+    await runContradictionLoop(harness);
+
+    expect(harness.wrapper.get('[data-testid="inconclusive-ambiguity-label"]').text()).toContain('Still possible');
+    expect(harness.wrapper.findAll('[data-testid="inconclusive-ambiguity-entry"]')).toHaveLength(1);
   });
 });

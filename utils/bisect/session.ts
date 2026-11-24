@@ -15,6 +15,7 @@ import type {
   TestTabBinding,
   Verdict,
 } from './domain';
+import { type AnsweredTrial, buildTargetState, partitionSuspects } from './engine';
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
 
 export const TEST_TAB_SETTLE_TIMEOUT_MS = 15_000;
@@ -130,14 +131,21 @@ function allOffTarget(candidates: CandidateExtension[]): TargetState {
   return { enabled: [], disabled: candidates.map((candidate) => candidate.id), allOutsideSuspectsEnabled: true };
 }
 
-export function firstTrialTarget(suspects: string[]): TargetState {
-  const mid = Math.floor(suspects.length / 2);
-  return {
-    enabled: suspects.slice(0, mid),
-    disabled: suspects.slice(mid),
-    allOutsideSuspectsEnabled: true,
-  };
+function answeredTrialOf(view: SessionView): AnsweredTrial | null {
+  const trial = view.currentTrial;
+  if (trial === null || trial.verdict === null) return null;
+  return { enabledIds: trial.enabledIds, disabledIds: trial.disabledIds, verdict: trial.verdict };
 }
+
+/**
+ * The target state the next trial must apply, derived from the suspect pool the
+ * reducer already narrowed to. Cleared candidates stay enabled.
+ */
+export function nextTrialTarget(view: SessionView): TargetState {
+  return buildTargetState(partitionSuspects(view.suspects), view.cleared);
+}
+
+export { partitionSuspects };
 
 async function applyAndRecord(
   dependencies: ResolvedDependencies,
@@ -216,19 +224,100 @@ export function getSession(): Promise<SessionView | null> {
   return serialize(async () => reduceLog(await readBisectLog()));
 }
 
+function assertTrialAppliable(status: SessionView['status']): void {
+  if (status === 'completed' || status === 'inconclusive' || status === 'aborted' || status === 'restored') {
+    throw new SessionError(`Cannot apply a trial while the session is ${status}`);
+  }
+  if (status !== 'awaiting-verdict' && status !== 'baseline' && status !== 'trial') {
+    throw new SessionError(`Cannot apply a trial while the session is ${status}`);
+  }
+}
+
+function nextRoundFor(view: SessionView): number {
+  const rounds = view.trials.map((trial) => trial.round);
+  return rounds.length === 0 ? 1 : Math.max(...rounds) + 1;
+}
+
 export function applyTrial(rawDependencies: SessionDependencies): Promise<SessionView> {
   const dependencies = resolveDependencies(rawDependencies);
   return serialize(async () => {
     const log = await requireLog();
     const view = viewOf(log);
-    if (view.status !== 'awaiting-verdict' && view.status !== 'baseline' && view.status !== 'trial') {
-      throw new SessionError(`Cannot apply a trial while the session is ${view.status}`);
-    }
+    assertTrialAppliable(view.status);
 
-    const applied = await applyAndRecord(dependencies, log, firstTrialTarget(view.suspects), view.trials.length + 1);
+    const applied = await applyAndRecord(dependencies, log, nextTrialTarget(view), nextRoundFor(view));
     await reloadAndSettle(dependencies, view.testTab);
     return viewOf(applied);
   });
+}
+
+/**
+ * Re-applies the current trial's target state without recording a verdict: the
+ * log gains `trial-retried` and a fresh `trial-applied` for the same round, so the
+ * round number and the suspect pool are unchanged.
+ */
+export function retryTrial(
+  rawDependencies: SessionDependencies,
+  payload: { reason?: string } = {},
+): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+    const trial = view.currentTrial;
+
+    if (trial === null || trial.round === 0) {
+      throw new SessionError('No partition trial is open to retry');
+    }
+
+    const retried = await appendAndPersist(log, 'trial-retried', dependencies.now(), {
+      round: trial.round,
+      ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+    });
+    const result = await dependencies.port.applyTargetState(trial.targetState);
+    const reapplied = await appendAndPersist(retried, 'trial-applied', dependencies.now(), {
+      round: trial.round,
+      errors: result.errors,
+    });
+    await reloadAndSettle(dependencies, view.testTab);
+    return viewOf(reapplied);
+  });
+}
+
+/**
+ * Appends the terminal audit event once the reducer has reached a terminal
+ * outcome, so the log names the culprit or the ambiguity set explicitly instead
+ * of only implying it from the last verdict.
+ */
+async function settleOutcome(dependencies: ResolvedDependencies, log: BisectLog): Promise<BisectLog> {
+  const view = viewOf(log);
+  const hasTerminalEvent = log.events.some(
+    (event) => event.type === 'session-completed' || event.type === 'session-inconclusive',
+  );
+  if (hasTerminalEvent) return log;
+
+  if (view.status === 'completed' && view.culpritId !== null) {
+    return appendAndPersist(log, 'session-completed', dependencies.now(), { culpritId: view.culpritId });
+  }
+  if (view.status === 'inconclusive') {
+    return appendAndPersist(log, 'session-inconclusive', dependencies.now(), {
+      ambiguityIds: view.ambiguityIds,
+      reason: explanationOf(view, log),
+    });
+  }
+  return log;
+}
+
+function explanationOf(view: SessionView, log: BisectLog): string {
+  const answered = answeredTrialOf(view);
+  const lastEvent = log.events.at(-1);
+  if (answered !== null && answered.disabledIds.length === 1 && answered.verdict === 'persists') {
+    return 'final-confirmation-persists';
+  }
+  if (lastEvent?.type === 'verdict-recorded' && lastEvent.payload.verdict === 'persists') {
+    return 'final-confirmation-persists';
+  }
+  return 'verdict-contradiction';
 }
 
 export function submitVerdict(
@@ -245,7 +334,7 @@ export function submitVerdict(
         mode: 'auto',
         verdict: payload.verdict,
       });
-      if (payload.verdict === 'gone') return viewOf(recorded);
+      if (payload.verdict === 'gone') return viewOf(await settleOutcome(dependencies, recorded));
 
       const restored = await restoreTouched(dependencies, view);
       return viewOf(
@@ -261,12 +350,11 @@ export function submitVerdict(
       throw new SessionError('No verdict is pending');
     }
 
-    return viewOf(
-      await appendAndPersist(log, 'verdict-recorded', dependencies.now(), {
-        round: pending.round,
-        verdict: payload.verdict,
-      }),
-    );
+    const recorded = await appendAndPersist(log, 'verdict-recorded', dependencies.now(), {
+      round: pending.round,
+      verdict: payload.verdict,
+    });
+    return viewOf(await settleOutcome(dependencies, recorded));
   });
 }
 

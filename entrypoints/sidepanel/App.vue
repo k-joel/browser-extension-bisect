@@ -14,11 +14,13 @@ import CandidatePicker from './components/CandidatePicker.vue';
 import CapabilityReportView from './components/CapabilityReport.vue';
 import CompletedScreen from './components/CompletedScreen.vue';
 import HostIssueScreen from './components/HostIssueScreen.vue';
+import InconclusiveScreen from './components/InconclusiveScreen.vue';
 import NoSession from './components/NoSession.vue';
 import PreflightConsent from './components/PreflightConsent.vue';
 import RestoredScreen from './components/RestoredScreen.vue';
 import RestorePanel from './components/RestorePanel.vue';
 import SessionProgress from './components/SessionProgress.vue';
+import TrialScreen from './components/TrialScreen.vue';
 import {
   buildPickerRows,
   describeProgress,
@@ -94,6 +96,10 @@ const announcement = computed(() => {
       return `${plural(included.value.length, 'extension')} will be disabled. Nothing is toggled yet.`;
     case 'baseline':
       return 'Baseline ready. Answer whether the problem persists.';
+    case 'trial':
+      return session.value === null ? '' : describeProgress(session.value);
+    case 'inconclusive':
+      return 'No single culprit was identified; the remaining candidates are listed.';
     case 'host-issue':
       return 'No extension is implicated; this is a browser or machine issue.';
     case 'completed':
@@ -202,6 +208,16 @@ function applyMutation(result: SessionMutationResult): void {
   if (result.restore !== null) restoreOutcome.value = result.restore;
 }
 
+async function applyTrial(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('applyTrial'));
+  if (result !== null) session.value = result;
+}
+
+async function retryTrial(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('retryTrial', {}));
+  if (result !== null) applyMutation(result);
+}
+
 async function submitVerdict(verdict: Verdict): Promise<void> {
   const result = await run(() => messenger.sendMessage('submitVerdict', { verdict }));
   if (result !== null) applyMutation(result);
@@ -256,6 +272,25 @@ onMounted(load);
         :reload-message="reloadMessage"
         @verdict="submitVerdict"
         @reload="reloadTestTab"
+      />
+
+      <TrialScreen
+        v-else-if="screen === 'trial' && session !== null"
+        :session="session"
+        :busy="busy"
+        :reload-message="reloadMessage"
+        @apply-trial="applyTrial"
+        @retry-trial="retryTrial"
+        @verdict="submitVerdict"
+        @reload="reloadTestTab"
+      />
+
+      <InconclusiveScreen
+        v-else-if="screen === 'inconclusive' && session !== null"
+        :session="session"
+        :busy="busy"
+        :restore-summary-headline="restoreSummary?.headline ?? null"
+        @restore="restore"
       />
 
       <HostIssueScreen
