@@ -488,11 +488,38 @@ export async function readSessionState(page) {
         restoreComplete: document
           .querySelector('[data-testid="assisted-restore-summary"]')
           ?.getAttribute('data-complete'),
+        restoreAccepted: text('assisted-restore-accepted'),
+        hasAcceptAction: document.querySelector('[data-testid="assisted-restore-accept"]') !== null,
         restoreRows: Array.from(document.querySelectorAll('[data-testid="assisted-restore-row"]')).map((node) => ({
           id: node.getAttribute('data-extension-id'),
           name: node.querySelector('[data-testid="assisted-restore-name"]')?.textContent?.trim() ?? '',
           done: node.getAttribute('data-done'),
         })),
+      },
+      assistedTrial: {
+        explanation: text('assisted-trial-explanation'),
+        instruction: text('assisted-trial-instruction'),
+        progress: text('assisted-trial-progress'),
+        matched: document.querySelector('[data-testid="assisted-trial-progress"]')?.getAttribute('data-matched'),
+        openLabel: document.querySelector('[data-testid="assisted-trial-open-addons"]')?.textContent?.trim() ?? null,
+        verifyLabel: document.querySelector('[data-testid="assisted-trial-verify"]')?.textContent?.trim() ?? null,
+        addonsMessage: text('assisted-trial-addons-message'),
+        error: text('sidepanel-error'),
+        hasVerdictButtons:
+          document.querySelector('[data-testid="verdict-persists"]') !== null ||
+          document.querySelector('[data-testid="verdict-gone"]') !== null,
+        enableRows: Array.from(document.querySelectorAll('[data-testid="assisted-trial-enable-row"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          name: node.querySelector('[data-testid="assisted-trial-enable-name"]')?.textContent?.trim() ?? '',
+          state: node.querySelector('[data-testid="assisted-trial-enable-state"]')?.textContent?.trim() ?? '',
+        })),
+        disableRows: Array.from(document.querySelectorAll('[data-testid="assisted-trial-disable-row"]')).map(
+          (node) => ({
+            id: node.getAttribute('data-extension-id'),
+            name: node.querySelector('[data-testid="assisted-trial-disable-name"]')?.textContent?.trim() ?? '',
+            state: node.querySelector('[data-testid="assisted-trial-disable-state"]')?.textContent?.trim() ?? '',
+          }),
+        ),
       },
     };
   });

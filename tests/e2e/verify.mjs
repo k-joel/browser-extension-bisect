@@ -30,9 +30,16 @@ import {
 
 const ARTIFACTS_DIR = path.resolve('.agent-artifacts');
 const SEARCH_SELECTOR = '[data-testid="candidate-search"]';
-const SCENARIOS = ['candidate-picker', 'session-baseline', 'assisted-baseline', 'assisted-external', 'partition-loop'];
+const SCENARIOS = [
+  'candidate-picker',
+  'session-baseline',
+  'assisted-baseline',
+  'assisted-external',
+  'assisted-trials',
+  'partition-loop',
+];
 const CHROME_SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop'];
-const FIREFOX_SCENARIOS = ['candidate-picker', 'assisted-baseline', 'assisted-external'];
+const FIREFOX_SCENARIOS = ['candidate-picker', 'assisted-baseline', 'assisted-external', 'assisted-trials'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -822,6 +829,200 @@ async function runAssistedBaselineScenario({ surface, session, installed, testPa
   return { steps, firefoxPath: 'test-mode-driver' };
 }
 
+/**
+ * The assisted trial loop, driven through the documented test-mode driver. Firefox
+ * refuses `management.setEnabled` for a temporary add-on, so the harness records the
+ * state an Add-ons Manager toggle would produce and the add-on must prove it with
+ * `management.getAll()` before it offers a verdict. The verdict buttons are asserted
+ * absent before each Verify, because every other wait keys off their presence.
+ */
+async function runAssistedTrialsScenario({ surface, session, installed, testPage, fixtureServer }) {
+  const steps = [];
+  const record = makeRecorder(steps);
+  const { candidates, theme, dormant } = extensionGroups(installed);
+
+  const culprit = candidates.find((entry) => entry.dir === FIXTURES.alpha.dir);
+  const innocent = candidates.find((entry) => entry.dir === FIXTURES.bravo.dir);
+  if (culprit === undefined || innocent === undefined) {
+    throw new Error('The assisted-trials scenario needs the alpha and bravo fixtures');
+  }
+
+  const untouchableIds = [theme?.id, dormant?.id].filter((id) => typeof id === 'string');
+  const candidateIds = candidates.map((entry) => entry.id);
+  const before = await readManualExtensionState(surface, [...candidateIds, ...untouchableIds]);
+
+  const initial = await waitForCandidateState(surface, (state) => state.state === 'ready');
+  record('assisted-trials-start-in-assisted-mode', /Assisted/.test(initial.toggleMode ?? ''), {
+    toggleMode: initial.toggleMode,
+  });
+  record('assisted-trials-test-mode-driver-is-live', await hasTestDriverGlobal(surface), {
+    firefoxPath: 'test-mode-driver',
+  });
+
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  await focusPage(testPage);
+  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await clickTestId(surface, 'preflight-bind');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.preflight.testTab !== 'No test tab bound' ? state : null;
+    },
+    { label: 'the bound test tab' },
+  );
+
+  await clickTestId(surface, 'preflight-start');
+  await waitForScreen(surface, 'assisted-baseline');
+
+  // The fastest route to the loop: attest the symptom is gone with everything off.
+  await clickTestId(surface, 'assisted-attest');
+  const plan = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first assisted trial plan' },
+  );
+  record('assisted-trials-plan-arrives-without-a-verdict', plan.trial.persistsLabel === null, {
+    persistsLabel: plan.trial.persistsLabel,
+  });
+
+  let answered = 0;
+  let screen = null;
+  for (let guard = 0; guard < 12; guard += 1) {
+    const current = await readSessionState(surface);
+    if (current.screen === 'completed' || current.screen === 'inconclusive') {
+      screen = current;
+      break;
+    }
+    // An unapplied plan is a normal step of the loop: applying it asks the user for
+    // the batch, and only then does the assisted screen appear.
+    if (current.screen === 'trial' && current.trial.applyLabel !== null) {
+      await clickTestId(surface, 'trial-apply');
+      await waitForScreen(surface, 'assisted-trial');
+      continue;
+    }
+    if (current.screen !== 'assisted-trial') {
+      throw new Error(`Unexpected screen during the assisted search: ${current.screen}`);
+    }
+
+    record(
+      `assisted-trial-${answered + 1}-has-no-verdict-before-verify`,
+      current.assistedTrial.hasVerdictButtons === false,
+      {
+        hasVerdictButtons: current.assistedTrial.hasVerdictButtons,
+        progress: current.assistedTrial.progress,
+      },
+    );
+    const checklistIds = [
+      ...current.assistedTrial.enableRows.map((row) => row.id),
+      ...current.assistedTrial.disableRows.map((row) => row.id),
+    ];
+    record(
+      `assisted-trial-${answered + 1}-shows-enable-and-disable-checklists`,
+      checklistIds.length > 0 &&
+        new Set(checklistIds).size === checklistIds.length &&
+        current.assistedTrial.openLabel !== null &&
+        current.assistedTrial.verifyLabel !== null,
+      {
+        enable: current.assistedTrial.enableRows.map((row) => row.name),
+        disable: current.assistedTrial.disableRows.map((row) => row.name),
+        open: current.assistedTrial.openLabel,
+        verify: current.assistedTrial.verifyLabel,
+      },
+    );
+
+    // Match the batch the panel asked for, then let the add-on verify it.
+    for (const row of current.assistedTrial.enableRows) {
+      await setManualExtensionState(surface, row.id, true);
+    }
+    for (const row of current.assistedTrial.disableRows) {
+      await setManualExtensionState(surface, row.id, false);
+    }
+
+    await clickTestId(surface, 'assisted-trial-verify');
+    const verified = await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        return state.trial.persistsLabel !== null ? state : null;
+      },
+      { label: 'the verified assisted trial' },
+    );
+
+    record(
+      `assisted-trial-${answered + 1}-reveals-the-exact-verdict-labels`,
+      verified.trial.persistsLabel === 'Problem persists' && verified.trial.goneLabel === 'Problem is gone',
+      { persists: verified.trial.persistsLabel, gone: verified.trial.goneLabel },
+    );
+
+    const enabledNames = (verified.trial.enabled ?? '').split(', ').filter((name) => name.length > 0);
+    const symptomPresent = enabledNames.includes(culprit.name);
+    const choice = symptomPresent ? 'persists' : 'gone';
+    answered += 1;
+
+    await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    await clickTestId(surface, `verdict-${choice}`);
+    const next = await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        if (state.screen === 'completed' || state.screen === 'inconclusive') return { kind: 'finished', state };
+        if (state.screen === 'trial' && state.trial.applyLabel !== null) return { kind: 'plan', state };
+        return null;
+      },
+      { label: 'the next assisted batch or the result' },
+    );
+    if (next.kind === 'finished') {
+      screen = next.state;
+      break;
+    }
+    await clickTestId(surface, 'trial-apply');
+  }
+
+  if (screen === null) {
+    screen = await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        return state.screen === 'completed' || state.screen === 'inconclusive' ? state : null;
+      },
+      { label: 'the assisted result' },
+    );
+  }
+
+  record('assisted-search-answers-every-trial', answered >= 2, { answered });
+  record('assisted-search-terminates-with-the-known-culprit', screen.screen === 'completed', {
+    screen: screen.screen,
+    answered,
+  });
+  record('assisted-search-names-the-fixture-culprit', screen.completed.culpritName === culprit.name, {
+    culpritName: screen.completed.culpritName,
+    expected: culprit.name,
+  });
+
+  const afterCompletion = await readManualExtensionState(surface, [...candidateIds, ...untouchableIds]);
+  record('assisted-culprit-is-left-disabled', afterCompletion[culprit.id] === false, {
+    culprit: culprit.id,
+    enabled: afterCompletion[culprit.id],
+  });
+  record('assisted-cleared-candidates-are-left-enabled', afterCompletion[innocent.id] === true, {
+    innocent: innocent.id,
+    enabled: afterCompletion[innocent.id],
+  });
+  record(
+    'assisted-trials-leave-non-candidates-untouched',
+    untouchableIds.every((id) => afterCompletion[id] === before[id]),
+    { before, afterCompletion, untouchableIds },
+  );
+
+  const errors = collectErrors(session.recorder);
+  record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
+  record('no-page-errors', errors.pageErrors.length === 0, { errors: errors.pageErrors });
+  record('no-console-errors', errors.consoleErrors.length === 0, { errors: errors.consoleErrors });
+  record('no-request-failures', errors.requestFailures.length === 0, { errors: errors.requestFailures });
+
+  return { steps, firefoxPath: 'test-mode-driver' };
+}
+
 async function runAssistedExternalAttestationScenario({ surface, session, installed }) {
   const steps = [];
   const record = makeRecorder(steps);
@@ -928,6 +1129,16 @@ async function runScenarioForBrowser(browserName, scenario, session, context) {
       surface: context.surface,
       session,
       installed: context.installed,
+    });
+  }
+
+  if (scenario === 'assisted-trials') {
+    return runAssistedTrialsScenario({
+      surface: context.surface,
+      session,
+      installed: context.installed,
+      testPage: context.page,
+      fixtureServer: context.fixtureServer,
     });
   }
 
