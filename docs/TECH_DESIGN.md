@@ -510,7 +510,7 @@ session view.
 interface BisectConfig {
   schemaVersion: 1;
   excludedExtensionIds: string[];
-  testTab: { tabId: number; url: string } | null;
+  testTab: { tabId: number; url: string | null } | null;
   lastCandidateIds?: string[];
 }
 
@@ -520,6 +520,12 @@ interface BisectLog {
   events: BisectEvent[];
 }
 ```
+
+`testTab.url` is nullable because the add-on requests no `tabs` permission (ADR-012), so
+neither Chrome nor Firefox exposes `tab.url` to it: `tabs.query()` and `tabs.get()` return the
+id and status only. The binding stores `url` when the browsing context happens to expose one
+and stores `null` otherwise; the panel renders `Tab #N` in that case
+([ADR-017](DECISIONS.md)).
 
 The legacy scaffold keys `local:enabled`, `local:interactionCount`, and
 `local:settings` are deleted on the first background start. This is a pre-release

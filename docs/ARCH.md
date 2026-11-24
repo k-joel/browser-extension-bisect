@@ -273,16 +273,36 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## 1. Purpose and scope
 
-Browser Extension Bisect is a WXT-built browser extension whose product goal is to find faulty installed extensions by binary search (toggling batches of extensions and observing the result). The as-built system today is the watching skeleton for that goal: a side panel UI that renders the capability report and the candidate picker, a typed storage and messaging layer with a versioned bisect config, two `ManagementPort` adapters that enumerate and filter installed extensions, the legacy popup and content script, and a fully automated cross-browser verification harness. Extension toggling, the bisect log, and the trial loop are not implemented yet — `applyTargetState`, `verifyState`, `restore`, and `watchEvents` throw `not implemented`, and `settings.batchSize` still has no runtime consumer ([ISS-001](ISSUES.md)).
+Browser Extension Bisect is a WXT-built browser extension whose product goal is to find faulty installed extensions by binary search (toggling batches of extensions and observing the result). The as-built system today covers the front half of that goal: a side panel UI that renders the capability report and the candidate picker, the pre-flight consent screen, the all-off baseline question, the host-issue abort, the `N = 1` resolution, and Restore; a typed storage and messaging layer with a versioned bisect config and an append-only bisect log; two `ManagementPort` adapters that enumerate and filter installed extensions; the legacy popup and content script; and a fully automated cross-browser verification harness. The half-split partition loop beyond the first trial is not implemented yet ([ISS-004](ISSUES.md)), and `verifyState` and `watchEvents` still throw `not implemented`.
 
 | In scope | Out of scope |
 |---|---|
 | One TypeScript codebase targeting Chrome (MV3) and Firefox (MV2) via WXT | Firefox MV3 output (pinned to MV2 — [ADR-002](DECISIONS.md)) |
-| Side panel/sidebar candidate picker: capability report, display-name search, include/exclude selection, ineligible reasons | Baseline, trial, verdict, history, replay, drift, and restore screens (ISS-003..ISS-009) |
-| `ManagementPort` enumeration with one shared eligibility filter and ordering helper | Toggling other extensions (`applyTargetState` and friends are stubs — [ISS-001](ISSUES.md)) |
+| Side panel/sidebar candidate picker: capability report, display-name search, include/exclude selection, ineligible reasons | Partition loop beyond the baseline (ISS-004), history, replay, drift (ISS-006..ISS-010) |
+| Pre-flight consent, the automated all-off baseline, the baseline verdict, host-issue abort, `N = 1` resolution, and Restore | Firefox assisted baseline and trials (ISS-005, ISS-006) |
+| `ManagementPort` enumeration with one shared eligibility filter and ordering helper, plus the automated apply/restore path | `verifyState`/`watchEvents` and the full error-code mapping (ISS-009, ISS-010) |
 | Legacy popup scaffold (enable toggle, interaction counter, batch size) and `<all_urls>` content script — retired in ISS-013 | Injected host-page panels (no `createShadowRootUi` UI yet) |
 | Local automated verification (Vitest unit + Puppeteer E2E on both browsers) | CI pipelines (none configured — `DEBT-2026-003`) |
 | Plain hand-written CSS over a token layer ([ADR-005](DECISIONS.md)) | CSS frameworks and UI component libraries |
+
+### 1.1 Screens
+
+The panel is a single document whose screen is derived by `resolveScreen(session, preflightOpen)`
+(`entrypoints/sidepanel/presentation.ts`), so a reload re-derives the same screen from the log.
+
+| Screen | When | Primary action |
+|---|---|---|
+| `picker` | No session, pre-flight closed | "Review N candidates" → pre-flight |
+| `preflight` | Pre-flight open, no session | "Start baseline" (disabled with `N = 0` or without automatic toggling) |
+| `baseline` | Session `awaiting-verdict` with an unrecorded `round: 0` trial | "Problem persists" / "Problem is gone" |
+| `host-issue` | Session `aborted` with `abortReason: host-issue` | "Restore all extensions" |
+| `completed` | Session `completed` with a culprit (includes `N = 1`) | Restore |
+| `restored` | Session `restored` | Restore again |
+| `progress` | Any other live session (until ISS-004 adds the trial UI) | — |
+| `loading` / `error` | Panel load in flight or failed | — |
+
+Restore (`RestorePanel.vue`) renders outside the screen switch, so it is present on the picker
+and on every session screen; its button is disabled until the session has touched something.
 
 ---
 
@@ -294,21 +314,24 @@ Browser Extension Bisect is a WXT-built browser extension whose product goal is 
 sidepanel.html (Vue 3 page)                 popup.html (legacy Vue 3 page)
     │  messenger.sendMessage                    │  messenger.sendMessage
     │  getCapabilities/listCandidates/           │  getState/updateState/
-    │  getConfig/updateConfig                    │  recordInteraction
+    │  getConfig/updateConfig/                   │  recordInteraction
+    │  getSession/startSession/applyTrial/
+    │  submitVerdict/resetSession/
+    │  bindTestTab/reloadTestTab
     ▼                                            ▼
-background.ts (message handlers, sole config writer, owns the ManagementPort)
-    │  storage.defineItem ──► browser.storage.local      │ browser.management
-    ▼                                                     ▼
-storage.local (bisectConfig | enabled | interactionCount | settings)   installed extensions
-    │
+background.ts (message handlers, sole writer, owns the ManagementPort and the tabs surface)
+    │  storage.defineItem ──► browser.storage.local      │ browser.management  │ browser.tabs
+    ▼                                                     ▼                     ▼
+storage.local (bisectConfig | bisectLog | enabled | interactionCount | settings)
+    │                                                                          installed extensions
     ├──► content script (<all_urls>, document_idle) ──watch──► DOM marker on <html>
-    └──► side panel (re-renders from message round-trips)
+    └──► side panel (re-renders from message round-trips + getSession on mount)
 ```
 
 | Context | Lifecycle model | Owns |
 |---|---|---|
-| `background.ts` (`defineBackground`) | Chrome: MV3 service worker · Firefox: MV2 background context | All message handlers; the only writer of `local:bisectConfig`; the `ManagementPort` instance; legacy-key cleanup |
-| `entrypoints/sidepanel/App.vue` | Chrome side panel / Firefox sidebar document; loads on mount | UI refs (`state`, `capability`, `eligible`, `ineligible`, `config`, `query`, `errorMessage`) |
+| `background.ts` (`defineBackground`) | Chrome: MV3 service worker · Firefox: MV2 background context | All message handlers; the only writer of `local:bisectConfig` and `local:bisectLog`; the `ManagementPort` instance; the `TestTabSurface` (`tabs.reload` + settle poll); legacy-key cleanup |
+| `entrypoints/sidepanel/App.vue` | Chrome side panel / Firefox sidebar document; loads on mount | UI refs (`state`, `capability`, `eligible`, `ineligible`, `config`, `session`, `query`, `errorMessage`, `busy`, `preflightOpen`, `restoreOutcome`, `reloadMessage`) |
 | `entrypoints/popup/App.vue` | Opens per browser-action click; loads state on mount | UI refs (`state`, `errorMessage`, `busy`, `batchSizeDraft`) |
 | `content.ts` (`defineContentScript`) | Injected per page at `document_idle` | Marker attributes on `document.documentElement` |
 
@@ -341,7 +364,30 @@ side panel checkbox change
 2. `updateBisectConfig` reads and writes on a promise queue, so two concurrent updates cannot drop a field.
 3. `normalizeBisectConfig` forces `schemaVersion: 1`, drops blank and duplicate excluded ids, and repairs a missing `testTab`.
 
-### 3.2 Legacy scaffold state update
+### 3.2 Baseline and session writes
+
+```text
+side panel "Start baseline"
+   ──► messenger.sendMessage('startSession', { candidateIds, baselineMode, testTab })
+   ──► background ──► startSession() (utils/bisect/session.ts), serialized on the session queue
+         append 'session-started' (candidate snapshot, capability, baselineMode, testTab) ──► write log
+         append 'trial-started' round 0, target = every candidate disabled
+         port.applyTargetState(target)  (chrome-port: diff vs getAll, sequential setEnabled)
+         append 'trial-applied' with the per-id errors
+         tabs.reload(testTab.tabId) then poll tabs.get(id).status until 'complete' or the timeout
+   ──► returns SessionView ──► panel renders the baseline question
+   ──► on a toggle failure the session appends 'session-reset' after restoring the touched ids
+```
+
+1. The log is the only session state; `reduceLog` derives every view, so a panel reload or a
+   terminated service worker re-derives the same screen from `getSession` (ADR-011).
+2. Every session command runs on the module promise queue in `session.ts`, so two panels cannot
+   interleave read-modify-write on the log.
+3. `submitVerdict` records `baseline-recorded`; `persists` restores the touched candidates and
+   appends `session-reset`, `gone` leaves the session `awaiting-verdict` (or `completed` for
+   `N = 1`). `resetSession` is the explicit Restore and reports per-extension errors.
+
+### 3.3 Legacy scaffold state update
 
 ```text
 popup button click
@@ -358,12 +404,13 @@ popup button click
 
 ## 4. Primary read paths
 
-### 4.1 Side panel load (candidate picker)
+### 4.1 Side panel load (candidate picker and session screen)
 
-1. `App.vue` `onMounted` ──► `load()` issues `getCapabilities`, `listCandidates`, and `getConfig` in parallel.
+1. `App.vue` `onMounted` ──► `load()` issues `getCapabilities`, `listCandidates`, `getConfig`, and `getSession` in parallel.
 2. `getCapabilities` ──► `ManagementPort.getCapabilities()` ──► `management.getSelf()`; the adapter reports `canAutoToggle` (`true` on Chrome, `installType === "admin"` on Firefox) and its `sideSurface`.
 3. `listCandidates` ──► `ManagementPort.listCandidates()` ──► `management.getAll()` + `getSelf()`, filtered by the shared `partitionCandidates` helper. Eligibility is intrinsic only; user exclusions live in the config ([ADR-016](DECISIONS.md)).
 4. The panel builds picker rows with `buildPickerRows(eligible, excludedIds)`, which marks excluded candidates as unchecked rows, then renders both lists plus the live-region count. The "Not eligible" section renders `ineligible` as-is — every entry there is an extension the user cannot act on.
+5. `getSession` ──► `reduceLog(await readBisectLog())`; `resolveScreen` then picks `baseline`, `host-issue`, `completed`, `restored`, `progress`, or the picker, so a panel reload or a restarted worker lands back on the same screen. Nothing is toggled by a read.
 
 ### 4.2 Popup state load (legacy)
 
@@ -407,11 +454,12 @@ Relationships: `SessionView` 1—* `Trial`; `Trial` 0..1 `Verdict`; `BisectLog` 
 | Item | Storage key | Type | Fallback |
 |---|---|---|---|
 | `bisectConfigItem` (`utils/bisect/config.ts`) | `local:bisectConfig` | `BisectConfig` | `{ schemaVersion: 1, excludedExtensionIds: [], testTab: null }` |
+| `bisectLogItem` (`utils/bisect/events.ts`) | `local:bisectLog` | `BisectLog` | `null` |
 | `enabledItem` (`utils/storage.ts`) | `local:enabled` | `boolean` | `true` — legacy, deleted on first start |
 | `interactionCountItem` | `local:interactionCount` | `number` | `0` — legacy, deleted on first start |
 | `settingsItem` | `local:settings` | `BisectSettings` | `BISECT_SETTINGS_DEFAULTS` — legacy, deleted on first start |
 
-`deleteLegacyStorageKeys()` runs once from the background startup path and removes the three legacy keys; there is no migration for placeholder values (ADR-012). `local:bisectLog` is reserved for ISS-003. Unit tests run against `fakeBrowser` (in-memory); E2E runs against real browser storage.
+`deleteLegacyStorageKeys()` runs once from the background startup path and removes the three legacy keys; there is no migration for placeholder values (ADR-012). `local:bisectLog` is append-only during a live session and capped at 500 events, which fails closed rather than dropping audit data. Unit tests run against `fakeBrowser` (in-memory); E2E runs against real browser storage.
 
 ### 6.2 DOM contract (host pages)
 
@@ -424,19 +472,28 @@ Both are retired with the content script in ISS-013. Attribute-name constants li
 
 ### 6.3 Side panel selector contract
 
-Every meaningful node carries a stable `data-testid` (ADR-005). The candidate picker surface is:
+Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root` also carries
+`data-screen` (the derived screen name) so a test can assert the screen without counting nodes.
 
 | Selector | Node |
 |---|---|
-| `sidepanel-root` | `<main>`, carries `data-state` = `loading` \| `ready` \| `error` |
-| `sidepanel-live` | `aria-live="polite"` announcement (`"N of M candidates shown"`) |
+| `sidepanel-root` | `<main>`, carries `data-state` = `loading` \| `ready` \| `error` and `data-screen` |
+| `sidepanel-live` | `aria-live="polite"` announcement (screen-dependent) |
 | `sidepanel-loading`, `sidepanel-error` | loading status and `role="alert"` error |
 | `no-session`, `culprit-warning` | no-session screen and the culprit-stays-disabled note |
 | `capability-report`, `capability-browser`, `capability-toggle-mode`, `capability-surface`, `capability-install-type` | capability report |
-| `candidate-picker`, `candidate-search` | picker section and search input |
+| `candidate-picker`, `candidate-search`, `picker-start`, `picker-blocked` | picker section, search input, entry to pre-flight, block reason |
 | `candidate-list`, `candidate-row` (`data-extension-id`, `data-selected`), `candidate-checkbox`, `candidate-name`, `candidate-version`, `candidate-initials`, `candidate-reason` | selectable rows (one per `eligible` candidate; `candidate-reason` reads "Excluded by you" when the id is in the config) |
 | `eligible-empty`, `search-empty` | empty states |
 | `ineligible-section`, `ineligible-list`, `ineligible-row` (`data-reason`), `ineligible-name`, `ineligible-reason` | intrinsically ineligible extensions only |
+| `preflight`, `preflight-count`, `preflight-candidates`, `preflight-candidate` (`data-extension-id`), `preflight-candidate-name`, `preflight-candidate-version`, `preflight-mode`, `preflight-culprit-note` | consent screen: exactly the candidates the baseline will disable, and the policy copy |
+| `preflight-test-tab`, `preflight-test-tab-label`, `preflight-test-tab-warning`, `preflight-bind`, `preflight-blocked`, `preflight-start`, `preflight-cancel` | test-tab binding and the explicit start |
+| `baseline-screen`, `baseline-question`, `baseline-detail`, `verdict-persists`, `verdict-gone`, `baseline-reload`, `baseline-reload-status` | baseline question with the exact verdict labels |
+| `host-issue-screen`, `host-issue-explanation`, `host-issue-guidance`, `host-issue-restore`, `host-issue-restore-summary` | host-issue abort |
+| `completed-screen`, `culprit-name`, `culprit-detail`, `completed-restore`, `completed-restore-summary` | completed state, including the `N = 1` resolution |
+| `restored-screen`, `restored-explanation`, `restored-summary`, `restored-restore` | restored audit state |
+| `session-progress`, `progress-status`, `progress-count`, `progress-trial`, `progress-enabled`, `progress-disabled`, `progress-note` | interim in-session screen |
+| `restore-panel`, `restore-policy`, `restore-summary` (`data-complete`), `restore-button`, `restore-failures`, `restore-failure` (`data-extension-id`), `restore-failure-name`, `restore-failure-code`, `restore-failure-message` | Restore, present on every screen |
 
 ### 6.4 Build and artifact layout
 
@@ -453,19 +510,28 @@ Every meaningful node carries a stable `data-testid` (ADR-005). The candidate pi
 
 | Module | Responsibility |
 |---|---|
-| `entrypoints/background.ts` | Registers the nine message handlers, builds the platform `ManagementPort`, deletes legacy keys at startup, attaches `[EXT_BG_ERR]` logging in test builds, resolves per-tab content status. |
-| `entrypoints/sidepanel/App.vue` | Side panel shell: loads capability/candidates/config, owns search query and error state, sends `updateConfig`, renders the live region. |
+| `entrypoints/background.ts` | Registers the seventeen message handlers, builds the platform `ManagementPort` and the `tabs` test-tab surface, delegates every session command to `utils/bisect/session.ts`, deletes legacy keys at startup, attaches `[EXT_BG_ERR]` logging in test builds, resolves per-tab content status. |
+| `entrypoints/sidepanel/App.vue` | Side panel shell and router: loads capability/candidates/config/session, derives the active screen with `resolveScreen`, owns search query, busy and error state, sends every session command, renders the live region and the always-visible Restore panel. |
 | `entrypoints/sidepanel/components/CapabilityReport.vue` | Renders `browserName`, toggle mode wording, surface, and install type. |
-| `entrypoints/sidepanel/components/CandidatePicker.vue` | Search input, filtered rows, and empty states; renders the ineligible list. |
+| `entrypoints/sidepanel/components/CandidatePicker.vue` | Search input, filtered rows, empty states, the ineligible list, and the "Review N candidates" entry to pre-flight. |
 | `entrypoints/sidepanel/components/CandidateRow.vue` | Selectable row: checkbox, initials, name, version, exclusion reason. |
 | `entrypoints/sidepanel/components/IneligibleList.vue` | "Not eligible" list with a reason chip per entry. |
 | `entrypoints/sidepanel/components/NoSession.vue` | No-session screen and the culprit-left-disabled note. |
-| `entrypoints/sidepanel/presentation.ts` | Pure UI helpers: reason labels, mode wording, initials, search matching, row building and ordering. |
+| `entrypoints/sidepanel/components/PreflightConsent.vue` | Consent screen: the exact candidates the baseline will disable, the culprit/restore policy, the test-tab binding and rebind, and the explicit "Start baseline" action. |
+| `entrypoints/sidepanel/components/BaselineScreen.vue` | The baseline question with the labels "Problem persists"/"Problem is gone" plus a manual test-tab reload. |
+| `entrypoints/sidepanel/components/HostIssueScreen.vue` | Abort screen for a persisting baseline: explains that no extension is implicated and offers Restore. |
+| `entrypoints/sidepanel/components/CompletedScreen.vue` | Completed state: names the culprit (also the `N = 1` resolution) and states it is still disabled. |
+| `entrypoints/sidepanel/components/RestoredScreen.vue` | Post-restore audit state with the restore summary and a repeat action. |
+| `entrypoints/sidepanel/components/SessionProgress.vue` | Interim in-session screen between the baseline and the ISS-004 trial loop: status, progress and the current batch. |
+| `entrypoints/sidepanel/components/RestorePanel.vue` | Restore, rendered on every screen: policy note, per-extension failures, and a button disabled until a session has touched something. |
+| `entrypoints/sidepanel/presentation.ts` | Pure UI helpers: reason labels, mode wording, initials, search matching, row building and ordering, screen resolution, test-tab and progress wording, restore summarization. |
 | `entrypoints/sidepanel/style.css` | Token layer (light/dark via `light-dark()`) and side panel layout. |
 | `entrypoints/content.ts` | Renders the DOM marker from stored state, keeps it live, answers `getContentMarker`, publishes the tab-id marker in test builds. |
 | `entrypoints/popup/App.vue` | Legacy popup: loads state, sends `updateState`/`recordInteraction`, exposes the batch-size input. |
 | `utils/bisect/domain.ts` | The complete owned type surface: entities, events, results, error codes, `ManagementPort`. |
 | `utils/bisect/config.ts` | `local:bisectConfig` item, normalization, serialized `updateBisectConfig`, watcher, legacy-key deletion. |
+| `utils/bisect/events.ts` | `local:bisectLog` item, normalization, `appendEvent` with the 500-event cap, and the pure `reduceLog` reducer that derives `SessionView`. |
+| `utils/bisect/session.ts` | Session orchestration: `startSession`, `getSession`, `applyTrial`, `submitVerdict`, `resetSession`, `bindTestTab`, `reloadTestTab`, all serialized on one promise queue over the log. `SessionDependencies` injects the port, the `TestTabSurface`, the clock and the session-id factory. |
 | `utils/bisect/management-port.ts` | Injectable `ManagementSurface`, the shared eligibility filter (intrinsic reasons only) and ordering helper, and the `not implemented` stubs. |
 | `utils/bisect/chrome-port.ts` | Automated adapter: `canAutoToggle: true`, `sideSurface: 'side-panel'`. |
 | `utils/bisect/firefox-port.ts` | Assisted adapter: `canAutoToggle` only for `installType === 'admin'`, `sideSurface: 'sidebar'`. |
@@ -496,6 +562,13 @@ All extension IPC goes through `defineExtensionMessaging<ProtocolMap>` (`utils/m
 | `listCandidates` | — | `{ eligible, ineligible }` | side panel ──► background |
 | `getConfig` | — | `BisectConfig` | side panel ──► background |
 | `updateConfig` | `Partial<BisectConfig>` | `BisectConfig` | side panel ──► background |
+| `getSession` | — | `SessionView \| null` | side panel ──► background |
+| `startSession` | `{ candidateIds, baselineMode, testTab }` | `SessionView` | side panel ──► background |
+| `applyTrial` | — | `SessionView` | side panel ──► background |
+| `submitVerdict` | `{ verdict }` | `SessionMutationResult` | side panel ──► background |
+| `resetSession` | `{ restore: boolean }` | `SessionMutationResult` | side panel ──► background |
+| `bindTestTab` | `{ tabId? }` | `BisectConfig` | side panel ──► background |
+| `reloadTestTab` | — | `{ ok, error? }` | side panel ──► background |
 | `getState` | — | `ExtensionState` | popup ──► background (legacy) |
 | `updateState` | `Partial<BisectSettings> & { enabled?: boolean }` | `ExtensionState` | popup ──► background (legacy) |
 | `recordInteraction` | — | `ExtensionState` | popup ──► background (legacy) |
@@ -503,7 +576,17 @@ All extension IPC goes through `defineExtensionMessaging<ProtocolMap>` (`utils/m
 | `getContentMarker` | — | `string \| null` | background ──► content script (tab-scoped send) |
 | `getTabId` | — | `number \| null` | content script ──► background |
 
-The `getState`..`getTabId` rows retire with the scaffold in ISS-013; the remaining nine messages of the target surface (sessions, trials, verdicts, replay, drift) arrive with ISS-003..ISS-009.
+`SessionMutationResult` is `{ session: SessionView; restore: { restored, errors } | null }`. The
+`restore` envelope carries the outcome of the `session-reset` event the command appended, if it
+appended one: `SessionView` has no restore field, so without it the panel could not distinguish
+a complete restore from a partial one (SPEC §Restore).
+
+`bindTestTab` takes only an optional tab id — the panel never sends a URL because the add-on
+cannot see one without the `tabs` permission; the background resolves the active tab when the
+id is omitted ([ADR-017](DECISIONS.md)).
+
+The `getState`..`getTabId` rows retire with the scaffold in ISS-013; the remaining six messages
+of the target surface (retry, undo, log, replay, drift, escalation) arrive with ISS-004..ISS-010.
 
 ---
 
@@ -511,11 +594,15 @@ The `getState`..`getTabId` rows retire with the scaffold in ISS-013; the remaini
 
 ### 9.1 Error handling
 
-The side panel catches every message rejection into `errorMessage` (`role="alert"`, `data-testid="sidepanel-error"`) and flips `data-state` to `error`, so a failing `management.getAll` shows a readable message instead of an empty picker. The legacy popup does the same. `readContentStatus` fails soft: a messaging failure yields `{active: false, marker: null}`. `ManagementPort.applyTargetState`/`verifyState`/`restore`/`watchEvents` currently throw `new Error('not implemented')`. No retries anywhere.
+The side panel catches every message rejection into `errorMessage` (`role="alert"`, `data-testid="sidepanel-error"`), so a failing `management.getAll` shows a readable message instead of an empty picker; on a load failure it also flips `data-state` to `error`. A rejected command after load keeps the last good screen and shows the alert, so a failed Restore never silently reverts the UI. The legacy popup does the same. `readContentStatus` fails soft: a messaging failure yields `{active: false, marker: null}`. `reloadTestTab` returns `{ ok: false, error }` rather than throwing, and a baseline that never settles still asks for the verdict. A baseline that `persists` aborts as a host issue rather than blaming an extension. `ManagementPort.verifyState` and `watchEvents` still throw `new Error('not implemented')` (ISS-009). No retries anywhere.
 
 ### 9.2 Concurrency and consistency
 
-Single-writer rules: only background handlers write storage, and only `updateBisectConfig` writes the config. Its module-level promise queue serializes read-modify-write, so concurrent `updateConfig` messages cannot lose a field. The legacy `applyStateUpdate` merges onto freshly read state (last write wins). Storage `watch` events are the fan-out to content scripts.
+Single-writer rules: only background handlers write storage, and only `updateBisectConfig` writes
+the config and only `utils/bisect/session.ts` writes the log. Both serialize read-modify-write on
+a module-level promise queue, so concurrent `updateConfig` messages cannot lose a field and
+concurrent session commands cannot lose an event. `reduceLog` is pure, so every reader derives the
+same view from the same log. Storage `watch` events are the fan-out to content scripts.
 
 ### 9.3 Logging and observability
 
@@ -540,6 +627,7 @@ Chrome MV3 service worker vs Firefox MV2 background, and Puppeteer CDP vs WebDri
 | Port behaviour | implement a `not implemented` method in `utils/bisect/chrome-port.ts` / `firefox-port.ts` | keep `domain.ts` signatures stable; reuse the shared filter/ordering helpers |
 | New UI surface | WXT entrypoint under `entrypoints/` | plain CSS with tokens; `data-testid` on meaningful nodes; host-injected UI must use `createShadowRootUi` with `cssInjectionMode: 'ui'` |
 | New E2E step | append to `runScenario` in `tests/e2e/verify.mjs` | stay browser-agnostic or branch on `browserName`; keep CDP-only calls inside `harness.mjs` |
+| New E2E scenario | add a runner in `tests/e2e/verify.mjs` and list it in `SCENARIOS` | the default run must execute every scenario; `--scenario=<name>` runs one |
 | New fixture extension | add a directory under `tests/e2e/fixtures/extensions/<browser>/` and register it in `fixtures/fixtures.mjs` | per-browser manifests; Firefox fixtures need a `browser_specific_settings.gecko.id` |
 
 ---
@@ -584,11 +672,14 @@ Unit tests call `fakeBrowser.reset()` per test; component and messaging tests re
 | Unit (config) | `tests/unit/bisect-config.test.ts` | fallback, normalization, serialized persistence, watcher, legacy-key deletion |
 | Unit (eligibility) | `tests/unit/candidate-eligibility.test.ts` | every exclusion reason, reason precedence, deterministic name-then-id ordering |
 | Unit (adapters) | `tests/unit/management-adapters.test.ts` | both adapters against the fake surface: listing, capability report, `not implemented` stubs |
-| Unit (messaging) | `tests/unit/bisect-messaging.test.ts` | `getCapabilities`/`listCandidates`/`getConfig`/`updateConfig` round-trips, exclusion→reason propagation, concurrent updates, startup cleanup |
+| Unit (messaging) | `tests/unit/bisect-messaging.test.ts` | `getCapabilities`/`listCandidates`/`getConfig`/`updateConfig` round-trips, exclusion→reason propagation, concurrent updates, startup cleanup; plus the session surface: `getSession`, `startSession`, `applyTrial`, `submitVerdict`, `resetSession`, `bindTestTab`, `reloadTestTab`, and the `SessionMutationResult` restore envelope |
+| Unit (event log / reducer) | `tests/unit/bisect-events.test.ts` | the 12 event types, the `reduceLog` derivation of every status, the baseline/host-issue/`N = 1` outcomes, the 500-event cap |
+| Unit (session orchestration) | `tests/unit/bisect-session.test.ts` | `startSession` consent and eligibility, the baseline outcomes, restore and its partial failures, rehydration, serialization, test-tab bind/reload/settle |
 | Component (`@vue/test-utils` + `happy-dom`) | `tests/unit/sidepanel.test.ts` | loading, ready, error, no-session, capability report, rows, initials, empty states, ineligible reasons, search filtering, live region, persistence across remount |
-| Unit (presentation) | `tests/unit/sidepanel-presentation.test.ts` | reason labels, mode wording, initials, search matching, row merging/ordering |
+| Component (session screens) | `tests/unit/sidepanel-session.test.ts` | pre-flight consent, the baseline question and its exact labels, host-issue abort, `N = 1` resolution, Restore including a failing re-enable, and rehydration after a panel reopen — all mounted with the real background handlers and the fake management port |
+| Unit (presentation) | `tests/unit/sidepanel-presentation.test.ts` | reason labels, mode wording, initials, search matching, row building/ordering |
 | Unit (legacy scaffold) | `tests/unit/storage.test.ts`, `messaging.test.ts`, `popup.test.ts` | the popup scaffold — retired in ISS-013 |
-| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | all above, plus fixture extensions (enabled, disabled-at-start, theme) and the candidate list on both browsers |
+| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | `candidate-picker` on both browsers (candidate list, search, exclusion persistence); `session-baseline` on Chrome (pre-flight, all-off baseline, non-candidates untouched, test-tab reload, `gone` advance, `persists` host-issue abort, Restore of only touched ids) and on Firefox the honest assisted/blocked capability state |
 
 ### 12.3 Quality gates
 

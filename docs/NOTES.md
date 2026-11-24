@@ -76,6 +76,12 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - **`fakeBrowser.runtime.sendMessage` lacks the promise-returning listener protocol** (2026-11-24): `@webext-core/messaging` round-trips hang in unit tests; call `installMessagingBridge()` from `tests/unit/helpers/messaging-bridge.ts` first, and reset between tests with `messenger.removeAllListeners()` plus `fakeBrowser.reset()`.
 
+## test-tab-binding
+
+- **`tab.url` is `undefined` without the `tabs` permission, so `testTab.url` is nullable** (2026-11-24, ADR-017): `browser.tabs.query({active:true})` and `tabs.get(id)` return the id, index and status but never `url` when the add-on does not hold `tabs`, and ADR-012 keeps that permission off. `TestTabBinding.url` is therefore `string | null` in `utils/bisect/domain.ts`; `entrypoints/background.ts` stores a URL only when one is exposed and the panel renders `Tab #N` otherwise. Do not "fix" the null by adding `tabs` — it reverses ADR-012 and the consent screen's promise. Note the current test-mode Chrome build still declares `tabs` in `wxt.config.ts`, so the E2E sees a URL that a production build will not; assert the binding by tab id, not by URL.
+- **`tabs.reload` accepts a bare tab id and returns before the page has loaded** (2026-11-24): the call resolves as soon as the navigation starts, so `waitForComplete` must poll `tabs.get(tabId).status === 'complete'` (or `tabs.onUpdated`) with `TEST_TAB_SETTLE_TIMEOUT_MS`. A panel that asks for the verdict on the `reload` promise resolves sees the pre-reload page.
+- **Without `tabs`, `tabs.reload` is unobservable from the extension realm** (2026-11-24): the E2E cannot read `tab.url` back, so `tests/e2e/harness.mjs` marks the test page's own JS context (`markPageForReloadCheck`) and treats a missing marker as proof the reload happened.
+
 ## management-adapter
 
 - **`fakeBrowser` has no `management` API** (2026-11-24): `@webext-core/fake-browser` implements storage and messaging only, so adapter tests cannot call or stub `fakeBrowser.management`; inject the management surface into the adapter (or use the fake management port) to test Chrome error mapping and Firefox assisted verification without a browser.

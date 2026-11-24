@@ -385,7 +385,7 @@ Two versioned items are canonical:
 interface BisectConfig {
   schemaVersion: 1;
   excludedExtensionIds: string[];
-  testTab: { tabId: number; url: string } | null;
+  testTab: { tabId: number; url: string | null } | null;
   lastCandidateIds?: string[];
 }
 
@@ -395,6 +395,12 @@ interface BisectLog {
   events: BisectEvent[];
 }
 ```
+
+`testTab.url` is nullable: without the `tabs` permission (ADR-012) neither Chrome nor Firefox
+exposes `tab.url` to the add-on, so `tabs.query()`/`tabs.get()` return the id only and the
+binding records `null`. The URL is stored when the browsing context happens to expose it (test
+and DOM contexts) and the UI then renders `Tab #N · <url>`, otherwise `Tab #N`
+([ADR-017](DECISIONS.md)).
 
 Config falls back to `{ schemaVersion: 1, excludedExtensionIds: [], testTab: null }`; the
 log falls back to `null`. The legacy scaffold keys `local:enabled`,
@@ -508,7 +514,8 @@ yes. On startup with an unfinished session, the UI offers Resume or Restore.
 
 ### Test tab
 
-The user binds the tab that reproduces the symptom. The config stores `{ tabId, url }`.
+The user binds the tab that reproduces the symptom. The config stores `{ tabId, url }`, where
+`url` is `null` whenever the browser does not expose it (no `tabs` permission — [ADR-017](DECISIONS.md)).
 After each batch: apply or verify the management state, `tabs.reload(tabId)`, wait for the
 tab to reach `status === "complete"` through `tabs.onUpdated` with a timeout (for example
 15 seconds), and then ask for the verdict. If the tab is gone, the UI prompts the user to

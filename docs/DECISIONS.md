@@ -142,6 +142,8 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [013](#adr-013-keep-the-culprit-disabled-and-require-explicit-restore) | Keep the culprit disabled and require explicit restore |
 | [014](#adr-014-ship-human-verdicts-only-in-v1) | Ship human verdicts only in v1 |
 | [015](#adr-015-report-non-single-culprit-outcomes-as-inconclusive) | Report non-single-culprit outcomes as inconclusive |
+| [016](#adr-016-keep-user-exclusions-out-of-candidate-eligibility) | Keep user exclusions out of candidate eligibility |
+| [017](#adr-017-store-the-test-tab-url-as-nullable) | Store the test tab URL as nullable |
 
 ---
 
@@ -526,6 +528,30 @@ Eligibility is **intrinsic only**: `self`, `theme-or-app`, `disabled-at-start`, 
 **Bad**: A caller that wants the full picture needs both `listCandidates().eligible` and the config's `excludedExtensionIds` to know which candidates the user deselected.
 
 **Mitigations**: `startSession` receives explicit `candidateIds`, so the picker's selection is passed in rather than re-derived inside the port; the contract is recorded in `docs/SPEC.md` §Candidate eligibility and `docs/ARCH.md` §6.3.
+
+---
+
+## ADR-017: Store the test tab URL as nullable
+
+**Status**: Accepted (revised 2026-11-24 by ISS-003)
+**Date**: 2026-11-24
+**Deciders**: ISS-003 implementation session (LLM-driven, user-approved)
+
+### Context
+
+`BisectConfig.testTab` was specified as `{ tabId: number; url: string } | null`, and `docs/SPEC.md` §Test tab assumed the add-on could always fill `url`. ADR-012 fixes the permission set to `storage`, `management`, and Chrome `sidePanel` — no `tabs`. Without that permission neither Chrome nor Firefox exposes `tab.url` to the caller: `tabs.query()` and `tabs.get()` return the id, index, and status but leave `url` undefined. The implemented `TestTabBinding` in `utils/bisect/domain.ts` therefore already declares `url: string | null`, which contradicted both documents.
+
+### Decision
+
+`testTab.url` is **nullable** everywhere: `testTab: { tabId: number; url: string | null } | null`. The background records the URL only when the browsing context happens to expose one (a test or DOM context) and records `null` otherwise. The panel renders `Tab #N` for a null URL and `Tab #N · <url>` when a URL is available. The `tabs` permission stays off; only the tab id is ever used for `tabs.reload` and `tabs.onUpdated`.
+
+### Consequences
+
+**Good**: The schema matches what the browser can actually deliver, so the binding is never fabricated; the add-on keeps the minimal permission set that store review and the consent screen promise (ADR-012); the UI degrades to a stable `Tab #N` label instead of showing an empty or guessed URL.
+
+**Bad**: The user cannot tell two tabs apart by URL, so a stale binding is harder to notice; the E2E assertions can only compare the id, and any future feature that needs the URL will need a permission change plus a schema bump.
+
+**Mitigations**: The pre-flight consent screen shows the binding and offers a rebind, and the session still reloads by id; the rationale is recorded in `docs/SPEC.md` §Storage and §Test tab, `docs/TECH_DESIGN.md` §9.1, and `docs/NOTES.md`.
 
 ---
 

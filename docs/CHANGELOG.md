@@ -124,17 +124,29 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Cross-browser Browser Extension Bisect add-on built on WXT, producing Chrome (Manifest V3) and Firefox (Manifest V2) builds from one TypeScript codebase.
 - Side panel UI (`side panel` on Chrome, `sidebar_action` on Firefox) rendering the no-session screen, the capability report, and the candidate picker, replacing the popup as the product surface ([ADR-009](DECISIONS.md)).
 - Candidate picker with display-name search, per-extension include/exclude checkboxes, deterministic name-then-id ordering, and a "Not eligible" list that explains every intrinsic exclusion (theme or app, disabled at start, policy-locked, this add-on).
+- Pre-flight consent screen listing exactly the extensions the baseline will disable, the culprit-stays-disabled and Restore policy, the bound test tab, and an explicit "Start baseline" action; nothing is toggled before that click ([ADR-013](DECISIONS.md)).
+- Automated all-off baseline on Chrome: every candidate is disabled, non-candidates are left untouched, the bound test tab is reloaded and awaited with a timeout, and the baseline verdict is appended to the bisect log.
+- Baseline question with the labels "Problem persists" and "Problem is gone": `persists` aborts as a host issue and restores, `gone` advances, and `N = 1` resolves the culprit directly from the baseline with the culprit left disabled ([ADR-014](DECISIONS.md)).
+- Host-issue screen explaining that no installed extension is implicated, with Restore.
+- Restore, visible on the picker and on every session screen: re-enables only the extensions the session touched, reports per-extension failures, and never claims a full restore when a re-enable failed ([ADR-013](DECISIONS.md), [ADR-017](DECISIONS.md)).
+- Session view rehydrated from the bisect log on panel open, so closing or reloading the panel keeps the session and its screen.
+- Seven session messages (`getSession`, `startSession`, `applyTrial`, `submitVerdict`, `resetSession`, `bindTestTab`, `reloadTestTab`) on the typed messaging protocol, with the background as the only writer.
 - Versioned bisect config in `local:bisectConfig` with the documented fallback, a serialized writer owned by the background, and first-start deletion of the legacy `enabled`, `interactionCount`, and `settings` keys.
 - `management` and Chrome `sidePanel` permissions, plus Chrome's `side_panel.default_path` and Firefox's `sidebar_action` panel metadata.
 - `ManagementPort` contract with Chrome and Firefox adapters behind one shared eligibility filter and ordering helper, and an injectable management surface so adapters are testable without a browser.
 - Four typed messages (`getCapabilities`, `listCandidates`, `getConfig`, `updateConfig`) on the existing messaging protocol.
-- E2E fixture extensions and a multi-install harness path, with a direct `sidepanel.html` navigation that asserts the candidate list on both browsers.
+- E2E fixture extensions and a multi-install harness path, with a direct `sidepanel.html` navigation that asserts the candidate list on both browsers, plus a Chrome `session-baseline` scenario covering pre-flight, the all-off baseline, the test-tab reload, the `gone` advance, the `persists` host-issue abort, and Restore of only the touched candidates.
 - Popup with an enable/disable switch, an interaction counter, and a persisted batch-size setting, all backed by typed local storage.
 - Content script on all pages that renders a `data-ext-bisect-state` DOM marker and keeps it in sync with stored state.
 - Test-mode builds (`EXT_TEST_MODE=1`) with `?tabId=` popup targeting and `[EXT_BG_ERR]` error logging for automation; production builds strip these hooks.
 - Zero-HITL verification suite: Vitest unit/component tests plus a Puppeteer E2E gate (`npm run agent:verify`) covering Chrome over CDP and Firefox over WebDriver BiDi, with JSON verdicts and failure screenshots.
 - Nine-document agent documentation set under `docs/` (architecture, decision records, glossary, issues, notes, runbook, tech-debt ledger, tools inventory, changelog), each with an embedded maintenance guide and registered in `AGENTS.md`.
 - The v1 bisect specification (`docs/SPEC.md`) and the twelve implementation tickets in `docs/ISSUES.md`.
+
+### Changed
+
+- `BisectConfig.testTab.url` is `string | null`: without the `tabs` permission neither browser exposes `tab.url`, so the binding records the tab id and the panel shows `Tab #N` when no URL is available ([ADR-017](DECISIONS.md)).
+- `management.verifyState` and `management.watchEvents` remain `not implemented`; the baseline uses `applyTargetState` and `restore` only (ISS-009).
 
 ### Fixed
 
