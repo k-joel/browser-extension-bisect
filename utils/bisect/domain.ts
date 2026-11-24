@@ -124,8 +124,8 @@ export interface BisectEventPayloads {
     testTab: TestTabBinding | null;
   };
   'baseline-recorded': { mode: BaselineMode; verdict: Verdict };
-  'trial-started': { round: number; enabledIds: string[]; disabledIds: string[] };
-  'trial-applied': { round: number; errors: ToggleError[] };
+  'trial-started': { round: number; enabledIds: string[]; disabledIds: string[]; manual?: boolean };
+  'trial-applied': { round: number; errors: ToggleError[]; manual?: boolean };
   'verdict-recorded': { round: number; verdict: Verdict };
   'trial-retried': { round: number; reason?: string };
   'verdict-undone': { round: number };
@@ -133,7 +133,7 @@ export interface BisectEventPayloads {
   'session-resumed': { reason: string };
   'session-completed': { culpritId: string };
   'session-inconclusive': { ambiguityIds: string[]; reason: string };
-  'session-reset': { restored: boolean; errors: RestoreError[] };
+  'session-reset': { restored: boolean; errors: RestoreError[]; manualIds?: string[] };
 }
 
 export type BisectEventType = keyof BisectEventPayloads;
@@ -181,6 +181,7 @@ export interface Trial {
   verdict: Verdict | null;
   appliedAt: number | null;
   errors: ToggleError[];
+  manual: boolean;
 }
 
 export interface SessionProgress {
@@ -195,6 +196,7 @@ export interface SessionView {
   sessionId: string;
   status: SessionStatus;
   capability: CapabilityReport;
+  baselineMode: BaselineMode;
   candidateOrder: CandidateExtension[];
   originalEnabledIds: string[];
   suspects: string[];
@@ -235,7 +237,7 @@ export interface ReplayResult {
 export interface ManagementPort {
   getCapabilities(): Promise<CapabilityReport>;
   listCandidates(): Promise<CandidateLists>;
-  applyTargetState(target: TargetState): Promise<ToggleResult>;
+  applyTargetState(target: TargetState): Promise<ToggleResult | ManualBatch>;
   verifyState(expected: TargetState): Promise<DriftReport>;
   restore(original: EnabledStateMap): Promise<RestoreResult>;
   watchEvents(listener: (event: ManagementEvent) => void): () => void;

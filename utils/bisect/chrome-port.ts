@@ -2,6 +2,7 @@ import type {
   CapabilityReport,
   DriftReport,
   EnabledStateMap,
+  ManagementEvent,
   ManagementPort,
   RestoreResult,
   TargetState,
@@ -9,16 +10,24 @@ import type {
 } from './domain';
 import {
   applySharedTargetState,
-  createNotImplementedWatchEvents,
   listSharedCandidates,
   type PortDependencies,
   restoreSharedState,
+  subscribeToManagementEvents,
   verifySharedState,
 } from './management-port';
 
 export type ChromePortOptions = PortDependencies;
 
-export function createChromePort({ management }: ChromePortOptions): ManagementPort {
+/**
+ * Chrome can always toggle regular extensions, so its `applyTargetState` never
+ * narrows to a `ManualBatch`; callers of this port need no assist check.
+ */
+export interface ChromeManagementPort extends Omit<ManagementPort, 'applyTargetState'> {
+  applyTargetState(target: TargetState): Promise<ToggleResult>;
+}
+
+export function createChromePort({ management }: ChromePortOptions): ChromeManagementPort {
   return {
     async getCapabilities(): Promise<CapabilityReport> {
       const self = await management.getSelf();
@@ -33,6 +42,7 @@ export function createChromePort({ management }: ChromePortOptions): ManagementP
     applyTargetState: (target: TargetState): Promise<ToggleResult> => applySharedTargetState(management, target),
     verifyState: (expected: TargetState): Promise<DriftReport> => verifySharedState(management, expected),
     restore: (original: EnabledStateMap): Promise<RestoreResult> => restoreSharedState(management, original),
-    ...createNotImplementedWatchEvents(),
+    watchEvents: (listener: (event: ManagementEvent) => void): (() => void) =>
+      subscribeToManagementEvents(management, listener),
   };
 }

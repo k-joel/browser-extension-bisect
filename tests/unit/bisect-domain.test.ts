@@ -161,11 +161,13 @@ describe('bisect domain surface', () => {
       verdict,
       appliedAt: 1,
       errors: [],
+      manual: false,
     };
     const view: SessionView = {
       sessionId: 's1',
       status: 'awaiting-verdict',
       capability,
+      baselineMode: 'auto',
       candidateOrder: [candidate],
       originalEnabledIds: ['aaaa', 'bbbb'],
       suspects: ['aaaa'],

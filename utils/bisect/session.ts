@@ -7,6 +7,7 @@ import type {
   BisectEventType,
   BisectLog,
   CandidateExtension,
+  DriftReport,
   EnabledStateMap,
   ManagementPort,
   RestoreResult,
@@ -17,6 +18,7 @@ import type {
 } from './domain';
 import { type AnsweredTrial, buildTargetState, partitionSuspects } from './engine';
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
+import { isManualBatch } from './management-port';
 
 export const TEST_TAB_SETTLE_TIMEOUT_MS = 15_000;
 
@@ -159,6 +161,13 @@ async function applyAndRecord(
     disabledIds: target.disabled,
   });
   const result = await dependencies.port.applyTargetState(target);
+  if (isManualBatch(result)) {
+    return appendAndPersist(started, 'trial-applied', dependencies.now(), {
+      round,
+      errors: [],
+      manual: true,
+    });
+  }
   return appendAndPersist(started, 'trial-applied', dependencies.now(), { round, errors: result.errors });
 }
 
@@ -178,6 +187,87 @@ async function restoreTouched(dependencies: ResolvedDependencies, view: SessionV
 
 function isBaselineQuestion(view: SessionView): boolean {
   return view.status === 'awaiting-verdict' && view.currentTrial?.round === 0 && view.currentTrial.verdict === null;
+}
+
+/**
+ * Assisted mode parks the session in `awaiting-manual-toggle` until the user's own
+ * toggles match the batch. The reducer cannot know when that happened, so accepting
+ * the batch is an explicit command that first proves the state with `verifyState`.
+ */
+export function verifyManualState(rawDependencies: SessionDependencies): Promise<DriftReport> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const view = viewOf(await requireLog());
+    const trial = view.currentTrial;
+    if (trial === null) throw new SessionError('No trial is open to verify');
+    return dependencies.port.verifyState(trial.targetState);
+  });
+}
+
+export function confirmManualState(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+    const trial = view.currentTrial;
+    if (trial === null || !trial.manual) throw new SessionError('No manual batch is waiting to be confirmed');
+    if (view.status !== 'awaiting-manual-toggle') {
+      throw new SessionError(`Cannot confirm a manual batch while the session is ${view.status}`);
+    }
+
+    const drift = await dependencies.port.verifyState(trial.targetState);
+    if (!drift.inSync) {
+      throw new SessionError(describeDrift(drift));
+    }
+    return viewOf(await appendAndPersist(log, 'session-resumed', dependencies.now(), { reason: 'manual-verified' }));
+  });
+}
+
+function describeDrift(drift: DriftReport): string {
+  const parts: string[] = [];
+  if (drift.pendingManualToggles.length > 0) {
+    parts.push(`${drift.pendingManualToggles.length} still to toggle`);
+  }
+  if (drift.unexpectedToggles.length > 0) parts.push(`${drift.unexpectedToggles.length} toggled unexpectedly`);
+  if (drift.missingIds.length > 0) parts.push(`${drift.missingIds.length} no longer installed`);
+  return `The browser state does not match this batch yet: ${parts.join(', ')}.`;
+}
+
+/**
+ * The external baseline attests the symptom is gone with every extension off, in
+ * Troubleshoot Mode, where this add-on cannot see anything. The baseline is a
+ * recorded human attestation; the full-enabled state it proceeds from is applied
+ * by the caller with the ordinary (assisted) batch.
+ */
+export function recordExternalBaseline(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+    const trialNotStarted = view.currentTrial === null || view.currentTrial.round === 0;
+    if (view.status !== 'baseline' || !trialNotStarted) {
+      throw new SessionError(`Cannot record an external baseline while the session is ${view.status}`);
+    }
+
+    const recorded = await appendAndPersist(log, 'baseline-recorded', dependencies.now(), {
+      mode: 'external',
+      verdict: 'gone',
+    });
+    return viewOf(await settleOutcome(dependencies, recorded));
+  });
+}
+
+/**
+ * Re-runs the restore diff without appending an audit event, so the panel can show
+ * which candidates still have to be re-enabled by hand and can confirm that the
+ * user finished the checklist.
+ */
+export function verifyRestore(rawDependencies: SessionDependencies): Promise<RestoreResult> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const view = viewOf(await requireLog());
+    return dependencies.port.restore(touchedOriginalMap(view));
+  });
 }
 
 export function startSession(rawDependencies: SessionDependencies, request: StartSessionRequest): Promise<SessionView> {
@@ -203,18 +293,24 @@ export function startSession(rawDependencies: SessionDependencies, request: Star
     );
     await writeBisectLog(log);
 
-    const target = allOffTarget(candidates);
-    const applied = await applyAndRecord(dependencies, log, target, 0);
-    await reloadAndSettle(dependencies, request.testTab);
+    // The external baseline is verified in Troubleshoot Mode, where this add-on is
+    // itself disabled. Nothing is toggled: the attestation is the baseline, and the
+    // search resumes from the full-enabled state the browser comes back in.
+    if (request.baselineMode === 'external') return viewOf(log);
 
-    const failures = viewOf(applied).currentTrial?.errors ?? [];
-    if (failures.length === 0) return viewOf(applied);
+    const applied = await applyAndRecord(dependencies, log, allOffTarget(candidates), 0);
+    const view = viewOf(applied);
+    if (view.status !== 'awaiting-manual-toggle') await reloadAndSettle(dependencies, request.testTab);
 
-    const restored = await restoreTouched(dependencies, viewOf(applied));
+    const failures = view.currentTrial?.errors ?? [];
+    if (failures.length === 0) return view;
+
+    const restored = await restoreTouched(dependencies, view);
     return viewOf(
       await appendAndPersist(applied, 'session-reset', dependencies.now(), {
         restored: restored.complete,
         errors: restored.errors,
+        manualIds: restored.manualIds,
       }),
     );
   });
@@ -246,8 +342,9 @@ export function applyTrial(rawDependencies: SessionDependencies): Promise<Sessio
     assertTrialAppliable(view.status);
 
     const applied = await applyAndRecord(dependencies, log, nextTrialTarget(view), nextRoundFor(view));
-    await reloadAndSettle(dependencies, view.testTab);
-    return viewOf(applied);
+    const next = viewOf(applied);
+    if (next.status !== 'awaiting-manual-toggle') await reloadAndSettle(dependencies, next.testTab);
+    return next;
   });
 }
 
@@ -275,10 +372,18 @@ export function retryTrial(
       ...(payload.reason === undefined ? {} : { reason: payload.reason }),
     });
     const result = await dependencies.port.applyTargetState(trial.targetState);
-    const reapplied = await appendAndPersist(retried, 'trial-applied', dependencies.now(), {
-      round: trial.round,
-      errors: result.errors,
-    });
+    const reapplied = isManualBatch(result)
+      ? await appendAndPersist(retried, 'trial-applied', dependencies.now(), {
+          round: trial.round,
+          errors: [],
+          manual: true,
+        })
+      : await appendAndPersist(retried, 'trial-applied', dependencies.now(), {
+          round: trial.round,
+          errors: result.errors,
+        });
+    if (isManualBatch(result)) return viewOf(reapplied);
+
     await reloadAndSettle(dependencies, view.testTab);
     return viewOf(reapplied);
   });
@@ -331,7 +436,7 @@ export function submitVerdict(
 
     if (isBaselineQuestion(view)) {
       const recorded = await appendAndPersist(log, 'baseline-recorded', dependencies.now(), {
-        mode: 'auto',
+        mode: view.baselineMode,
         verdict: payload.verdict,
       });
       if (payload.verdict === 'gone') return viewOf(await settleOutcome(dependencies, recorded));
@@ -341,6 +446,7 @@ export function submitVerdict(
         await appendAndPersist(recorded, 'session-reset', dependencies.now(), {
           restored: restored.complete,
           errors: restored.errors,
+          manualIds: restored.manualIds,
         }),
       );
     }
@@ -374,6 +480,7 @@ export function resetSession(
       await appendAndPersist(log, 'session-reset', dependencies.now(), {
         restored: result.complete,
         errors: result.errors,
+        manualIds: result.manualIds,
       }),
     );
   });

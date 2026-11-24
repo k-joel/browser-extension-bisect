@@ -71,6 +71,7 @@ export function appendEvent(log: BisectLog, event: BisectEvent): BisectLog {
 interface SessionAccumulator {
   status: SessionStatus;
   capability: CapabilityReport;
+  baselineMode: SessionView['baselineMode'];
   candidateOrder: SessionView['candidateOrder'];
   originalEnabledIds: string[];
   suspects: string[];
@@ -109,6 +110,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
   switch (event.type) {
     case 'session-started':
       acc.capability = event.payload.capability;
+      acc.baselineMode = event.payload.baselineMode;
       acc.candidateOrder = event.payload.candidateOrder;
       acc.originalEnabledIds = event.payload.candidateOrder.map((candidate) => candidate.id);
       acc.suspects = [...acc.originalEnabledIds];
@@ -133,6 +135,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
         verdict: null,
         appliedAt: null,
         errors: [],
+        manual: event.payload.manual === true,
       });
       acc.status = 'trial';
       return;
@@ -141,7 +144,8 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       if (trial === undefined) return;
       trial.appliedAt = event.at;
       trial.errors = event.payload.errors;
-      acc.status = 'awaiting-verdict';
+      trial.manual = event.payload.manual === true;
+      acc.status = trial.manual ? 'awaiting-manual-toggle' : 'awaiting-verdict';
       return;
     }
     case 'verdict-recorded':
@@ -172,9 +176,14 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
     case 'session-paused':
       acc.status = 'paused';
       return;
-    case 'session-resumed':
+    case 'session-resumed': {
+      if (event.payload.reason === 'manual-verified') {
+        acc.status = 'awaiting-verdict';
+        return;
+      }
       acc.status = acc.trials.some((trial) => trial.appliedAt !== null) ? 'awaiting-verdict' : 'baseline';
       return;
+    }
     case 'session-completed':
       acc.culpritId = event.payload.culpritId;
       acc.status = 'completed';
@@ -241,6 +250,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
   const acc: SessionAccumulator = {
     status: 'preparing',
     capability: BASELINE_MODE_CAPABILITY,
+    baselineMode: 'auto',
     candidateOrder: [],
     originalEnabledIds: [],
     suspects: [],
@@ -262,6 +272,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     sessionId: log.sessionId,
     status: acc.status,
     capability: acc.capability,
+    baselineMode: acc.baselineMode,
     candidateOrder: acc.candidateOrder,
     originalEnabledIds: acc.originalEnabledIds,
     suspects: acc.suspects,

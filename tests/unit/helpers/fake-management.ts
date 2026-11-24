@@ -8,6 +8,7 @@ export interface FakeManagementOptions {
 
 export interface FakeManagement extends ManagementSurface {
   setEnabledCalls: { id: string; enabled: boolean }[];
+  removeExtension(id: string): void;
   emitEnabled(info: ManagementExtensionInfo): void;
   emitDisabled(info: ManagementExtensionInfo): void;
   emitInstalled(info: ManagementExtensionInfo): void;
@@ -71,6 +72,10 @@ export function createFakeManagement(options: FakeManagementOptions): FakeManage
     onInstalled: installed.surface,
     onUninstalled: uninstalled.surface,
     setEnabledCalls,
+    removeExtension: (id) => {
+      const index = extensions.findIndex((info) => info.id === id);
+      if (index >= 0) extensions.splice(index, 1);
+    },
     emitEnabled: enabled.emit,
     emitDisabled: disabled.emit,
     emitInstalled: installed.emit,

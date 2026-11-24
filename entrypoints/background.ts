@@ -1,12 +1,14 @@
 import { createChromePort } from '@/utils/bisect/chrome-port';
 import { deleteLegacyStorageKeys, readBisectConfig, updateBisectConfig } from '@/utils/bisect/config';
-import type { BisectConfig, ManagementPort, TestTabBinding } from '@/utils/bisect/domain';
+import type { BisectConfig, ManagementPort, RestoreResult, TestTabBinding } from '@/utils/bisect/domain';
 import { readBisectLog } from '@/utils/bisect/events';
 import { createFirefoxPort } from '@/utils/bisect/firefox-port';
 import {
   applyTrial,
   bindTestTab,
+  confirmManualState,
   getSession,
+  recordExternalBaseline,
   reloadTestTab,
   resetSession,
   retryTrial,
@@ -16,13 +18,17 @@ import {
   submitVerdict,
   TEST_TAB_SETTLE_TIMEOUT_MS,
   type TestTabSurface,
+  verifyManualState,
+  verifyRestore,
 } from '@/utils/bisect/session';
-import type { ContentStatus, SessionMutationResult } from '@/utils/messaging';
+import { withTestDriverOverlay } from '@/utils/bisect/test-driver';
+import type { AddonManagerResult, ContentStatus, SessionMutationResult } from '@/utils/messaging';
 import { messenger } from '@/utils/messaging';
 import { applyStateUpdate, readState, recordInteraction } from '@/utils/state';
-import { isTestMode } from '@/utils/test-mode';
+import { isTestMode, TEST_MODE_ENABLED } from '@/utils/test-mode';
 
 const TAB_STATUS_POLL_INTERVAL_MS = 150;
+const ADDON_MANAGER_URL = 'about:addons';
 
 function attachTestModeErrorLogging(): void {
   if (!isTestMode()) return;
@@ -78,7 +84,8 @@ export function createTestTabSurface(): TestTabSurface {
 }
 
 export function createManagementPort(): ManagementPort {
-  const dependencies = { management: browser.management };
+  const management = TEST_MODE_ENABLED ? withTestDriverOverlay(browser.management) : browser.management;
+  const dependencies = { management };
   return import.meta.env.FIREFOX ? createFirefoxPort(dependencies) : createChromePort(dependencies);
 }
 
@@ -100,7 +107,24 @@ async function resolveTestTab(requestedTabId?: number): Promise<TestTabBinding> 
 async function readRestoreOutcome(): Promise<NonNullable<SessionMutationResult['restore']> | null> {
   const last = (await readBisectLog())?.events.at(-1);
   if (last?.type !== 'session-reset') return null;
-  return { restored: last.payload.restored, errors: last.payload.errors };
+  return {
+    restored: last.payload.restored,
+    errors: last.payload.errors,
+    manualIds: last.payload.manualIds ?? [],
+  };
+}
+
+/**
+ * `about:addons` is a privileged page; `tabs.create` rejects when the add-on may
+ * not navigate there, and the panel then shows the copyable list instead.
+ */
+async function openAddonManager(): Promise<AddonManagerResult> {
+  try {
+    await browser.tabs.create({ url: ADDON_MANAGER_URL });
+    return { opened: true };
+  } catch (error) {
+    return { opened: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 export interface BackgroundDependencies {
@@ -144,6 +168,12 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
     return bindTestTab(sessionDependencies(), binding);
   });
   messenger.onMessage('reloadTestTab', () => reloadTestTab(sessionDependencies()));
+
+  messenger.onMessage('getDrift', () => verifyManualState(sessionDependencies()));
+  messenger.onMessage('confirmManualState', () => confirmManualState(sessionDependencies()));
+  messenger.onMessage('recordExternalBaseline', () => recordExternalBaseline(sessionDependencies()));
+  messenger.onMessage('verifyRestore', (): Promise<RestoreResult> => verifyRestore(sessionDependencies()));
+  messenger.onMessage('openAddonManager', () => openAddonManager());
 
   void deleteLegacyStorageKeys();
 }

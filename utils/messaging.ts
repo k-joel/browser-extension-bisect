@@ -3,7 +3,9 @@ import type {
   BisectConfig,
   CandidateLists,
   CapabilityReport,
+  DriftReport,
   RestoreError,
+  RestoreResult,
   SessionView,
   Verdict,
 } from './bisect/domain';
@@ -38,7 +40,17 @@ export interface BindTestTabRequest {
  */
 export interface SessionMutationResult {
   session: SessionView;
-  restore: { restored: boolean; errors: RestoreError[] } | null;
+  restore: { restored: boolean; errors: RestoreError[]; manualIds: string[] } | null;
+}
+
+/**
+ * The assisted baseline needs `about:addons`, which the panel cannot construct a
+ * privileged URL for on its own. A failed open returns the manual instruction and
+ * the list of extensions the user has to toggle, for a copyable fallback.
+ */
+export interface AddonManagerResult {
+  opened: boolean;
+  error?: string;
 }
 
 export interface ProtocolMap {
@@ -60,6 +72,11 @@ export interface ProtocolMap {
   resetSession(payload: { restore: boolean }): SessionMutationResult;
   bindTestTab(payload: BindTestTabRequest): BisectConfig;
   reloadTestTab(): ReloadTestTabResult;
+  getDrift(): DriftReport;
+  confirmManualState(): SessionView;
+  recordExternalBaseline(): SessionView;
+  verifyRestore(): RestoreResult;
+  openAddonManager(): AddonManagerResult;
 }
 
 export const messenger = defineExtensionMessaging<ProtocolMap>();

@@ -5,7 +5,9 @@ import type {
   EnabledStateMap,
   ExtensionKind,
   IneligibleExtension,
+  ManagementEvent,
   ManagementPort,
+  ManualBatch,
   RestoreError,
   RestoreResult,
   TargetState,
@@ -111,6 +113,41 @@ export async function listSharedCandidates(management: ManagementSurface): Promi
   return partitionCandidates(all, { selfId: self.id });
 }
 
+function toManagementEvent(info: ManagementExtensionInfo, enabled: boolean): ManagementEvent {
+  return enabled
+    ? { type: 'enabled', extensionId: info.id, name: info.name }
+    : { type: 'disabled', extensionId: info.id, name: info.name };
+}
+
+export function subscribeToManagementEvents(
+  management: ManagementSurface,
+  listener: (event: ManagementEvent) => void,
+): () => void {
+  const onEnabled = (info: ManagementExtensionInfo) => listener(toManagementEvent(info, true));
+  const onDisabled = (info: ManagementExtensionInfo) => listener(toManagementEvent(info, false));
+  const onInstalled = (info: ManagementExtensionInfo) =>
+    listener({
+      type: 'installed',
+      extensionId: info.id,
+      name: info.name,
+      version: info.version,
+      enabled: info.enabled,
+    });
+  const onUninstalled = (id: string) => listener({ type: 'uninstalled', extensionId: id });
+
+  management.onEnabled.addListener(onEnabled);
+  management.onDisabled.addListener(onDisabled);
+  management.onInstalled.addListener(onInstalled);
+  management.onUninstalled.addListener(onUninstalled);
+
+  return () => {
+    management.onEnabled.removeListener(onEnabled);
+    management.onDisabled.removeListener(onDisabled);
+    management.onInstalled.removeListener(onInstalled);
+    management.onUninstalled.removeListener(onUninstalled);
+  };
+}
+
 export function createNotImplementedWatchEvents(): Pick<ManagementPort, 'watchEvents'> {
   const throwSync = (): never => {
     throw new Error(NOT_IMPLEMENTED_MESSAGE);
@@ -141,15 +178,42 @@ export function mapToggleError(_error: unknown): ToggleErrorCode {
   return 'unsupported-requirements';
 }
 
-function describeError(error: unknown): string {
+export function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function targetEnabledMap(target: TargetState): EnabledStateMap {
+export function isManualBatch(result: ToggleResult | ManualBatch): result is ManualBatch {
+  return 'enableIds' in result && !('applied' in result);
+}
+
+export function targetEnabledMap(target: TargetState): EnabledStateMap {
   const map: EnabledStateMap = {};
   for (const id of target.enabled) map[id] = true;
   for (const id of target.disabled) map[id] = false;
   return map;
+}
+
+/**
+ * The ids whose current state differs from the target, split by the direction the
+ * user (or the adapter) still has to move them. A disappeared id is skipped: no
+ * toggle can fix it, and `verifyState` reports it as missing instead.
+ */
+export function diffAgainstTarget(
+  infos: ManagementExtensionInfo[],
+  target: TargetState,
+): { enableIds: string[]; disableIds: string[] } {
+  const desired = targetEnabledMap(target);
+  const enableIds: string[] = [];
+  const disableIds: string[] = [];
+
+  for (const [extensionId, enabled] of Object.entries(desired)) {
+    const current = infos.find((info) => info.id === extensionId);
+    if (current === undefined || current.enabled === enabled) continue;
+    if (enabled) enableIds.push(extensionId);
+    else disableIds.push(extensionId);
+  }
+
+  return { enableIds, disableIds };
 }
 
 export async function applySharedTargetState(
