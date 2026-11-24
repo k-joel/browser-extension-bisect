@@ -4,6 +4,7 @@ import { registerBackgroundHandlers } from '@/entrypoints/background';
 import { createChromePort } from '@/utils/bisect/chrome-port';
 import { DEFAULT_BISECT_CONFIG, readBisectConfig, updateBisectConfig } from '@/utils/bisect/config';
 import type { ManagementPort } from '@/utils/bisect/domain';
+import { resetSessionQueue } from '@/utils/bisect/session';
 import { messenger } from '@/utils/messaging';
 import { createFakeManagement, makeExtensionInfo } from './helpers/fake-management';
 import { installMessagingBridge } from './helpers/messaging-bridge';
@@ -132,5 +133,148 @@ describe('background startup', () => {
     expect(stored).not.toHaveProperty('enabled');
     expect(stored).not.toHaveProperty('interactionCount');
     expect(stored).not.toHaveProperty('settings');
+  });
+});
+
+describe('session messaging protocol', () => {
+  const reloads: number[] = [];
+
+  function registerSessionHandlers(port: ManagementPort = defaultPort()): void {
+    registerBackgroundHandlers({
+      managementPort: port,
+      tabs: {
+        reload: async (tabId: number) => {
+          reloads.push(tabId);
+        },
+        waitForComplete: async () => true,
+      },
+    });
+  }
+
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+    reloads.length = 0;
+    messenger.removeAllListeners();
+    installMessagingBridge();
+  });
+
+  it('returns null from getSession before any session exists', async () => {
+    registerSessionHandlers();
+
+    await expect(messenger.sendMessage('getSession')).resolves.toBeNull();
+  });
+
+  it('starts a session and returns the derived view over the wire', async () => {
+    registerSessionHandlers();
+
+    const view = await messenger.sendMessage('startSession', {
+      candidateIds: ['aaaa'],
+      baselineMode: 'auto',
+      testTab: { tabId: 12, url: null },
+    });
+
+    expect(view.status).toBe('awaiting-verdict');
+    expect(view.candidateOrder.map((candidate) => candidate.id)).toEqual(['aaaa']);
+    expect(view.currentTrial?.round).toBe(0);
+    expect(reloads).toEqual([12]);
+  });
+
+  it('round-trips getSession after startSession so a reloaded panel rehydrates', async () => {
+    registerSessionHandlers();
+    await messenger.sendMessage('startSession', {
+      candidateIds: ['aaaa'],
+      baselineMode: 'auto',
+      testTab: null,
+    });
+
+    const rehydrated = await messenger.sendMessage('getSession');
+
+    expect(rehydrated?.status).toBe('awaiting-verdict');
+    expect(rehydrated?.originalEnabledIds).toEqual(['aaaa']);
+  });
+
+  it('returns the restore outcome alongside a host-issue verdict', async () => {
+    registerSessionHandlers();
+    await messenger.sendMessage('startSession', { candidateIds: ['aaaa'], baselineMode: 'auto', testTab: null });
+
+    const result = await messenger.sendMessage('submitVerdict', { verdict: 'persists' });
+
+    expect(result.session.status).toBe('aborted');
+    expect(result.session.abortReason).toBe('host-issue');
+    expect(result.restore).toEqual({ restored: true, errors: [] });
+  });
+
+  it('returns a null restore outcome when the verdict appends no session-reset', async () => {
+    registerSessionHandlers();
+    await messenger.sendMessage('startSession', { candidateIds: ['aaaa'], baselineMode: 'auto', testTab: null });
+
+    const result = await messenger.sendMessage('submitVerdict', { verdict: 'gone' });
+
+    expect(result.session.status).toBe('completed');
+    expect(result.restore).toBeNull();
+  });
+
+  it('round-trips resetSession and reports a declined restore as a null outcome', async () => {
+    registerSessionHandlers();
+    await messenger.sendMessage('startSession', { candidateIds: ['aaaa'], baselineMode: 'auto', testTab: null });
+
+    const declined = await messenger.sendMessage('resetSession', { restore: false });
+
+    expect(declined.session.status).toBe('restored');
+    expect(declined.restore).toBeNull();
+  });
+
+  it('reports restore errors through the resetSession envelope', async () => {
+    const port: ManagementPort = {
+      ...defaultPort(),
+      restore: async () => ({
+        restoredIds: [],
+        manualIds: [],
+        errors: [{ extensionId: 'aaaa', code: 'manual-recovery-required', message: 'greylisted' }],
+        complete: false,
+      }),
+    };
+    registerSessionHandlers(port);
+    await messenger.sendMessage('startSession', { candidateIds: ['aaaa'], baselineMode: 'auto', testTab: null });
+
+    const result = await messenger.sendMessage('resetSession', { restore: true });
+
+    expect(result.restore).toEqual({
+      restored: false,
+      errors: [{ extensionId: 'aaaa', code: 'manual-recovery-required', message: 'greylisted' }],
+    });
+    expect(result.session.status).toBe('restored');
+  });
+
+  it('binds a test tab from an explicit tab id and persists it', async () => {
+    await fakeBrowser.windows.create({ focused: true });
+    await fakeBrowser.tabs.create({ url: 'https://example.test/', active: true });
+    registerSessionHandlers();
+
+    const config = await messenger.sendMessage('bindTestTab', { tabId: 1 });
+
+    expect(config.testTab).toEqual({ tabId: 1, url: 'https://example.test/' });
+  });
+
+  it('round-trips applyTrial and reloadTestTab', async () => {
+    await fakeBrowser.windows.create({ focused: true });
+    const tab = await fakeBrowser.tabs.create({ url: 'https://example.test/', active: true });
+    registerSessionHandlers();
+    await messenger.sendMessage('startSession', { candidateIds: ['aaaa'], baselineMode: 'auto', testTab: null });
+    await messenger.sendMessage('bindTestTab', { tabId: tab.id });
+
+    const applied = await messenger.sendMessage('applyTrial');
+    const reloaded = await messenger.sendMessage('reloadTestTab');
+
+    expect(applied.status).toBe('awaiting-verdict');
+    expect(reloaded).toEqual({ ok: true });
+    expect(reloads).toEqual([tab.id]);
+  });
+
+  it('rejects a verdict when no session exists without leaving the panel stuck', async () => {
+    registerSessionHandlers();
+
+    await expect(messenger.sendMessage('submitVerdict', { verdict: 'gone' })).rejects.toThrow(/No active session/);
   });
 });

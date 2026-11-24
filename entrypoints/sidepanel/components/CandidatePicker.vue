@@ -9,16 +9,21 @@ const props = defineProps<{
   rows: PickerRow[];
   unavailable: IneligibleExtension[];
   query: string;
+  busy: boolean;
+  blockedReason: string | null;
 }>();
 
 const emit = defineEmits<{
   (event: 'toggle', id: string): void;
   (event: 'update:query', value: string): void;
+  (event: 'start'): void;
 }>();
 
 const visibleRows = computed(() => props.rows.filter((row) => matchesSearch(row.name, props.query)));
 
 const searchEmpty = computed(() => props.rows.length > 0 && visibleRows.value.length === 0);
+
+const includedCount = computed(() => props.rows.filter((row) => !row.excluded).length);
 
 function onSearch(event: Event): void {
   emit('update:query', (event.target as HTMLInputElement).value);
@@ -50,5 +55,19 @@ function onSearch(event: Event): void {
     <CandidateRow v-else :rows="visibleRows" @toggle="emit('toggle', $event)" />
 
     <IneligibleList v-if="unavailable.length > 0" :entries="unavailable" />
+
+    <p v-if="blockedReason !== null" class="error" data-testid="picker-blocked">{{ blockedReason }}</p>
+
+    <div class="actions">
+      <button
+        type="button"
+        class="primary"
+        data-testid="picker-start"
+        :disabled="busy || blockedReason !== null"
+        @click="emit('start')"
+      >
+        Review {{ includedCount }} {{ includedCount === 1 ? 'candidate' : 'candidates' }}
+      </button>
+    </div>
   </section>
 </template>

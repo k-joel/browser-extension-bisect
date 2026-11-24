@@ -180,6 +180,9 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
 }
 
 function applyBaseline(acc: SessionAccumulator, verdict: Verdict): void {
+  const baseline = acc.trials.at(-1);
+  if (baseline !== undefined && baseline.round === 0) baseline.verdict = verdict;
+
   if (verdict === 'persists') {
     acc.abortReason = 'host-issue';
     acc.status = 'aborted';

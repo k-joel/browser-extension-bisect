@@ -192,6 +192,21 @@ body {
   white-space: nowrap;
 }
 
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.preview {
+  grid-template-columns: 1fr;
+}
+
+.restore {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
 button {
   padding: var(--space-1) var(--space-2);
   font: inherit;
@@ -205,6 +220,17 @@ button {
 
 button:hover {
   background: var(--border);
+}
+
+button.primary {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+button.primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
 }
 
 button:disabled {
