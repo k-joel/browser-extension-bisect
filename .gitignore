@@ -161,6 +161,9 @@ vite.config.ts.timestamp-*
 .nx/workspace-data
 .nx/migrate-runs
 
+# Chrome-generated theme payloads inside E2E fixtures
+*.pak
+
 # Agents
 .agents/
 .commandcode/
