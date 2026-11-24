@@ -127,4 +127,5 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Test-mode builds (`EXT_TEST_MODE=1`) with `?tabId=` popup targeting and `[EXT_BG_ERR]` error logging for automation; production builds strip these hooks.
 - Zero-HITL verification suite: Vitest unit/component tests plus a Puppeteer E2E gate (`npm run agent:verify`) covering Chrome over CDP and Firefox over WebDriver BiDi, with JSON verdicts and failure screenshots.
 - Nine-document agent documentation set under `docs/` (architecture, decision records, glossary, issues, notes, runbook, tech-debt ledger, tools inventory, changelog), each with an embedded maintenance guide and registered in `AGENTS.md`.
+- The v1 bisect specification (`docs/SPEC.md`) and the twelve implementation tickets in `docs/ISSUES.md`.
 

@@ -76,6 +76,10 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - **`fakeBrowser.runtime.sendMessage` lacks the promise-returning listener protocol** (2026-11-24): `@webext-core/messaging` round-trips hang in unit tests; call `installMessagingBridge()` from `tests/unit/helpers/messaging-bridge.ts` first, and reset between tests with `messenger.removeAllListeners()` plus `fakeBrowser.reset()`.
 
+## management-adapter
+
+- **`fakeBrowser` has no `management` API** (2026-11-24): `@webext-core/fake-browser` implements storage and messaging only, so adapter tests cannot call or stub `fakeBrowser.management`; inject the management surface into the adapter (or use the fake management port) to test Chrome error mapping and Firefox assisted verification without a browser.
+
 ## wxt
 
 - **Firefox identity is configured in `wxt.config.ts`, never in generated manifests** (2026-11-24): the manifest callback adds `browser_specific_settings.gecko.id` only for `browser === 'firefox'`; edits to `.output/*/manifest.json` are lost on the next build.

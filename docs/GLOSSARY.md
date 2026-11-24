@@ -75,13 +75,17 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## Language
 
+**Extension**:
+The canonical unit of the product: an installed WebExtension that can be enabled or disabled as a whole; themes and apps are not extensions in this sense.
+_Avoid_: plugin, addon (in prose), add-on (except Firefox UI)
+
 **ExtensionState**:
 The aggregate value object returned by every state message — `enabled`, `interactionCount`, and `settings` — assembled on demand by `readState()` in `utils/state.ts` and never persisted as one blob.
 _Avoid_: app state, global state
 
 **BisectSettings**:
 The persisted settings object (`batchSize`, `enabledExtensions`) stored under `local:settings` with defaults from `BISECT_SETTINGS_DEFAULTS`.
-_Avoid_: config, preferences
+_Avoid_: settings blob, preferences object
 
 **Content marker**:
 The `data-ext-bisect-state` attribute the content script writes on `document.documentElement`, holding `enabled` or `disabled` and kept in sync via a storage watch.
@@ -115,6 +119,104 @@ _Avoid_: ready signal
 The `[EXT_BG_ERR]` prefix the background uses for uncaught errors in test builds; any occurrence in a run fails the E2E gate.
 _Avoid_: bg error tag
 
+## Bisect
+
+**Bisect session**:
+A single tracked search over a snapshot of enabled extensions, from the baseline decision to a culprit, an inconclusive result, or an abort, persisted as a bisect log.
+_Avoid_: bisect run, search, job
+
+**Candidate extension**:
+An installed, enabled WebExtension eligible to enter a bisect session; excludes this add-on, themes, apps, policy-locked add-ons, and user-excluded items.
+_Avoid_: suspect (before the session starts), plugin
+
+**Suspect pool**:
+The current subset of candidate extensions that could still contain the culprit; it shrinks by roughly half each trial.
+_Avoid_: remaining list, search space
+
+**Trial**:
+One materialized partition of the suspect pool plus one verdict; displayed as "Trial N of ~M".
+_Avoid_: round, step, iteration
+
+**Verdict**:
+The user's binary report on a trial, either `Problem persists` or `Problem is gone`.
+_Avoid_: result, answer, good/bad, pass/fail
+
+**Baseline check**:
+The all-off trial that decides whether the symptom is attributable to an extension at all; a persisting symptom aborts the session as a host issue.
+_Avoid_: null test, control run
+
+**Cleared extension**:
+A candidate ruled out by a verdict and kept enabled during later trials.
+_Avoid_: good extension, safe extension
+
+**Culprit**:
+The single extension isolated by the final confirmation and left disabled for the user to act on.
+_Avoid_: bad extension, offender, faulty plugin
+
+**Inconclusive**:
+The terminal outcome when the evidence contradicts the single-culprit assumption or the log cannot be replayed; it reports an ambiguity set instead of naming a culprit.
+_Avoid_: failed, unknown, no result
+
+**Bisect log**:
+The append-only sequence of typed events that records a session and is the input to replay.
+_Avoid_: history, audit trail (as the canonical noun)
+
+**Replay**:
+Recomputing a session's trials and outcome from a copy of the log with corrected verdicts, without changing installed extension states.
+_Avoid_: rerun, redo
+
+**Restore**:
+Returning every candidate the session touched to its pre-session enabled state; distinct from replay, which never changes browser state.
+_Avoid_: rollback, undo, reset (for the browser-state action)
+
+**Drift**:
+A mismatch between the session's expected candidate states and the browser's actual management state.
+_Avoid_: desync, inconsistency
+
+**Oracle**:
+The source of a verdict; v1 uses a human oracle, and a future automated oracle may evaluate a DOM condition.
+_Avoid_: tester, checker
+
+**Bisect config**:
+The versioned non-session preferences under `local:bisectConfig` — excluded candidate ids, the bound test tab, and UI preferences; the scaffold `BisectSettings` is retired on implementation.
+_Avoid_: settings (in prose), preferences
+
+## Platform
+
+**Automated mode**:
+The Chrome capability to apply a trial's target state through `management.setEnabled` without manual toggling; also available on Firefox only when the add-on itself is enterprise-policy-installed.
+_Avoid_: auto mode, chrome mode
+
+**Assisted mode**:
+The Firefox flow in which the add-on computes the batch, the user toggles it in `about:addons`, and the add-on verifies the state through `management` events.
+_Avoid_: manual mode, guided mode
+
+**Capability report**:
+The runtime report of browser name, `canAutoToggle`, self install type, and side-surface kind that the UI uses to choose the automated or assisted flow.
+_Avoid_: feature flags, platform info
+
+**Enterprise-policy exception**:
+The Firefox case where the calling add-on is installed by enterprise policy (`installType === "admin"`), which permits `management.setEnabled` for regular add-ons.
+_Avoid_: admin mode, special case
+
+## UI
+
+**Side panel**:
+The WXT `entrypoints/sidepanel/` Vue app rendered as Chrome's side panel and Firefox's sidebar; the only product UI.
+_Avoid_: popup, sidebar (in prose)
+
+**Candidate picker**:
+The pre-flight screen where the user unchecks known-good extensions and reviews ineligible ones.
+_Avoid_: extension list, selection screen
+
+**Test tab**:
+The user-bound tab that the side panel reloads after each trial and that reproduces the symptom.
+_Avoid_: target tab, test page
+
+**Session view**:
+The derived, read-only projection of the bisect log that the side panel renders.
+_Avoid_: state, snapshot
+
 ## Testing
 
 **E2E harness**:
@@ -136,3 +238,15 @@ _Avoid_: mock messenger
 **Fixed Firefox UUID**:
 The `FIXED_FIREFOX_UUID` constant in `tests/e2e/harness.mjs` pinned via the `extensions.webextensions.uuids` pref so the `moz-extension://` origin is deterministic across runs.
 _Avoid_: extension uuid (in prose)
+
+**Management port**:
+The injectable adapter interface that wraps `browser.management` and supplies candidates, target-state application, verification, restore, and events to the engine.
+_Avoid_: management wrapper, browser port
+
+**Fixture extension**:
+A minimal unpacked extension installed by E2E to act as a candidate or culprit; it injects a unique marker on the fixture page.
+_Avoid_: mock extension, test plugin
+
+**Replay test**:
+A deterministic unit test that feeds a valid, corrected, or invalid log copy to the replay function and asserts the recomputed culprit or validation error.
+_Avoid_: log test, history test
