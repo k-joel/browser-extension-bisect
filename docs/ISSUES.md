@@ -196,13 +196,13 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Show the baseline and every trial in order, including enabled and disabled batches, verdicts, retries, and the outcome. Copy the raw log JSON and a human-readable report. Link the completed and inconclusive screens to history.
 - **Blocked by**: ISS-004.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, e1fa79a).
 
-- [ ] History renders baseline, trials, batches, verdicts, retries, and the outcome in order with stable test ids.
-- [ ] Copy log JSON produces the persisted log; copy report produces a readable summary with the candidate snapshot, trials, verdicts, and outcome.
-- [ ] Completed and inconclusive screens link to history and replay.
-- [ ] Component and E2E tests cover the history and copy paths.
-- [ ] The quality gates pass.
+- [x] History renders baseline, trials, batches, verdicts, retries, and the outcome in order with stable test ids.
+- [x] Copy log JSON produces the persisted log; copy report produces a readable summary with the candidate snapshot, trials, verdicts, and outcome.
+- [x] Completed and inconclusive screens link to history and replay.
+- [x] Component and E2E tests cover the history and copy paths.
+- [x] The quality gates pass.
 
 ### ISS-008: Replay after a corrected verdict
 

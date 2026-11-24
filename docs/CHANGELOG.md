@@ -149,6 +149,9 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Assisted restore stays pending until the browser state matches or the user explicitly accepts the remaining differences; an acceptance never upgrades to a complete restore, and a candidate that disappeared is reported as a failure.
 - Enterprise-policy installs (`installType === "admin"`) use the automated diff and per-id error path, covered by a contract test that runs Chrome and an `admin` Firefox install against the same expectations.
 - Firefox E2E scenario `assisted-trials`, which runs the assisted loop to the known culprit through the documented test-mode driver, asserting the verdict buttons are absent before each verification and present after, and that the culprit is left disabled (`firefoxPath: "test-mode-driver"`).
+- Session history screen listing the baseline check first and then every trial in order, each with its enabled and disabled batches, its verdict, any retries, and the session outcome (culprit, inconclusive, aborted, or restored), reachable from the trial, completed, and inconclusive screens.
+- "Copy the bisect log" writes exactly the persisted log as JSON and "Copy the report" writes a human-readable summary naming the session, the candidate snapshot in the captured order, the baseline, every trial with its batches and verdict, the retries, and the outcome, with a success confirmation and a selectable-text fallback when the clipboard is unavailable.
+- Completed and inconclusive screens link to the session history and show replay as a documented, disabled affordance; replay itself arrives in ISS-008.
 - Popup with an enable/disable switch, an interaction counter, and a persisted batch-size setting, all backed by typed local storage.
 - Content script on all pages that renders a `data-ext-bisect-state` DOM marker and keeps it in sync with stored state.
 - Test-mode builds (`EXT_TEST_MODE=1`) with `?tabId=` popup targeting and `[EXT_BG_ERR]` error logging for automation; production builds strip these hooks.
@@ -160,6 +163,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - `BisectConfig.testTab.url` is `string | null`: without the `tabs` permission neither browser exposes `tab.url`, so the binding records the tab id and the panel shows `Tab #N` when no URL is available ([ADR-017](DECISIONS.md)).
 - `management.verifyState` and `management.watchEvents` are implemented by both adapters: the automated rail compares the expected map against `getAll()`, and the assisted rail splits a mismatch into pending manual toggles and unexpected ones and debounces its event signal.
+- `resolveScreen` accepts an optional `historyOpen` flag, so the session history is a screen derived from panel state rather than a modal, and stays unreachable while no session exists.
 
 ### Fixed
 

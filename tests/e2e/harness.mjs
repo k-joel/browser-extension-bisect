@@ -466,9 +466,7 @@ export async function readSessionState(page) {
           enabled: node.querySelector('[data-testid="history-entry-enabled"]')?.textContent?.trim() ?? null,
           disabled: node.querySelector('[data-testid="history-entry-disabled"]')?.textContent?.trim() ?? null,
           verdict: node.querySelector('[data-testid="history-entry-verdict"]')?.textContent?.trim() ?? null,
-          retry:
-            node.querySelector('[data-testid="history-entry-retry"]')?.textContent?.trim() ??
-            null,
+          retry: node.querySelector('[data-testid="history-entry-retry"]')?.textContent?.trim() ?? null,
         })),
         outcome: document.querySelector('[data-testid="history-outcome"]')?.getAttribute('data-outcome') ?? null,
         outcomeLabel: text('history-outcome-label'),

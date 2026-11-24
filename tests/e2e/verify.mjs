@@ -459,9 +459,7 @@ async function assertHistoryAndCopy({ surface, record, screen, culprit, answered
   const rounds = history.history.entries.map((entry) => entry.round);
   record(
     'history-lists-the-baseline-first-and-every-trial-in-order',
-    rounds[0] === '0' &&
-      rounds.length === answered + 1 &&
-      rounds.every((round, index) => round === String(index)),
+    rounds[0] === '0' && rounds.length === answered + 1 && rounds.every((round, index) => round === String(index)),
     { rounds, answered },
   );
   record(
@@ -496,11 +494,9 @@ async function assertHistoryAndCopy({ surface, record, screen, culprit, answered
       history.history.outcomeNames.includes(culprit.name),
     { outcome: history.history.outcome, label: history.history.outcomeLabel },
   );
-  record(
-    'history-offers-a-disabled-replay-affordance',
-    history.history.replayDisabled === true,
-    { replayDisabled: history.history.replayDisabled },
-  );
+  record('history-offers-a-disabled-replay-affordance', history.history.replayDisabled === true, {
+    replayDisabled: history.history.replayDisabled,
+  });
 
   await clickTestId(surface, 'history-copy-log');
   const logCopy = await waitFor(

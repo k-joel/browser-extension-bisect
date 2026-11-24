@@ -273,15 +273,16 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## 1. Purpose and scope
 
-Browser Extension Bisect is a WXT-built browser extension whose product goal is to find faulty installed extensions by binary search (toggling batches of extensions and observing the result). The as-built system today covers the front half of that goal: a side panel UI that renders the capability report and the candidate picker, the pre-flight consent screen, the all-off baseline question, the host-issue abort, the `N = 1` resolution, the half-split partition loop with its trial screen and inline trial summary, the culprit-left-disabled completion, the inconclusive outcome with its ambiguity set, and Restore; the Firefox assisted rail, which asks the user to apply each batch in the Add-ons Manager and withholds the verdict until `management.getAll()` proves the batch; a pure platform-neutral bisect engine; a typed storage and messaging layer with a versioned bisect config and an append-only bisect log; two `ManagementPort` adapters that enumerate and filter installed extensions; the legacy popup and content script; and a fully automated cross-browser verification harness. Replay, drift, undo, escalation and startup reconciliation are pending ([ISS-008](ISSUES.md)..[ISS-012](ISSUES.md)).
+Browser Extension Bisect is a WXT-built browser extension whose product goal is to find faulty installed extensions by binary search (toggling batches of extensions and observing the result). The as-built system today covers the front half of that goal: a side panel UI that renders the capability report and the candidate picker, the pre-flight consent screen, the all-off baseline question, the host-issue abort, the `N = 1` resolution, the half-split partition loop with its trial screen and inline trial summary, the culprit-left-disabled completion, the inconclusive outcome with its ambiguity set, the session history with its copyable log and report, and Restore; the Firefox assisted rail, which asks the user to apply each batch in the Add-ons Manager and withholds the verdict until `management.getAll()` proves the batch; a pure platform-neutral bisect engine; a typed storage and messaging layer with a versioned bisect config and an append-only bisect log; two `ManagementPort` adapters that enumerate and filter installed extensions; the legacy popup and content script; and a fully automated cross-browser verification harness. Replay, drift, undo, escalation and startup reconciliation are pending ([ISS-008](ISSUES.md)..[ISS-012](ISSUES.md)).
 
 | In scope | Out of scope |
 |---|---|
 | One TypeScript codebase targeting Chrome (MV3) and Firefox (MV2) via WXT | Firefox MV3 output (pinned to MV2 — [ADR-002](DECISIONS.md)) |
-| Side panel/sidebar candidate picker: capability report, display-name search, include/exclude selection, ineligible reasons | Dedicated history screen (ISS-007), replay (ISS-008), drift, pause/resume and live undo (ISS-009) |
+| Side panel/sidebar candidate picker: capability report, display-name search, include/exclude selection, ineligible reasons | Replay (ISS-008), drift, pause/resume and live undo (ISS-009) |
 | Pre-flight consent, the automated all-off baseline, the baseline verdict, host-issue abort, `N = 1` resolution, and Restore | Mid-session changes (ISS-011), startup reconciliation and multi-panel convergence (ISS-012), scaffold removal (ISS-013) |
 | The Firefox assisted rail: the manual all-off baseline, the assisted trial batch with its two checklists, event-driven verification, and a restore that stays pending until it matches or the user accepts | The full Chrome error-code mapping and escalation (ISS-010) |
 | The automated Chrome partition loop to a culprit or an inconclusive result, with retry and an inline trial summary | Injected host-page panels (no `createShadowRootUi` UI yet) |
+| The session history screen with the baseline, every trial, retries and the outcome, plus copyable log JSON and a human-readable report | Edited-verdict replay and batch differences (ISS-008) |
 | `ManagementPort` enumeration with one shared eligibility filter and ordering helper, plus the automated apply/restore path and the assisted manual batch/verify/restore path | Injected host-page panels (no `createShadowRootUi` UI yet) |
 | Legacy popup scaffold (enable toggle, interaction counter, batch size) and `<all_urls>` content script — retired in ISS-013 | CI pipelines (none configured — `DEBT-2026-003`) |
 | Local automated verification (Vitest unit + Puppeteer E2E on both browsers) | CSS frameworks and UI component libraries |
@@ -289,7 +290,7 @@ Browser Extension Bisect is a WXT-built browser extension whose product goal is 
 
 ### 1.1 Screens
 
-The panel is a single document whose screen is derived by `resolveScreen(session, preflightOpen)`
+The panel is a single document whose screen is derived by `resolveScreen(session, preflightOpen, historyOpen)`
 (`entrypoints/sidepanel/presentation.ts`), so a reload re-derives the same screen from the log.
 
 | Screen | When | Primary action |
@@ -301,6 +302,7 @@ The panel is a single document whose screen is derived by `resolveScreen(session
 | `completed` | Session `completed` with a culprit (includes `N = 1`) | Restore |
 | `inconclusive` | Session `inconclusive` | Restore all extensions |
 | `host-issue` | Session `aborted` with `abortReason: host-issue` | "Restore all extensions" |
+| `history` | Any live session with the history open (from the trial, completed, or inconclusive screen) | "Copy the bisect log" / "Copy the report" |
 | `restored` | Session `restored` | Restore again |
 | `progress` | Any other transient live state (`trial`/`applying`/`paused`) | — |
 | `loading` / `error` | Panel load in flight or failed | — |
@@ -321,7 +323,7 @@ sidepanel.html (Vue 3 page)                 popup.html (legacy Vue 3 page)
     │  getConfig/updateConfig/                   │  recordInteraction
     │  getSession/startSession/applyTrial/
     │  submitVerdict/retryTrial/resetSession/
-    │  bindTestTab/reloadTestTab
+    │  bindTestTab/reloadTestTab/getLog
     ▼                                            ▼
 background.ts (message handlers, sole writer, owns the ManagementPort and the tabs surface)
     │  storage.defineItem ──► browser.storage.local      │ browser.management  │ browser.tabs
@@ -335,7 +337,7 @@ storage.local (bisectConfig | bisectLog | enabled | interactionCount | settings)
 | Context | Lifecycle model | Owns |
 |---|---|---|
 | `background.ts` (`defineBackground`) | Chrome: MV3 service worker · Firefox: MV2 background context | All message handlers; the only writer of `local:bisectConfig` and `local:bisectLog`; the `ManagementPort` instance; the `TestTabSurface` (`tabs.reload` + settle poll); legacy-key cleanup |
-| `entrypoints/sidepanel/App.vue` | Chrome side panel / Firefox sidebar document; loads on mount | UI refs (`state`, `capability`, `eligible`, `ineligible`, `config`, `session`, `query`, `errorMessage`, `busy`, `preflightOpen`, `restoreOutcome`, `reloadMessage`) |
+| `entrypoints/sidepanel/App.vue` | Chrome side panel / Firefox sidebar document; loads on mount | UI refs (`state`, `capability`, `eligible`, `ineligible`, `config`, `session`, `query`, `errorMessage`, `busy`, `preflightOpen`, `restoreOutcome`, `reloadMessage`, `historyOpen`, `historyLog`, `copyStatus`) |
 | `entrypoints/popup/App.vue` | Opens per browser-action click; loads state on mount | UI refs (`state`, `errorMessage`, `busy`, `batchSizeDraft`) |
 | `content.ts` (`defineContentScript`) | Injected per page at `document_idle` | Marker attributes on `document.documentElement` |
 
@@ -447,6 +449,12 @@ popup button click
 4. The panel builds picker rows with `buildPickerRows(eligible, excludedIds)`, which marks excluded candidates as unchecked rows, then renders both lists plus the live-region count. The "Not eligible" section renders `ineligible` as-is — every entry there is an extension the user cannot act on.
 5. `getSession` ──► `reduceLog(await readBisectLog())`; `resolveScreen` then picks `baseline`, `host-issue`, `completed`, `restored`, `progress`, or the picker, so a panel reload or a restarted worker lands back on the same screen. Nothing is toggled by a read.
 
+### 4.1.1 History and copy (read-only)
+
+1. Opening the history sends `getLog` and stores the returned `BisectLog` in `historyLog`; `buildHistory(session, historyLog)` then derives the baseline-first `HistoryModel`. The panel re-uses the session view it already holds, so the history and the trial screen cannot disagree.
+2. Both copy actions re-send `getLog` rather than reusing the ref, so the text written is the log as it is persisted at that moment. Copy log writes `serializeBisectLog(log)`; copy report writes `renderBisectReport(buildHistory(session, log))`.
+3. `copyText` (`clipboard.ts`) tries `navigator.clipboard.writeText`, then `document.execCommand('copy')` over a temporary textarea, and reports `manual` when both fail; the panel then shows `CopyStatus` with a readonly textarea holding the same text. Nothing is written to the log or the config by any of this.
+
 ### 4.2 Popup state load (legacy)
 
 1. `App.vue` `onMounted` ──► `getState` message ──► `readState()` (`utils/state.ts`).
@@ -527,6 +535,13 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `trial-screen`, `trial-progress`, `trial-question`, `trial-plan`, `trial-plan-enabled`, `trial-plan-disabled`, `trial-apply` | the planned next partition |
 | `trial-applied-state`, `trial-enabled`, `trial-disabled`, `trial-retry`, `trial-retry-note`, `trial-reload`, `trial-reload-status`, `trial-ambiguity` | the applied batch and its verdict actions (`verdict-persists` / `verdict-gone` are shared with the baseline screen) |
 | `trial-history`, `trial-history-list`, `trial-history-row` (`data-round`), `trial-history-round`, `trial-history-enabled`, `trial-history-disabled`, `trial-history-verdict` | inline trial summary |
+| `trial-history-open` | entry to the session history from the trial screen |
+| `history-screen`, `history-session-id`, `history-candidates`, `history-baseline-mode`, `history-list` | session history header |
+| `history-entry` (`data-round`, `data-kind` = `baseline` \| `trial`), `history-entry-round`, `history-entry-enabled`, `history-entry-disabled`, `history-entry-verdict`, `history-entry-retry` (`data-retries`), `history-entry-note`, `history-entry-baseline` | one history row per baseline check and per trial, in round order |
+| `history-outcome` (`data-outcome` = `culprit` \| `inconclusive` \| `aborted` \| `restored` \| `in-progress`), `history-outcome-label`, `history-outcome-names`, `history-outcome-name`, `history-outcome-note` | the session outcome |
+| `history-copy-log`, `history-copy-report`, `history-back`, `history-replay`, `history-replay-note` | the two copy actions, the back action, and the disabled replay affordance |
+| `copy-status` (`data-status` = `copied` \| `error` \| `idle`), `copy-status-message`, `copy-fallback`, `copy-fallback-text` | the `aria-live="polite"` copy result and the selectable-text fallback |
+| `completed-history`, `completed-replay`, `completed-replay-note`, `inconclusive-history`, `inconclusive-replay`, `inconclusive-replay-note` | the terminal screens' links to the history and to replay |
 | `inconclusive-screen`, `inconclusive-reason`, `inconclusive-explanation`, `inconclusive-ambiguity-label`, `inconclusive-ambiguity`, `inconclusive-ambiguity-entry`, `inconclusive-ambiguity-name`, `inconclusive-restore`, `inconclusive-restore-summary` | inconclusive outcome with the ambiguity set |
 | `host-issue-screen`, `host-issue-explanation`, `host-issue-guidance`, `host-issue-restore`, `host-issue-restore-summary` | host-issue abort |
 | `completed-screen`, `culprit-name`, `culprit-detail`, `completed-restore`, `completed-restore-summary` | completed state, including the `N = 1` resolution |
@@ -562,10 +577,14 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `entrypoints/sidepanel/components/AssistedTrial.vue` | The assisted partition batch: separate "keep on" and "turn off" checklists, an Open Add-ons Manager action with a copyable fallback, "n of m matched" progress, and Verify. It renders no verdict button: the panel reaches `awaiting-verdict` only after the background proved the batch. |
 | `entrypoints/sidepanel/components/AssistedBaseline.vue` | The assisted all-off baseline: Troubleshoot-Mode attestation, the manual disable-all checklist with Add-ons Manager and Verify, "n of m done" progress, and a test-tab reload. |
 | `entrypoints/sidepanel/components/AssistedRestore.vue` | The assisted restore checklist: every touched candidate with its original state, Verify, and an explicit "Accept the remaining differences" that is only offered while something remains. |
-| `entrypoints/sidepanel/components/TrialHistory.vue` | Inline trial summary: every answered round with its enabled batch, disabled batch, and verdict (the dedicated history screen is ISS-007). |
-| `entrypoints/sidepanel/components/InconclusiveScreen.vue` | Inconclusive outcome: the reason and the ambiguity set, with Restore. |
+| `entrypoints/sidepanel/components/TrialHistory.vue` | Inline trial summary shown on the trial screen: every answered round with its enabled batch, disabled batch, and verdict. |
+| `entrypoints/sidepanel/components/HistoryScreen.vue` | The session history: the baseline check first, then every trial in round order with its enabled and disabled batches, verdict, retry marker, and the outcome block; plus the two copy actions, the back action and the disabled replay affordance. |
+| `entrypoints/sidepanel/components/CopyStatus.vue` | The `aria-live` copy result: a confirmation on success, an error plus a selectable textarea when the clipboard is unavailable. |
+| `entrypoints/sidepanel/history.ts` | Pure history/report layer: `buildHistory(view, log)` derives the `HistoryModel` (baseline first, trials in round order, retry counts from `trial-retried`, outcome from the session view and the last `session-reset`), `renderBisectReport(model)` renders the human-readable summary, and `serializeBisectLog(log)` renders the copy-log JSON. No browser APIs, so it is unit-tested directly. |
+| `entrypoints/sidepanel/clipboard.ts` | `copyText` writes through `navigator.clipboard`, falls back to `execCommand` over a temporary textarea, and reports `manual` when both fail so the caller can reveal the selectable textarea. |
+| `entrypoints/sidepanel/components/InconclusiveScreen.vue` | Inconclusive outcome: the reason and the ambiguity set, with Restore, a link to the history, and a disabled replay affordance. |
 | `entrypoints/sidepanel/components/HostIssueScreen.vue` | Abort screen for a persisting baseline: explains that no extension is implicated and offers Restore. |
-| `entrypoints/sidepanel/components/CompletedScreen.vue` | Completed state: names the culprit (also the `N = 1` resolution) and states it is still disabled. |
+| `entrypoints/sidepanel/components/CompletedScreen.vue` | Completed state: names the culprit (also the `N = 1` resolution), states it is still disabled, and links to the history plus a disabled replay affordance. |
 | `entrypoints/sidepanel/components/RestoredScreen.vue` | Post-restore audit state with the restore summary and a repeat action. |
 | `entrypoints/sidepanel/components/SessionProgress.vue` | Transient in-session screen (`trial`/`applying`/`paused` before the question is answerable): status, progress and the current batch. |
 | `entrypoints/sidepanel/components/RestorePanel.vue` | Restore, rendered on every screen: policy note, per-extension failures, and a button disabled until a session has touched something. |
@@ -609,6 +628,7 @@ All extension IPC goes through `defineExtensionMessaging<ProtocolMap>` (`utils/m
 | `getConfig` | — | `BisectConfig` | side panel ──► background |
 | `updateConfig` | `Partial<BisectConfig>` | `BisectConfig` | side panel ──► background |
 | `getSession` | — | `SessionView \| null` | side panel ──► background |
+| `getLog` | — | `BisectLog \| null` | side panel ──► background |
 | `startSession` | `{ candidateIds, baselineMode, testTab }` | `SessionView` | side panel ──► background |
 | `applyTrial` | — | `SessionView` | side panel ──► background |
 | `submitVerdict` | `{ verdict }` | `SessionMutationResult` | side panel ──► background |
@@ -638,8 +658,13 @@ a complete restore from a partial one (SPEC §Restore).
 cannot see one without the `tabs` permission; the background resolves the active tab when the
 id is omitted ([ADR-017](DECISIONS.md)).
 
-The `getState`..`getTabId` rows retire with the scaffold in ISS-013; the remaining three messages
-of the target surface (undo, log, replay) arrive with ISS-007 and ISS-008.
+The `getState`..`getTabId` rows retire with the scaffold in ISS-013; the remaining two messages
+of the target surface (undo and replay) arrive with ISS-009 and ISS-008.
+
+`getLog` is a read, not a write: it enters the same serialized queue as the mutating commands so
+a copy taken while a verdict is being recorded sees either the old log or the new one, and it
+returns the persisted `BisectLog` unchanged. The history screen and both copy actions consume it;
+the panel never derives the log from a Vue ref, so the copy is always exactly what is stored.
 
 The assisted rail needs five commands that have no automated counterpart. `getDrift` and
 `confirmManualState` are the verify pair: the first is a read used for the progress counter and
@@ -740,10 +765,12 @@ Unit tests call `fakeBrowser.reset()` per test; component and messaging tests re
 | Unit (session orchestration) | `tests/unit/bisect-session.test.ts` | `startSession` consent and eligibility, the baseline outcomes, the full partition loop against a fake port (culprit found, sixth trial, culprit left disabled), retry, inconclusive, restore and its partial failures, rehydration, serialization, test-tab bind/reload/settle |
 | Component (`@vue/test-utils` + `happy-dom`) | `tests/unit/sidepanel.test.ts` | loading, ready, error, no-session, capability report, rows, initials, empty states, ineligible reasons, search filtering, live region, persistence across remount |
 | Component (session screens) | `tests/unit/sidepanel-session.test.ts` | pre-flight consent, the baseline question and its exact labels, the trial screen (plan, exact labels, progress string, retry), the inline trial history, host-issue abort, culprit-left-disabled completion including the final confirmation, inconclusive with the ambiguity set, `N = 1` resolution, Restore including a failing re-enable, and rehydration after a panel reopen — all mounted with the real background handlers and the fake management port |
-| Unit (presentation) | `tests/unit/sidepanel-presentation.test.ts` | reason labels, mode wording, initials, search matching, row building/ordering, assisted screen routing, and the assisted checklists |
+| Unit (presentation) | `tests/unit/sidepanel-presentation.test.ts` | reason labels, mode wording, initials, search matching, row building/ordering, assisted screen routing, history screen routing, and the assisted checklists |
+| Unit (history/report) | `tests/unit/sidepanel-history.test.ts` | baseline-first ordering, per-entry batches and exact verdict labels, per-round retry counts, every outcome kind including the external baseline without a recorded round, report renderer purity, and log serialization |
+| Component (history and copy) | `tests/unit/sidepanel-history-screen.test.ts` | the clipboard fallback chain, history ordering/content/retry markers, the outcome block, copy log against the persisted log, copy report against the rendered summary, the `aria-live` confirmation, the error state with the selectable textarea, and the links from the completed and inconclusive screens |
 | Component (assisted screens) | `tests/unit/sidepanel-assisted.test.ts` | assisted mode detection, the manual baseline checklist with a gated verify, the assisted trial screen (two checklists, "n of m matched", Open Add-ons Manager and its failure fallback, verdict buttons absent before verification and present after), the whole assisted loop, and restore-pending with the explicit accept |
 | Unit (legacy scaffold) | `tests/unit/storage.test.ts`, `messaging.test.ts`, `popup.test.ts` | the popup scaffold — retired in ISS-013 |
-| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | `candidate-picker` on both browsers (candidate list, search, exclusion persistence); `session-baseline` on Chrome (pre-flight, all-off baseline, non-candidates untouched, test-tab reload, `gone` advance to the first trial, `persists` host-issue abort, Restore of only touched ids); `partition-loop` on Chrome (the harness is the human oracle: full search to the known fixture culprit, including the final confirmation trial, culprit left disabled, cleared candidate enabled, non-candidates untouched, Restore re-enabling the culprit); `assisted-baseline` and `assisted-external` on Firefox (both reporting `firefoxPath: "test-mode-driver"`); and `assisted-trials` on Firefox, which runs the assisted loop to the known culprit through the driver, asserting the verdict buttons are absent before each Verify and present after, and that the culprit is left disabled |
+| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | `candidate-picker` on both browsers (candidate list, search, exclusion persistence); `session-baseline` on Chrome (pre-flight, all-off baseline, non-candidates untouched, test-tab reload, `gone` advance to the first trial, `persists` host-issue abort, Restore of only touched ids); `partition-loop` on Chrome (the harness is the human oracle: full search to the known fixture culprit, including the final confirmation trial, culprit left disabled, cleared candidate enabled, non-candidates untouched, the session history with the ordered baseline and trials, both copy actions, Restore re-enabling the culprit); `assisted-baseline` and `assisted-external` on Firefox (both reporting `firefoxPath: "test-mode-driver"`); and `assisted-trials` on Firefox, which runs the assisted loop to the known culprit through the driver, asserting the verdict buttons are absent before each Verify and present after, and that the culprit is left disabled |
 
 ### 12.3 Quality gates
 
