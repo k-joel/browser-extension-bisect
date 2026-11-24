@@ -100,13 +100,6 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - **Cause**: `utils/storage.ts:11-21` defines the settings scaffold; the only writers are `utils/state.ts:27` and the popup input, and nothing reads them to drive extension management.
 - **Suggested fix**: Implement batch toggling in `entrypoints/background.ts` via the `management` API (adding the `management` permission in `wxt.config.ts`), then extend `tests/unit/` and the scenarios in `tests/e2e/verify.mjs`.
 
-### ISS-014: Firefox E2E cannot assert a disabled regular-extension candidate
-
-- **Symptom**: The "disabled at start" ineligible reason is only asserted on Chrome; the Firefox E2E run installs no fixture that can reach that state, so a Firefox regression in that eligibility clause passes the gate.
-- **Where flagged**: 2026-11-25, ISS-002 side panel E2E work.
-- **Cause**: `tests/e2e/harness.mjs` installs fixtures through WebDriver BiDi `webExtension.install`, which only creates temporary add-ons that are always enabled; `management.setEnabled` rejects Firefox extension targets that are not policy-installed, an incompatible `strict_min_version` is refused at install, and `about:addons` exposes no `addon-manager`/`addon-card` elements to script.
-- **Suggested fix**: Ship the documented test-mode manual-toggle driver (`utils/bisect/test-driver.ts`, ISS-005) and give it a disabled-fixture hook, then extend `tests/e2e/fixtures/fixtures.mjs` so the Firefox run asserts `Disabled at start` too.
-
 ### ISS-015: Theme fixtures collide with Firefox's four built-in themes in E2E assertions
 
 - **Symptom**: The Firefox run reports five `Theme or app` ineligible rows (four built-in themes plus the fixture), so an assertion that counts ineligible rows or assumes exactly one theme passes on Chrome and fails on Firefox.
@@ -173,15 +166,15 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: On Firefox, use the capability report to enter assisted mode and establish the all-off baseline. The user can either verify the symptom in Troubleshoot Mode and attest that it is gone, or follow a manual disable-all checklist with a link to the Add-ons Manager; the add-on verifies the actual state through management and records the baseline. Assisted restore returns touched candidates with verification.
 - **Blocked by**: ISS-003.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-24, bd914ef). The Firefox E2E reports `firefoxPath: "test-mode-driver"`.
 
-- [ ] The capability report identifies assisted mode and the UI branches on it without pretending the add-on can toggle extensions.
-- [ ] The baseline screen offers external attestation and a manual disable-all checklist with a link to the Add-ons Manager and progress such as "6 of 8 off".
-- [ ] The add-on verifies the manual state through `management.getAll()` and events before accepting the baseline.
-- [ ] `N = 0`, `N = 1`, and host-issue outcomes work in assisted mode.
-- [ ] Assisted restore shows the original states, verifies completion, and reports incomplete restores.
-- [ ] Unit and contract tests with a fake management port cover the assisted baseline and restore; the Firefox E2E scenario covers the baseline path and reports whether it used real Add-ons Manager automation or the documented test-mode driver.
-- [ ] The quality gates pass.
+- [x] The capability report identifies assisted mode and the UI branches on it without pretending the add-on can toggle extensions.
+- [x] The baseline screen offers external attestation and a manual disable-all checklist with a link to the Add-ons Manager and progress such as "6 of 8 off".
+- [x] The add-on verifies the manual state through `management.getAll()` and events before accepting the baseline.
+- [x] `N = 0`, `N = 1`, and host-issue outcomes work in assisted mode.
+- [x] Assisted restore shows the original states, verifies completion, and reports incomplete restores.
+- [x] Unit and contract tests with a fake management port cover the assisted baseline and restore; the Firefox E2E scenario covers the baseline path and reports whether it used real Add-ons Manager automation or the documented test-mode driver.
+- [x] The quality gates pass.
 
 ### ISS-006: Firefox assisted trials and restore
 
