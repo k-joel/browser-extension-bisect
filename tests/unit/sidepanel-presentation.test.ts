@@ -6,7 +6,6 @@ import {
   formatSideSurface,
   formatToggleMode,
   initialsFor,
-  intrinsicIneligible,
   matchesSearch,
 } from '@/entrypoints/sidepanel/presentation';
 import type { CandidateExtension, CapabilityReport, IneligibleExtension } from '@/utils/bisect/domain';
@@ -75,7 +74,6 @@ describe('reason labels', () => {
     expect(formatIneligibleReason('disabled-at-start')).toBe('Disabled at start');
     expect(formatIneligibleReason('policy-locked')).toBe('Policy-locked');
     expect(formatIneligibleReason('self')).toBe('This add-on');
-    expect(formatIneligibleReason('user-excluded')).toBe('Excluded by you');
   });
 });
 
@@ -92,34 +90,33 @@ describe('capability wording', () => {
 });
 
 describe('picker rows', () => {
-  it('merges selectable and previously excluded extensions in name order', () => {
-    const rows = buildPickerRows(
-      [candidate('bbbb', 'Bravo'), candidate('aaaa', 'Alpha')],
-      [ineligible('cccc', 'Charlie', 'user-excluded'), ineligible('dddd', 'Delta', 'theme-or-app')],
-      ['cccc'],
-    );
+  it('builds one row per eligible candidate in name order', () => {
+    const rows = buildPickerRows([candidate('bbbb', 'Bravo'), candidate('aaaa', 'Alpha')], []);
 
     expect(rows.map((row) => [row.name, row.excluded])).toEqual([
       ['Alpha', false],
       ['Bravo', false],
-      ['Charlie', true],
     ]);
   });
 
-  it('marks configured exclusions on selectable rows', () => {
-    const rows = buildPickerRows([candidate('aaaa', 'Alpha')], [], ['aaaa']);
+  it('marks configured exclusions on eligible rows without needing the ineligible list', () => {
+    const rows = buildPickerRows([candidate('aaaa', 'Alpha'), candidate('bbbb', 'Bravo')], ['bbbb']);
 
-    expect(rows).toEqual([{ id: 'aaaa', name: 'Alpha', version: '1.0.0', excluded: true }]);
+    expect(rows).toEqual([
+      { id: 'aaaa', name: 'Alpha', version: '1.0.0', excluded: false },
+      { id: 'bbbb', name: 'Bravo', version: '1.0.0', excluded: true },
+    ]);
   });
 
-  it('keeps intrinsically ineligible extensions out of the picker', () => {
+  it('never renders an intrinsically ineligible extension as a pickable row', () => {
+    const rows = buildPickerRows([candidate('aaaa', 'Alpha')], []);
     const unavailable = [
-      ineligible('aaaa', 'Alpha', 'theme-or-app'),
-      ineligible('bbbb', 'Bravo', 'disabled-at-start'),
-      ineligible('cccc', 'Charlie', 'user-excluded'),
+      ineligible('bbbb', 'Bravo', 'theme-or-app'),
+      ineligible('cccc', 'Charlie', 'disabled-at-start'),
     ];
 
-    expect(intrinsicIneligible(unavailable).map((entry) => entry.id)).toEqual(['aaaa', 'bbbb']);
+    expect(rows.map((row) => row.id)).toEqual(['aaaa']);
+    expect(unavailable.map((entry) => entry.id)).toEqual(['bbbb', 'cccc']);
   });
 });
 

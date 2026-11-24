@@ -267,20 +267,22 @@ The following invariants are binding:
 
 ### Candidate eligibility and ordering
 
-A candidate must satisfy all of:
+Eligibility is intrinsic and reports a reason for every extension it rejects:
 
 ```text
 enabled at session start
 type === "extension"
 id !== self.id
 mayDisable === true
-id is not in config.excludedExtensionIds
 ```
 
 The UI lists ineligible extensions separately with a reason: theme or app, disabled at
-start, policy-locked, this add-on, or user-excluded. The order is captured once at start,
-sorted by display name and then id, and stored in the `session-started` event. Replay uses
-the stored order, so it never depends on locale or a later `management.getAll()` order.
+start, policy-locked, or this add-on. A **user exclusion** is not an eligibility failure: it
+is a preference held only in `config.excludedExtensionIds`, so `eligible` is the single source
+for pickable candidates and the picker renders an excluded candidate as an unchecked row
+([ADR-016](DECISIONS.md)). The order is captured once at start, sorted by display name and
+then id, and stored in the `session-started` event. Replay uses the stored order, so it never
+depends on locale or a later `management.getAll()` order.
 
 ### Baseline check
 

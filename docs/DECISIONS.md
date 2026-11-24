@@ -505,26 +505,27 @@ When the final confirmation contradicts the single-culprit assumption, stop and 
 
 ---
 
-## ADR-016: Keep user-excluded extensions selectable in the candidate picker
+## ADR-016: Keep user exclusions out of candidate eligibility
 
-**Status**: Accepted
+**Status**: Accepted (revised 2026-11-25 by ISS-016)
 **Date**: 2026-11-25
-**Deciders**: ISS-002 implementation session (LLM-driven)
+**Deciders**: ISS-002 and ISS-003 implementation sessions (LLM-driven)
 
 ### Context
 
-`listCandidates` is specified to return `{ eligible, ineligible }` with a `user-excluded` reason, so a config exclusion is reported exactly like an intrinsic exclusion (theme, disabled, policy-locked, self). The candidate picker, however, has to let the user clear an exclusion again — an ineligible-only row would strand the extension with no control to re-include it. The two requirements pull in opposite directions: one list wants the exclusion reported as a failure, the UI wants it as a selection the user can reverse.
+`listCandidates` returns `{ eligible, ineligible }`. The original ISS-002 design reported a config exclusion as `ineligible` with reason `user-excluded`, so a user preference was reported exactly like an intrinsic exclusion (theme, disabled, policy-locked, self). The candidate picker, however, has to let the user clear an exclusion again — an ineligible-only row would strand the extension with no control to re-include it. The first fix had the presentation layer re-merge those entries into the picker, which meant two modules encoded the same state and any consumer filtering on `eligible` alone silently missed a re-includable extension (`DEBT-2026-006`, `ISS-016`).
 
 ### Decision
 
-Keep `listCandidates` honest: an extension whose id is in `config.excludedExtensionIds` is reported in `ineligible` with reason `user-excluded`. In the UI, treat `user-excluded` differently from the intrinsic reasons: `buildPickerRows` re-merges those entries into the selectable candidate list as unchecked rows, and `intrinsicIneligible` excludes them from the "Not eligible" section. Every exclusion reason therefore still has exactly one visible home, and every selectable row has a checkbox.
+Eligibility is **intrinsic only**: `self`, `theme-or-app`, `disabled-at-start`, `policy-locked`. User exclusions live exclusively in `BisectConfig.excludedExtensionIds`, and `eligible` is the single source for pickable candidates. `buildPickerRows(eligible, excludedIds)` marks excluded rows; there is no re-merging from `ineligible`, and `intrinsicIneligible` is deleted.
 
 ### Consequences
 
-**Good**: Every eligibility clause is observable through one seam (`listCandidates`); the picker never strands an extension; the "Not eligible" section only holds extensions the user cannot act on.
+**Good**: One module owns the exclusion contract; a consumer that filters on `eligible` cannot silently lose a candidate; every selectable row has a checkbox; the "Not eligible" section only holds extensions the user cannot act on.
 
-**Bad**: Two modules now encode the same state (the port reports `user-excluded`, the presentation layer converts it back into a row), so a future change to the exclusion contract must touch both — tracked as ISS-016.
+**Bad**: A caller that wants the full picture needs both `listCandidates().eligible` and the config's `excludedExtensionIds` to know which candidates the user deselected.
 
-**Mitigations**: Keep `buildPickerRows` and `intrinsicIneligible` pure and unit-tested; note the contract in `docs/ARCH.md` §4.1 and §6.3; resolve the duplication before ISS-003 consumes the lists.
+**Mitigations**: `startSession` receives explicit `candidateIds`, so the picker's selection is passed in rather than re-derived inside the port; the contract is recorded in `docs/SPEC.md` §Candidate eligibility and `docs/ARCH.md` §6.3.
 
+---
 

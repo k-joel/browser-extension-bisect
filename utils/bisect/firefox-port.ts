@@ -3,7 +3,7 @@ import { createNotImplementedMethods, listSharedCandidates, type PortDependencie
 
 export type FirefoxPortOptions = PortDependencies;
 
-export function createFirefoxPort({ management, getExcludedExtensionIds }: FirefoxPortOptions): ManagementPort {
+export function createFirefoxPort({ management }: FirefoxPortOptions): ManagementPort {
   return {
     async getCapabilities(): Promise<CapabilityReport> {
       const self = await management.getSelf();
@@ -14,7 +14,7 @@ export function createFirefoxPort({ management, getExcludedExtensionIds }: Firef
         sideSurface: 'sidebar',
       };
     },
-    listCandidates: () => listSharedCandidates(management, getExcludedExtensionIds),
+    listCandidates: () => listSharedCandidates(management),
     ...createNotImplementedMethods(),
   };
 }

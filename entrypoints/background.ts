@@ -33,12 +33,8 @@ async function resolveContentStatus(targetTabId?: number): Promise<ContentStatus
   return readContentStatus(activeTab.id);
 }
 
-function readExcludedExtensionIds(): Promise<readonly string[]> {
-  return readBisectConfig().then((config) => config.excludedExtensionIds);
-}
-
 export function createManagementPort(): ManagementPort {
-  const dependencies = { management: browser.management, getExcludedExtensionIds: readExcludedExtensionIds };
+  const dependencies = { management: browser.management };
   return import.meta.env.FIREFOX ? createFirefoxPort(dependencies) : createChromePort(dependencies);
 }
 

@@ -7,7 +7,7 @@ import { createFakeManagement, makeExtensionInfo } from './helpers/fake-manageme
 const SELF = makeExtensionInfo({ id: 'self-id', name: 'Browser Extension Bisect', installType: 'normal' });
 
 type Surface = ReturnType<typeof createFakeManagement>;
-type AdapterOptions = { management: Surface; getExcludedExtensionIds?: () => Promise<readonly string[]> };
+type AdapterOptions = { management: Surface };
 
 function portFor(create: (options: AdapterOptions) => ManagementPort) {
   const surface = createFakeManagement({
@@ -47,17 +47,17 @@ describe.each(ADAPTERS)('$name candidate listing', ({ create }) => {
     ]);
   });
 
-  it('honours the injected excluded ids', async () => {
+  it('keeps a user-excluded extension eligible so the picker has a single source', async () => {
     const surface = createFakeManagement({
       self: SELF,
       extensions: [makeExtensionInfo({ id: 'aaaa', name: 'Alpha' }), SELF],
     });
-    const port = create({ management: surface, getExcludedExtensionIds: async () => ['aaaa'] });
+    const port = create({ management: surface });
 
     const { eligible, ineligible } = await port.listCandidates();
 
-    expect(eligible).toEqual([]);
-    expect(ineligible).toContainEqual(expect.objectContaining({ id: 'aaaa', reason: 'user-excluded' }));
+    expect(eligible.map((candidate) => candidate.id)).toEqual(['aaaa']);
+    expect(ineligible).toEqual([expect.objectContaining({ id: SELF.id, reason: 'self' })]);
   });
 
   it('returns the capability report without toggling anything', async () => {

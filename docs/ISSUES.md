@@ -114,13 +114,6 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - **Cause**: `tests/e2e/fixtures/fixtures.mjs` cannot restrict `management.getAll()`; Firefox always exposes `default-theme`, `firefox-compact-light`, `firefox-compact-dark`, and `firefox-alpenglow`.
 - **Suggested fix**: Keep every theme assertion in `tests/e2e/verify.mjs` existential (`some(row => row.reason === 'Theme or app')`) rather than count-based, and note the built-in themes in `docs/NOTES.md`.
 
-### ISS-016: Excluded candidates return to the eligible list, so the picker shows a reason on an eligible row
-
-- **Symptom**: After a user unchecks a candidate, the row stays in the picker list with `data-selected="false"` and a "Excluded by you" chip, while `listCandidates` reports the same extension as `ineligible`/`user-excluded`; two sources describe the same state.
-- **Where flagged**: 2026-11-25, ISS-002 candidate picker work.
-- **Cause**: `utils/bisect/management-port.ts` treats a config exclusion as an eligibility failure, and `entrypoints/sidepanel/presentation.ts` re-merges those rows into the picker so the checkbox can be cleared again.
-- **Suggested fix**: Decide the contract before ISS-003 consumes the lists — either keep user-excluded extensions out of `ineligible` (a picker-only concept) or render them exactly once from `ineligible`, then update the eligibility tests, the component tests, and `docs/SPEC.md` §Candidate eligibility together.
-
 ---
 
 ## Tickets
@@ -134,7 +127,7 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Open the side panel on Chrome and the sidebar on Firefox and see the capability report plus the candidate picker. The background enumerates installed extensions, filters out ineligible ones with a reason, and returns eligible and ineligible lists through the typed messaging protocol. The user can search, select, and exclude candidates, and the selection persists in the versioned bisect config. Nothing is toggled in this ticket.
 - **Blocked by**: None (can start immediately).
-- **Status**: done-verified (2026-11-24, ISS-002 slice). Automatic toggle capability is reported but untested until ISS-003; ISS-014/015/016 track E2E and picker-contract follow-ups.
+- **Status**: done-verified (2026-11-24, ISS-002 slice). Automatic toggle capability is reported but untested until ISS-003; ISS-014/015 track E2E follow-ups.
 
 - [ ] Both targets build with a side panel/sidebar document and declare `management` and Chrome `sidePanel`; the scaffold's popup and host access may remain until ISS-013.
 - [ ] The panel renders the no-session screen, capability report, and candidate picker with stable test ids and accessible names.

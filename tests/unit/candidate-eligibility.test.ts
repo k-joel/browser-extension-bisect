@@ -17,7 +17,7 @@ function makeInfo(overrides: Partial<ManagementExtensionInfo> & { id: string; na
   };
 }
 
-const FILTER = { selfId: SELF_ID, excludedExtensionIds: [] };
+const FILTER = { selfId: SELF_ID };
 
 describe('candidate eligibility', () => {
   it('accepts an enabled regular extension that is not self and is disableable', () => {
@@ -75,14 +75,13 @@ describe('candidate eligibility', () => {
     expect(ineligible.map((entry) => entry.reason)).toEqual(['policy-locked']);
   });
 
-  it('rejects a user-excluded extension with reason user-excluded', () => {
+  it('keeps a user exclusion out of eligibility so eligible is the single pickable list', () => {
     const { eligible, ineligible } = partitionCandidates([makeInfo({ id: 'excluded-id', name: 'Excluded Ext' })], {
       selfId: SELF_ID,
-      excludedExtensionIds: ['excluded-id'],
     });
 
-    expect(eligible).toEqual([]);
-    expect(ineligible.map((entry) => entry.reason)).toEqual(['user-excluded']);
+    expect(eligible.map((candidate) => candidate.id)).toEqual(['excluded-id']);
+    expect(ineligible).toEqual([]);
   });
 
   it('reports self before any other failing clause', () => {
@@ -112,15 +111,6 @@ describe('candidate eligibility', () => {
     expect(ineligible.map((entry) => entry.reason)).toEqual(['disabled-at-start']);
   });
 
-  it('reports policy-locked before user-excluded', () => {
-    const { ineligible } = partitionCandidates([makeInfo({ id: 'locked-id', name: 'Locked Ext', mayDisable: false })], {
-      selfId: SELF_ID,
-      excludedExtensionIds: ['locked-id'],
-    });
-
-    expect(ineligible.map((entry) => entry.reason)).toEqual(['policy-locked']);
-  });
-
   it('splits a mixed install list into eligible and ineligible without dropping anything', () => {
     const infos = [
       makeInfo({ id: 'zzz', name: 'Zeta' }),
@@ -129,17 +119,12 @@ describe('candidate eligibility', () => {
       makeInfo({ id: 'theme', name: 'Theme', type: 'theme' }),
       makeInfo({ id: 'off', name: 'Off Ext', enabled: false }),
       makeInfo({ id: 'locked', name: 'Locked Ext', mayDisable: false }),
-      makeInfo({ id: 'excluded', name: 'Excluded Ext' }),
     ];
 
-    const { eligible, ineligible } = partitionCandidates(infos, {
-      selfId: SELF_ID,
-      excludedExtensionIds: ['excluded'],
-    });
+    const { eligible, ineligible } = partitionCandidates(infos, { selfId: SELF_ID });
 
     expect(eligible.map((candidate) => candidate.name)).toEqual(['Alpha', 'Zeta']);
     expect(ineligible.map((entry) => [entry.name, entry.reason])).toEqual([
-      ['Excluded Ext', 'user-excluded'],
       ['Extension Bisect', 'self'],
       ['Locked Ext', 'policy-locked'],
       ['Off Ext', 'disabled-at-start'],

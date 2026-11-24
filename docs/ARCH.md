@@ -362,8 +362,8 @@ popup button click
 
 1. `App.vue` `onMounted` ──► `load()` issues `getCapabilities`, `listCandidates`, and `getConfig` in parallel.
 2. `getCapabilities` ──► `ManagementPort.getCapabilities()` ──► `management.getSelf()`; the adapter reports `canAutoToggle` (`true` on Chrome, `installType === "admin"` on Firefox) and its `sideSurface`.
-3. `listCandidates` ──► `ManagementPort.listCandidates()` ──► `management.getAll()` + `getSelf()` + the stored `excludedExtensionIds`, filtered by the shared `partitionCandidates` helper.
-4. The panel builds picker rows with `buildPickerRows` (eligible plus previously excluded) and the "Not eligible" list with `intrinsicIneligible`, then renders both plus the live-region count.
+3. `listCandidates` ──► `ManagementPort.listCandidates()` ──► `management.getAll()` + `getSelf()`, filtered by the shared `partitionCandidates` helper. Eligibility is intrinsic only; user exclusions live in the config ([ADR-016](DECISIONS.md)).
+4. The panel builds picker rows with `buildPickerRows(eligible, excludedIds)`, which marks excluded candidates as unchecked rows, then renders both lists plus the live-region count. The "Not eligible" section renders `ineligible` as-is — every entry there is an extension the user cannot act on.
 
 ### 4.2 Popup state load (legacy)
 
@@ -387,7 +387,7 @@ The full type surface lives in `utils/bisect/domain.ts` and is owned by ISS-002;
 | Entity | Identity | Key attributes |
 |---|---|---|
 | **CandidateExtension** | browser extension id | `name`, `version`, `enabledAtStart`, `mayDisable`, `installType`, `type`, `icons` |
-| **IneligibleExtension** | browser extension id | `reason`: `theme-or-app` \| `disabled-at-start` \| `policy-locked` \| `self` \| `user-excluded` |
+| **IneligibleExtension** | browser extension id | `reason`: `theme-or-app` \| `disabled-at-start` \| `policy-locked` \| `self` (intrinsic only; user exclusions stay in the config) |
 | **CapabilityReport** | derived per runtime | `browserName`, `canAutoToggle`, `selfInstallType`, `sideSurface` |
 | **BisectConfig** | `local:bisectConfig` | `schemaVersion: 1`, `excludedExtensionIds`, `testTab: { tabId, url } \| null`, optional `lastCandidateIds` |
 | **TargetState** | per trial | `enabled[]`, `disabled[]`, `allOutsideSuspectsEnabled` |
@@ -434,9 +434,9 @@ Every meaningful node carries a stable `data-testid` (ADR-005). The candidate pi
 | `no-session`, `culprit-warning` | no-session screen and the culprit-stays-disabled note |
 | `capability-report`, `capability-browser`, `capability-toggle-mode`, `capability-surface`, `capability-install-type` | capability report |
 | `candidate-picker`, `candidate-search` | picker section and search input |
-| `candidate-list`, `candidate-row` (`data-extension-id`, `data-selected`), `candidate-checkbox`, `candidate-name`, `candidate-version`, `candidate-initials`, `candidate-reason` | selectable rows |
+| `candidate-list`, `candidate-row` (`data-extension-id`, `data-selected`), `candidate-checkbox`, `candidate-name`, `candidate-version`, `candidate-initials`, `candidate-reason` | selectable rows (one per `eligible` candidate; `candidate-reason` reads "Excluded by you" when the id is in the config) |
 | `eligible-empty`, `search-empty` | empty states |
-| `ineligible-section`, `ineligible-list`, `ineligible-row` (`data-reason`), `ineligible-name`, `ineligible-reason` | intrinsic exclusions |
+| `ineligible-section`, `ineligible-list`, `ineligible-row` (`data-reason`), `ineligible-name`, `ineligible-reason` | intrinsically ineligible extensions only |
 
 ### 6.4 Build and artifact layout
 
@@ -460,13 +460,13 @@ Every meaningful node carries a stable `data-testid` (ADR-005). The candidate pi
 | `entrypoints/sidepanel/components/CandidateRow.vue` | Selectable row: checkbox, initials, name, version, exclusion reason. |
 | `entrypoints/sidepanel/components/IneligibleList.vue` | "Not eligible" list with a reason chip per entry. |
 | `entrypoints/sidepanel/components/NoSession.vue` | No-session screen and the culprit-left-disabled note. |
-| `entrypoints/sidepanel/presentation.ts` | Pure UI helpers: reason labels, mode wording, initials, search matching, row merging and ordering. |
+| `entrypoints/sidepanel/presentation.ts` | Pure UI helpers: reason labels, mode wording, initials, search matching, row building and ordering. |
 | `entrypoints/sidepanel/style.css` | Token layer (light/dark via `light-dark()`) and side panel layout. |
 | `entrypoints/content.ts` | Renders the DOM marker from stored state, keeps it live, answers `getContentMarker`, publishes the tab-id marker in test builds. |
 | `entrypoints/popup/App.vue` | Legacy popup: loads state, sends `updateState`/`recordInteraction`, exposes the batch-size input. |
 | `utils/bisect/domain.ts` | The complete owned type surface: entities, events, results, error codes, `ManagementPort`. |
 | `utils/bisect/config.ts` | `local:bisectConfig` item, normalization, serialized `updateBisectConfig`, watcher, legacy-key deletion. |
-| `utils/bisect/management-port.ts` | Injectable `ManagementSurface`, the shared eligibility filter and ordering helper, and the `not implemented` stubs. |
+| `utils/bisect/management-port.ts` | Injectable `ManagementSurface`, the shared eligibility filter (intrinsic reasons only) and ordering helper, and the `not implemented` stubs. |
 | `utils/bisect/chrome-port.ts` | Automated adapter: `canAutoToggle: true`, `sideSurface: 'side-panel'`. |
 | `utils/bisect/firefox-port.ts` | Assisted adapter: `canAutoToggle` only for `installType === 'admin'`, `sideSurface: 'sidebar'`. |
 | `utils/messaging.ts` | `ProtocolMap` (the entire message surface) and the shared `messenger`. |

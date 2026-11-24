@@ -5,7 +5,7 @@ import { messenger } from '@/utils/messaging';
 import CandidatePicker from './components/CandidatePicker.vue';
 import CapabilityReportView from './components/CapabilityReport.vue';
 import NoSession from './components/NoSession.vue';
-import { buildPickerRows, intrinsicIneligible } from './presentation';
+import { buildPickerRows } from './presentation';
 
 type PanelState = 'loading' | 'ready' | 'error';
 
@@ -19,9 +19,9 @@ const errorMessage = ref<string | null>(null);
 
 const excludedIds = computed(() => config.value?.excludedExtensionIds ?? []);
 
-const rows = computed(() => buildPickerRows(eligible.value, ineligible.value, excludedIds.value));
+const rows = computed(() => buildPickerRows(eligible.value, excludedIds.value));
 
-const unavailable = computed(() => intrinsicIneligible(ineligible.value));
+const unavailable = computed(() => ineligible.value);
 
 const visibleCount = computed(() => {
   const term = query.value.trim();

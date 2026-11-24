@@ -25,7 +25,6 @@ function defaultPort(): ManagementPort {
         SELF,
       ],
     }),
-    getExcludedExtensionIds: async () => (await readBisectConfig()).excludedExtensionIds,
   });
 }
 
@@ -77,14 +76,16 @@ describe('bisect messaging protocol', () => {
     await expect(readBisectConfig()).resolves.toEqual(updated);
   });
 
-  it('turns an updated exclusion into a user-excluded reason on the next listing', async () => {
+  it('keeps a user-excluded extension eligible on the next listing', async () => {
     registerPort(defaultPort());
 
     await messenger.sendMessage('updateConfig', { excludedExtensionIds: ['aaaa'] });
     const lists = await messenger.sendMessage('listCandidates');
+    const config = await messenger.sendMessage('getConfig');
 
-    expect(lists.eligible).toEqual([]);
-    expect(lists.ineligible).toContainEqual(expect.objectContaining({ id: 'aaaa', reason: 'user-excluded' }));
+    expect(lists.eligible.map((candidate) => candidate.id)).toEqual(['aaaa']);
+    expect(lists.ineligible).not.toContainEqual(expect.objectContaining({ id: 'aaaa' }));
+    expect(config.excludedExtensionIds).toEqual(['aaaa']);
   });
 
   it('serializes concurrent config updates without losing a field', async () => {

@@ -123,7 +123,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - Cross-browser Browser Extension Bisect add-on built on WXT, producing Chrome (Manifest V3) and Firefox (Manifest V2) builds from one TypeScript codebase.
 - Side panel UI (`side panel` on Chrome, `sidebar_action` on Firefox) rendering the no-session screen, the capability report, and the candidate picker, replacing the popup as the product surface ([ADR-009](DECISIONS.md)).
-- Candidate picker with display-name search, per-extension include/exclude checkboxes, deterministic name-then-id ordering, and a "Not eligible" list that explains every exclusion (theme or app, disabled at start, policy-locked, this add-on, excluded by you).
+- Candidate picker with display-name search, per-extension include/exclude checkboxes, deterministic name-then-id ordering, and a "Not eligible" list that explains every intrinsic exclusion (theme or app, disabled at start, policy-locked, this add-on).
 - Versioned bisect config in `local:bisectConfig` with the documented fallback, a serialized writer owned by the background, and first-start deletion of the legacy `enabled`, `interactionCount`, and `settings` keys.
 - `management` and Chrome `sidePanel` permissions, plus Chrome's `side_panel.default_path` and Firefox's `sidebar_action` panel metadata.
 - `ManagementPort` contract with Chrome and Firefox adapters behind one shared eligibility filter and ordering helper, and an injectable management surface so adapters are testable without a browser.
@@ -135,4 +135,8 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Zero-HITL verification suite: Vitest unit/component tests plus a Puppeteer E2E gate (`npm run agent:verify`) covering Chrome over CDP and Firefox over WebDriver BiDi, with JSON verdicts and failure screenshots.
 - Nine-document agent documentation set under `docs/` (architecture, decision records, glossary, issues, notes, runbook, tech-debt ledger, tools inventory, changelog), each with an embedded maintenance guide and registered in `AGENTS.md`.
 - The v1 bisect specification (`docs/SPEC.md`) and the twelve implementation tickets in `docs/ISSUES.md`.
+
+### Fixed
+
+- Candidate eligibility no longer treats a user exclusion as an eligibility failure, so `listCandidates().eligible` is the single source for pickable candidates and the picker renders excluded rows from it instead of re-merging them out of the ineligible list ([ADR-016](DECISIONS.md), ISS-016).
 

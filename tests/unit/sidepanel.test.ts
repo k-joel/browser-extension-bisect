@@ -40,7 +40,6 @@ function makePort(installs: Install[]): ManagementPort {
         SELF,
       ],
     }),
-    getExcludedExtensionIds: async () => (await readBisectConfig()).excludedExtensionIds,
   });
 }
 
@@ -239,6 +238,7 @@ describe('side panel candidate picker', () => {
     const excludedRow = wrapper.get('[data-testid="candidate-row"][data-extension-id="aaaa"]');
     expect(excludedRow.attributes('data-selected')).toBe('false');
     expect(excludedRow.get('[data-testid="candidate-reason"]').text()).toBe('Excluded by you');
+    expect(wrapper.findAll('[data-testid="candidate-row"]')).toHaveLength(2);
 
     wrapper.unmount();
     messenger.removeAllListeners();

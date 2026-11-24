@@ -1,16 +1,10 @@
-import type {
-  CandidateExtension,
-  CapabilityReport,
-  IneligibleExtension,
-  IneligibleReason,
-} from '@/utils/bisect/domain';
+import type { CandidateExtension, CapabilityReport, IneligibleReason } from '@/utils/bisect/domain';
 
 const REASON_LABELS: Record<IneligibleReason, string> = {
   'theme-or-app': 'Theme or app',
   'disabled-at-start': 'Disabled at start',
   'policy-locked': 'Policy-locked',
   self: 'This add-on',
-  'user-excluded': 'Excluded by you',
 };
 
 export interface PickerRow {
@@ -40,27 +34,15 @@ export function compareByNameThenId(left: { name: string; id: string }, right: {
   return left.id < right.id ? -1 : left.id > right.id ? 1 : 0;
 }
 
-export function buildPickerRows(
-  eligible: CandidateExtension[],
-  ineligible: IneligibleExtension[],
-  excludedIds: readonly string[],
-): PickerRow[] {
-  const selectable = eligible.map((candidate) => ({
-    id: candidate.id,
-    name: candidate.name,
-    version: candidate.version,
-    excluded: excludedIds.includes(candidate.id),
-  }));
-
-  const previouslyExcluded = ineligible
-    .filter((entry) => entry.reason === 'user-excluded')
-    .map((entry) => ({ id: entry.id, name: entry.name, version: entry.version, excluded: true }));
-
-  return [...selectable, ...previouslyExcluded].sort(compareByNameThenId);
-}
-
-export function intrinsicIneligible(ineligible: IneligibleExtension[]): IneligibleExtension[] {
-  return ineligible.filter((entry) => entry.reason !== 'user-excluded');
+export function buildPickerRows(eligible: CandidateExtension[], excludedIds: readonly string[]): PickerRow[] {
+  return eligible
+    .map((candidate) => ({
+      id: candidate.id,
+      name: candidate.name,
+      version: candidate.version,
+      excluded: excludedIds.includes(candidate.id),
+    }))
+    .sort(compareByNameThenId);
 }
 
 export function initialsFor(name: string): string {

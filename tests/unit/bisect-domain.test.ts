@@ -56,13 +56,7 @@ const SESSION_STATUSES: SessionStatus[] = [
   'restored',
 ];
 
-const INELIGIBLE_REASONS: IneligibleReason[] = [
-  'theme-or-app',
-  'disabled-at-start',
-  'policy-locked',
-  'self',
-  'user-excluded',
-];
+const INELIGIBLE_REASONS: IneligibleReason[] = ['theme-or-app', 'disabled-at-start', 'policy-locked', 'self'];
 
 const TOGGLE_ERROR_CODES: ToggleErrorCode[] = [
   'policy-blocked',
@@ -83,7 +77,7 @@ describe('bisect domain surface', () => {
   });
 
   it('covers every ineligible reason', () => {
-    expect(INELIGIBLE_REASONS).toEqual(['theme-or-app', 'disabled-at-start', 'policy-locked', 'self', 'user-excluded']);
+    expect(INELIGIBLE_REASONS).toEqual(['theme-or-app', 'disabled-at-start', 'policy-locked', 'self']);
   });
 
   it('covers the five documented toggle error codes', () => {

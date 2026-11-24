@@ -29,14 +29,12 @@ export interface ManagementSurface {
 
 export interface PortDependencies {
   management: ManagementSurface;
-  getExcludedExtensionIds?: () => Promise<readonly string[]>;
 }
 
 export const NOT_IMPLEMENTED_MESSAGE = 'not implemented';
 
 export interface CandidateFilterOptions {
   selfId: string;
-  excludedExtensionIds: readonly string[];
 }
 
 function toCandidate(info: ManagementExtensionInfo): CandidateExtension {
@@ -61,7 +59,6 @@ export function resolveIneligibleReason(
   if (info.type !== 'extension') return 'theme-or-app';
   if (!info.enabled) return 'disabled-at-start';
   if (!info.mayDisable) return 'policy-locked';
-  if (options.excludedExtensionIds.includes(info.id)) return 'user-excluded';
   return null;
 }
 
@@ -95,16 +92,9 @@ export function partitionCandidates(infos: ManagementExtensionInfo[], options: C
   return { eligible, ineligible };
 }
 
-export async function listSharedCandidates(
-  management: ManagementSurface,
-  getExcludedExtensionIds?: () => Promise<readonly string[]>,
-): Promise<CandidateLists> {
-  const [all, self, excludedExtensionIds] = await Promise.all([
-    management.getAll(),
-    management.getSelf(),
-    getExcludedExtensionIds === undefined ? Promise.resolve<readonly string[]>([]) : getExcludedExtensionIds(),
-  ]);
-  return partitionCandidates(all, { selfId: self.id, excludedExtensionIds });
+export async function listSharedCandidates(management: ManagementSurface): Promise<CandidateLists> {
+  const [all, self] = await Promise.all([management.getAll(), management.getSelf()]);
+  return partitionCandidates(all, { selfId: self.id });
 }
 
 export function createNotImplementedMethods(): Pick<

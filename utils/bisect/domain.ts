@@ -29,7 +29,7 @@ export interface CandidateExtension {
   icons: IconMetadata[];
 }
 
-export type IneligibleReason = 'self' | 'theme-or-app' | 'policy-locked' | 'disabled-at-start' | 'user-excluded';
+export type IneligibleReason = 'self' | 'theme-or-app' | 'policy-locked' | 'disabled-at-start';
 
 export interface IneligibleExtension {
   id: string;

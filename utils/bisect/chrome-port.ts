@@ -3,7 +3,7 @@ import { createNotImplementedMethods, listSharedCandidates, type PortDependencie
 
 export type ChromePortOptions = PortDependencies;
 
-export function createChromePort({ management, getExcludedExtensionIds }: ChromePortOptions): ManagementPort {
+export function createChromePort({ management }: ChromePortOptions): ManagementPort {
   return {
     async getCapabilities(): Promise<CapabilityReport> {
       const self = await management.getSelf();
@@ -14,7 +14,7 @@ export function createChromePort({ management, getExcludedExtensionIds }: Chrome
         sideSurface: 'side-panel',
       };
     },
-    listCandidates: () => listSharedCandidates(management, getExcludedExtensionIds),
+    listCandidates: () => listSharedCandidates(management),
     ...createNotImplementedMethods(),
   };
 }
