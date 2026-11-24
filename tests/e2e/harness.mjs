@@ -316,6 +316,7 @@ export async function disableExtensionThroughSurface(page, extensionId) {
 export async function readCandidateState(page) {
   return page.evaluate(() => ({
     state: document.querySelector('[data-testid="sidepanel-root"]')?.getAttribute('data-state') ?? 'missing',
+    screen: document.querySelector('[data-testid="sidepanel-root"]')?.getAttribute('data-screen') ?? null,
     live: document.querySelector('[data-testid="sidepanel-live"]')?.textContent?.trim() ?? null,
     browser: document.querySelector('[data-testid="capability-browser"]')?.textContent?.trim() ?? null,
     toggleMode: document.querySelector('[data-testid="capability-toggle-mode"]')?.textContent?.trim() ?? null,
@@ -333,4 +334,123 @@ export async function readCandidateState(page) {
     eligibleEmpty: document.querySelector('[data-testid="eligible-empty"]')?.textContent?.trim() ?? null,
     searchEmpty: document.querySelector('[data-testid="search-empty"]')?.textContent?.trim() ?? null,
   }));
+}
+
+export async function readSessionState(page) {
+  return page.evaluate(() => {
+    const text = (testId) => document.querySelector(`[data-testid="${testId}"]`)?.textContent?.trim() ?? null;
+    const summary = document.querySelector('[data-testid="restore-summary"]');
+    return {
+      screen: document.querySelector('[data-testid="sidepanel-root"]')?.getAttribute('data-screen') ?? null,
+      live: text('sidepanel-live'),
+      preflight: {
+        count: text('preflight-count'),
+        candidates: Array.from(document.querySelectorAll('[data-testid="preflight-candidate"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          name: node.querySelector('[data-testid="preflight-candidate-name"]')?.textContent?.trim() ?? '',
+        })),
+        culpritNote: text('preflight-culprit-note'),
+        testTab: text('preflight-test-tab-label'),
+        testTabWarning: text('preflight-test-tab-warning'),
+        startLabel: document.querySelector('[data-testid="preflight-start"]')?.textContent?.trim() ?? null,
+        startDisabled: document.querySelector('[data-testid="preflight-start"]')?.disabled ?? null,
+        blocked: text('preflight-blocked'),
+      },
+      baseline: {
+        question: text('baseline-question'),
+        persistsLabel: text('verdict-persists'),
+        goneLabel: text('verdict-gone'),
+        reloadLabel: document.querySelector('[data-testid="baseline-reload"]')?.textContent?.trim() ?? null,
+      },
+      hostIssue: {
+        explanation: text('host-issue-explanation'),
+        restore: document.querySelector('[data-testid="host-issue-restore"]')?.textContent?.trim() ?? null,
+      },
+      completed: {
+        culpritName: text('culprit-name'),
+        detail: text('culprit-detail'),
+      },
+      restore: {
+        visible: document.querySelector('[data-testid="restore-panel"]') !== null,
+        summary: summary?.textContent?.trim() ?? null,
+        complete: summary?.getAttribute('data-complete') ?? null,
+        buttonDisabled: document.querySelector('[data-testid="restore-button"]')?.disabled ?? null,
+        failures: Array.from(document.querySelectorAll('[data-testid="restore-failure"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          name: node.querySelector('[data-testid="restore-failure-name"]')?.textContent?.trim() ?? '',
+          code: node.querySelector('[data-testid="restore-failure-code"]')?.textContent?.trim() ?? '',
+          message: node.querySelector('[data-testid="restore-failure-message"]')?.textContent?.trim() ?? '',
+        })),
+      },
+      picker: {
+        startLabel: document.querySelector('[data-testid="picker-start"]')?.textContent?.trim() ?? null,
+        startDisabled: document.querySelector('[data-testid="picker-start"]')?.disabled ?? null,
+        blocked: text('picker-blocked'),
+      },
+    };
+  });
+}
+
+export async function clickTestId(page, testId) {
+  const clicked = await page.evaluate((id) => {
+    const node = document.querySelector(`[data-testid="${id}"]`);
+    if (node === null) return false;
+    node.click();
+    return true;
+  }, testId);
+  if (!clicked) throw new Error(`No clickable node with data-testid="${testId}"`);
+}
+
+/**
+ * Reads extension enabled state from an extension page. `globalThis.browser` is
+ * absent inside evaluated page code, and Firefox only exposes `identity`-less
+ * `browser` from the extension realm, so resolve the API the same way the
+ * background does.
+ */
+export async function readExtensionEnabledStates(page, extensionIds) {
+  return page.evaluate(async (ids) => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const all = await api.management.getAll();
+    const states = {};
+    for (const id of ids) {
+      const entry = all.find((candidate) => candidate.id === id);
+      states[id] = entry === undefined ? 'missing' : entry.enabled;
+    }
+    return states;
+  }, extensionIds);
+}
+
+/**
+ * `browser.tabs.reload` is unobservable from the extension realm without the
+ * `tabs` permission, so mark the test page's own JS context: any reload drops
+ * the marker.
+ */
+export async function markPageForReloadCheck(page) {
+  await page.evaluate(() => {
+    globalThis.__bisectReloadMarker = 'alive';
+  });
+}
+
+export async function readPageReloadMarker(page) {
+  return page.evaluate(() => globalThis.__bisectReloadMarker ?? null);
+}
+
+/**
+ * Drops the persisted bisect state so the next panel load renders the candidate
+ * picker with no session. Starting another session in-app is ISS-004+ scope, so
+ * the harness owns the reset when one launch must cover more than one flow.
+ */
+export async function resetBisectState(page) {
+  await page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    await api.storage.local.remove(['bisectLog', 'bisectConfig']);
+  });
+}
+
+/**
+ * `browser.tabs.query({ active: true })` resolves the focused tab, so the test
+ * tab must be in front before the panel binds it.
+ */
+export async function focusPage(page) {
+  await page.bringToFront();
 }
