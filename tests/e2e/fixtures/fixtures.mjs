@@ -8,12 +8,10 @@ export const FIXTURES = {
 export const ELIGIBLE_FIXTURES = [FIXTURES.alpha, FIXTURES.bravo];
 
 /**
- * Firefox WebDriver BiDi can only install temporary add-ons, and a temporary
- * add-on is always enabled and cannot be disabled through `management`. So the
- * "already disabled" fixture is Chrome-only; the Firefox run asserts the
- * theme/app exclusion instead (ISS-014).
+ * Both browsers install the dormant fixture. Chrome disables it through
+ * `management.setEnabled`; Firefox's temporary add-ons are always enabled, so the
+ * documented test-mode driver records it as disabled instead (ISS-005, ISS-014).
  */
-export function fixturesFor(browserName) {
-  if (browserName === 'chrome') return [...ELIGIBLE_FIXTURES, FIXTURES.dormant, FIXTURES.theme];
-  return [...ELIGIBLE_FIXTURES, FIXTURES.theme];
+export function fixturesFor(_browserName) {
+  return [...ELIGIBLE_FIXTURES, FIXTURES.dormant, FIXTURES.theme];
 }

@@ -10,23 +10,29 @@ import {
   disableExtensionThroughSurface,
   EXTENSION_TAB_ID_ATTRIBUTE,
   focusPage,
+  hasTestDriverGlobal,
   launchTestBrowser,
   markPageForReloadCheck,
   readCandidateState,
   readExtensionEnabledStates,
+  readManualExtensionState,
   readPageReloadMarker,
   readSessionState,
   reloadExtensionPage,
   resetBisectState,
+  resetManualExtensionState,
   restoreFixtureState,
   SIDEPANEL_ROOT_SELECTOR,
+  setManualExtensionState,
   waitForAttribute,
   waitForLog,
 } from './harness.mjs';
 
 const ARTIFACTS_DIR = path.resolve('.agent-artifacts');
 const SEARCH_SELECTOR = '[data-testid="candidate-search"]';
-const SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop'];
+const SCENARIOS = ['candidate-picker', 'session-baseline', 'assisted-baseline', 'assisted-external', 'partition-loop'];
+const CHROME_SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop'];
+const FIREFOX_SCENARIOS = ['candidate-picker', 'assisted-baseline', 'assisted-external'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -159,11 +165,10 @@ async function runCandidatePickerScenario({ surface, session, installed }) {
     },
   );
 
-  const dormantExpected = session.browserName === 'chrome';
   record(
     'disabled-fixture-reported-disabled-at-start',
-    initial.ineligible.some((row) => row.reason === 'Disabled at start') === dormantExpected,
-    { expected: dormantExpected, ineligible: initial.ineligible },
+    initial.ineligible.some((row) => row.reason === 'Disabled at start'),
+    { ineligible: initial.ineligible },
   );
 
   await setSearch(surface, 'bravo');
@@ -598,33 +603,215 @@ async function runPartitionLoopScenario({ surface, session, installed, testPage,
 }
 
 /**
- * Firefox rejects `management.setEnabled` for regular add-ons, so the automated
- * baseline cannot run there until the assisted path lands (ISS-005). Assert the
- * honest capability state instead of pretending the flow worked.
+ * The Firefox assisted baseline, driven through the documented test-mode driver.
+ * Firefox rejects `management.setEnabled` for a temporary add-on, so the harness
+ * records the state an Add-ons Manager toggle would produce
+ * (`setManualExtensionState`) and the add-on verifies it with `management.getAll`
+ * plus its events. The automated rail is never faked: a real toggle is still
+ * refused by the browser, which is what makes this an assisted run.
  */
-async function runAssistedCapabilityScenario({ surface, session }) {
+async function runAssistedBaselineScenario({ surface, session, installed, testPage }) {
   const steps = [];
   const record = makeRecorder(steps);
+  const { candidates, theme, dormant } = extensionGroups(installed);
+
+  const untouchableIds = [theme?.id, dormant?.id].filter((id) => typeof id === 'string');
+  const candidateIds = candidates.map((entry) => entry.id);
+  const before = await readManualExtensionState(surface, [...candidateIds, ...untouchableIds]);
 
   const initial = await waitForCandidateState(surface, (state) => state.state === 'ready');
-  record('capability-reports-assisted-mode', /Assisted/.test(initial.toggleMode ?? ''), {
+  record('assisted-capability-reports-assisted-mode', /Assisted/.test(initial.toggleMode ?? ''), {
     toggleMode: initial.toggleMode,
   });
+  record('assisted-test-mode-driver-is-live', await hasTestDriverGlobal(surface), {
+    firefoxPath: 'test-mode-driver',
+  });
+  record(
+    'assisted-disabled-fixture-reported-disabled-at-start',
+    initial.ineligible.some((row) => row.reason === 'Disabled at start'),
+    { ineligible: initial.ineligible },
+  );
 
   const picker = await readSessionState(surface);
-  record('assisted-mode-blocks-the-automated-baseline', picker.picker.startDisabled === true, {
+  record('assisted-restore-visible-on-the-picker', picker.restore.visible, { visible: picker.restore.visible });
+  record('assisted-restore-disabled-before-start', picker.restore.buttonDisabled === true, {
+    buttonDisabled: picker.restore.buttonDisabled,
+  });
+  record('assisted-start-is-available', picker.picker.startDisabled === false, {
     startDisabled: picker.picker.startDisabled,
     blocked: picker.picker.blocked,
   });
-  record(
-    'assisted-mode-explains-why-the-baseline-cannot-run',
-    (picker.picker.blocked ?? '').includes('Automatic toggling is unavailable'),
-    { blocked: picker.picker.blocked },
-  );
-  record('restore-visible-on-the-picker', picker.restore.visible, { visible: picker.restore.visible });
-  record('restore-does-not-offer-a-toggle-before-start', picker.restore.buttonDisabled === true, {
-    buttonDisabled: picker.restore.buttonDisabled,
+
+  await clickTestId(surface, 'picker-start');
+  const preflight = await waitForScreen(surface, 'preflight');
+  record('assisted-preflight-warns-the-user-toggles', (preflight.preflight.mode ?? '').includes('Assisted'), {
+    mode: preflight.preflight.mode,
   });
+
+  await focusPage(testPage);
+  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await clickTestId(surface, 'preflight-bind');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.preflight.testTab !== 'No test tab bound' ? state : null;
+    },
+    { label: 'the bound test tab' },
+  );
+
+  record(
+    'assisted-preflight-toggles-nothing',
+    JSON.stringify(await readManualExtensionState(surface, candidateIds)) ===
+      JSON.stringify(Object.fromEntries(candidateIds.map((id) => [id, before[id]]))),
+    { before },
+  );
+
+  await clickTestId(surface, 'preflight-start');
+  const assisted = await waitForScreen(surface, 'assisted-baseline');
+
+  record(
+    'assisted-baseline-offers-both-routes',
+    assisted.assisted.attestLabel !== null && assisted.assisted.openLabel !== null,
+    {
+      attest: assisted.assisted.attestLabel,
+      open: assisted.assisted.openLabel,
+    },
+  );
+  record('assisted-baseline-lists-every-candidate', assisted.assisted.checklist.length === candidateIds.length, {
+    checklist: assisted.assisted.checklist,
+    expected: candidateIds.length,
+  });
+  record(
+    'assisted-baseline-asks-for-the-disabled-state',
+    assisted.assisted.checklist.every((row) => row.target === 'Off'),
+    { checklist: assisted.assisted.checklist },
+  );
+  record('assisted-baseline-shows-progress', /\d+ of \d+ done/.test(assisted.assisted.progress ?? ''), {
+    progress: assisted.assisted.progress,
+  });
+  record('assisted-baseline-toggles-nothing-on-start', assisted.assisted.startToggledNothing, {
+    states: await readManualExtensionState(surface, candidateIds),
+  });
+
+  await clickTestId(surface, 'assisted-open-addons');
+  const addons = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.assisted.addonsMessage !== null ? state : null;
+    },
+    { label: 'the Add-ons Manager outcome' },
+  );
+  record('assisted-open-addons-reports-an-outcome', addons.assisted.addonsMessage !== null, {
+    message: addons.assisted.addonsMessage,
+  });
+
+  await clickTestId(surface, 'assisted-verify');
+  const unverified = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.assisted.error !== null ? state : null;
+    },
+    { label: 'the unverified-baseline rejection' },
+  );
+  record(
+    'assisted-unverified-baseline-is-rejected',
+    (unverified.assisted.error ?? '').includes('does not match this batch yet'),
+    { error: unverified.assisted.error },
+  );
+  record('assisted-unverified-baseline-asks-no-verdict', unverified.assisted.hasVerdictButtons === false, {
+    hasVerdictButtons: unverified.assisted.hasVerdictButtons,
+  });
+
+  for (const id of candidateIds) await setManualExtensionState(surface, id, false);
+  const halfway = await readSessionState(surface);
+  record('assisted-driver-reports-the-disabled-candidates', halfway.assisted.progress !== null, {
+    progress: halfway.assisted.progress,
+  });
+
+  await clickTestId(surface, 'assisted-verify');
+  const baseline = await waitForScreen(surface, 'baseline');
+  record(
+    'assisted-verified-baseline-asks-the-question',
+    (baseline.baseline.question ?? '').includes('Does the problem still happen'),
+    {
+      question: baseline.baseline.question,
+    },
+  );
+  record(
+    'assisted-baseline-uses-the-exact-verdict-labels',
+    baseline.baseline.persistsLabel === 'Problem persists' && baseline.baseline.goneLabel === 'Problem is gone',
+    { persists: baseline.baseline.persistsLabel, gone: baseline.baseline.goneLabel },
+  );
+
+  const afterBaseline = await readManualExtensionState(surface, [...candidateIds, ...untouchableIds]);
+  record(
+    'assisted-baseline-leaves-non-candidates-untouched',
+    untouchableIds.every((id) => afterBaseline[id] === before[id]),
+    { before, afterBaseline, untouchableIds },
+  );
+
+  await clickTestId(surface, 'verdict-gone');
+  const advanced = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first assisted trial plan' },
+  );
+  record('assisted-baseline-advances-to-the-first-trial', advanced.screen === 'trial', { screen: advanced.screen });
+
+  await clickTestId(surface, 'restore-button');
+  const restored = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'restored' ? state : null;
+    },
+    { label: 'the restored screen' },
+  );
+  record('assisted-restore-lands-on-the-restored-screen', restored.screen === 'restored', { screen: restored.screen });
+  record('assisted-restore-never-claims-a-false-success', restored.restore.complete === 'false', {
+    complete: restored.restore.complete,
+    summary: restored.restore.summary,
+  });
+  const restoreSummary = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.assisted.restoreSummary !== null ? state : null;
+    },
+    { label: 'the assisted restore checklist' },
+  );
+  record(
+    'assisted-restore-lists-the-original-states',
+    restoreSummary.assisted.restoreRows.length === candidateIds.length,
+    { rows: restoreSummary.assisted.restoreRows, expected: candidateIds.length },
+  );
+  record(
+    'assisted-restore-reports-what-is-left',
+    restoreSummary.assisted.restoreSummary.includes('still to turn back on'),
+    {
+      summary: restoreSummary.assisted.restoreSummary,
+    },
+  );
+
+  for (const id of candidateIds) await setManualExtensionState(surface, id, true);
+  await clickTestId(surface, 'assisted-restore-verify');
+  const verified = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.assisted.restoreComplete === 'true' ? state : null;
+    },
+    { label: 'the verified assisted restore' },
+  );
+  record('assisted-restore-verifies-completion', verified.assisted.restoreComplete === 'true', {
+    summary: verified.assisted.restoreSummary,
+  });
+
+  const afterRestore = await readManualExtensionState(surface, candidateIds);
+  record(
+    'assisted-restore-leaves-every-candidate-enabled',
+    candidateIds.every((id) => afterRestore[id] === true),
+    { afterRestore },
+  );
 
   const errors = collectErrors(session.recorder);
   record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
@@ -632,7 +819,53 @@ async function runAssistedCapabilityScenario({ surface, session }) {
   record('no-console-errors', errors.consoleErrors.length === 0, { errors: errors.consoleErrors });
   record('no-request-failures', errors.requestFailures.length === 0, { errors: errors.requestFailures });
 
-  return { steps, firefoxPath: 'assisted-capability-only (automated baseline needs ISS-005)' };
+  return { steps, firefoxPath: 'test-mode-driver' };
+}
+
+async function runAssistedExternalAttestationScenario({ surface, session, installed }) {
+  const steps = [];
+  const record = makeRecorder(steps);
+  const { candidates } = extensionGroups(installed);
+  const candidateIds = candidates.map((entry) => entry.id);
+  const before = await readManualExtensionState(surface, candidateIds);
+
+  await waitForCandidateState(surface, (state) => state.state === 'ready');
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  await clickTestId(surface, 'preflight-start');
+  await waitForScreen(surface, 'assisted-baseline');
+
+  await clickTestId(surface, 'assisted-attest');
+  const attested = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the post-attestation trial plan' },
+  );
+
+  record('assisted-attestation-proceeds-at-full-enabled-state', attested.screen === 'trial', {
+    screen: attested.screen,
+  });
+  const after = await readManualExtensionState(surface, candidateIds);
+  record(
+    'assisted-attestation-toggles-nothing',
+    candidateIds.every((id) => after[id] === before[id]),
+    { before, after },
+  );
+  record(
+    'assisted-attestation-asks-no-verdict-before-the-batch-is-applied',
+    attested.trial.persistsLabel === null && attested.trial.planDisabled !== '',
+    { planDisabled: attested.trial.planDisabled, persistsLabel: attested.trial.persistsLabel },
+  );
+
+  const errors = collectErrors(session.recorder);
+  record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
+  record('no-page-errors', errors.pageErrors.length === 0, { errors: errors.pageErrors });
+  record('no-console-errors', errors.consoleErrors.length === 0, { errors: errors.consoleErrors });
+  record('no-request-failures', errors.requestFailures.length === 0, { errors: errors.requestFailures });
+
+  return { steps, firefoxPath: 'test-mode-driver' };
 }
 
 async function captureFailure(surface, page, browserName, scenario) {
@@ -665,8 +898,7 @@ async function summarizeDom(page) {
 
 function selectScenarios(scenario, browserName) {
   if (scenario !== null) return [scenario];
-  if (browserName === 'chrome') return SCENARIOS;
-  return ['candidate-picker', 'session-baseline'];
+  return browserName === 'chrome' ? CHROME_SCENARIOS : FIREFOX_SCENARIOS;
 }
 
 async function runScenarioForBrowser(browserName, scenario, session, context) {
@@ -682,7 +914,22 @@ async function runScenarioForBrowser(browserName, scenario, session, context) {
     };
   }
 
-  if (browserName === 'firefox') return runAssistedCapabilityScenario({ surface: context.surface, session });
+  if (scenario === 'assisted-baseline') {
+    return runAssistedBaselineScenario({
+      surface: context.surface,
+      session,
+      installed: context.installed,
+      testPage: context.page,
+    });
+  }
+
+  if (scenario === 'assisted-external') {
+    return runAssistedExternalAttestationScenario({
+      surface: context.surface,
+      session,
+      installed: context.installed,
+    });
+  }
 
   if (scenario === 'partition-loop') {
     return runPartitionLoopScenario({
@@ -752,6 +999,11 @@ async function runBrowser(browserName, options) {
       if (browserName === 'chrome') {
         await resetBisectState(surface);
         await restoreFixtureState(surface, { candidates: eligibleInstalled, dormant: dormantInstalled });
+        await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+      } else {
+        await resetBisectState(surface);
+        await resetManualExtensionState(surface);
+        if (dormantInstalled !== null) await setManualExtensionState(surface, dormantInstalled.id, false);
         await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
       }
       try {

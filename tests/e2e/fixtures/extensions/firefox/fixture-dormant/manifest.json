@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "Fixture Dormant",
+  "version": "1.0.0",
+  "description": "Regular fixture extension the Firefox test-mode driver reports as disabled before the side panel loads.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "fixture-dormant@browser-extension-bisect.test"
+    }
+  }
+}

@@ -224,11 +224,12 @@ function closePreflight(): void {
 async function startBaseline(): Promise<void> {
   const candidateIds = included.value.map((candidate) => candidate.id);
   const mode = baselineModeFor(capability.value ?? FALLBACK_CAPABILITY, 'manual');
+  const boundTab = testTab.value;
   const result = await run(() =>
     messenger.sendMessage('startSession', {
       candidateIds,
       baselineMode: mode,
-      testTab: testTab.value,
+      testTab: boundTab === null ? null : { tabId: boundTab.tabId, url: boundTab.url },
     }),
   );
   if (result === null) return;

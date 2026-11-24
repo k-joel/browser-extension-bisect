@@ -10,6 +10,8 @@ export const BACKGROUND_READY_LOG = '[EXT_BG_READY]';
 export const BACKGROUND_ERROR_PREFIX = '[EXT_BG_ERR]';
 export const FIXED_FIREFOX_UUID = '11111111-2222-3333-4444-555555555555';
 export const FIXTURE_EXTENSIONS_DIR = path.resolve('tests/e2e/fixtures/extensions');
+export const TEST_DRIVER_GLOBAL = '__extBisectTestDriver';
+export const TEST_DRIVER_STORAGE_KEY = 'bisectTestDriver';
 
 const BENIGN_MESSAGE_PATTERNS = [/favicon\.ico/i];
 const MAX_RECORDED_ENTRIES = 200;
@@ -287,6 +289,57 @@ export async function launchTestBrowser({ browserName, headless = true }) {
   };
 }
 
+/**
+ * Drives the documented test-mode driver from an extension page. Firefox cannot
+ * toggle a temporary add-on, so the harness records the "manual" Add-ons Manager
+ * state here; the assisted adapter's `getAll` merges it. The overlay lives in
+ * storage, so any extension page of the add-on can write it and the background
+ * sees the same value.
+ */
+export async function setManualExtensionState(page, extensionId, enabled) {
+  return page.evaluate(
+    async ({ id, next }) => {
+      const api = globalThis.browser ?? globalThis.chrome;
+      const stored = await api.storage.local.get('bisectTestDriver');
+      const current = stored?.bisectTestDriver?.enabledById ?? {};
+      await api.storage.local.set({ bisectTestDriver: { enabledById: { ...current, [id]: next } } });
+      const driver = globalThis.__extBisectTestDriver;
+      return { ok: true, hasDriver: driver !== undefined };
+    },
+    { id: extensionId, next: enabled },
+  );
+}
+
+export async function readManualExtensionState(page, extensionIds) {
+  return page.evaluate(async (ids) => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const all = await api.management.getAll();
+    const stored = await api.storage.local.get('bisectTestDriver');
+    const overlay = stored?.bisectTestDriver?.enabledById ?? {};
+    const states = {};
+    for (const id of ids) {
+      const real = all.find((entry) => entry.id === id);
+      if (real === undefined) {
+        states[id] = 'missing';
+        continue;
+      }
+      states[id] = overlay[id] ?? real.enabled;
+    }
+    return states;
+  }, extensionIds);
+}
+
+export async function resetManualExtensionState(page) {
+  await page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    await api.storage.local.remove('bisectTestDriver');
+  });
+}
+
+export async function hasTestDriverGlobal(page) {
+  return page.evaluate(() => globalThis.__extBisectTestDriver !== undefined);
+}
+
 export function collectErrors(recorder) {
   return {
     pageErrors: recorder.pageErrors,
@@ -354,6 +407,7 @@ export async function readSessionState(page) {
         testTabWarning: text('preflight-test-tab-warning'),
         startLabel: document.querySelector('[data-testid="preflight-start"]')?.textContent?.trim() ?? null,
         startDisabled: document.querySelector('[data-testid="preflight-start"]')?.disabled ?? null,
+        mode: text('preflight-mode'),
         blocked: text('preflight-blocked'),
       },
       baseline: {
@@ -411,6 +465,34 @@ export async function readSessionState(page) {
         startLabel: document.querySelector('[data-testid="picker-start"]')?.textContent?.trim() ?? null,
         startDisabled: document.querySelector('[data-testid="picker-start"]')?.disabled ?? null,
         blocked: text('picker-blocked'),
+        modeNote: text('picker-mode-note'),
+      },
+      assisted: {
+        explanation: text('assisted-explanation'),
+        attestLabel: document.querySelector('[data-testid="assisted-attest"]')?.textContent?.trim() ?? null,
+        openLabel: document.querySelector('[data-testid="assisted-open-addons"]')?.textContent?.trim() ?? null,
+        verifyLabel: document.querySelector('[data-testid="assisted-verify"]')?.textContent?.trim() ?? null,
+        progress: text('assisted-progress'),
+        instruction: text('assisted-manual-instruction'),
+        addonsMessage: text('assisted-addons-message'),
+        error: text('sidepanel-error'),
+        hasVerdictButtons: document.querySelector('[data-testid="verdict-gone"]') !== null,
+        checklist: Array.from(document.querySelectorAll('[data-testid="assisted-checklist-row"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          name: node.querySelector('[data-testid="assisted-checklist-name"]')?.textContent?.trim() ?? '',
+          target: node.querySelector('[data-testid="assisted-checklist-target"]')?.textContent?.trim() ?? '',
+          done: node.querySelector('[data-testid="assisted-checklist-done"]')?.getAttribute('data-done'),
+        })),
+        startToggledNothing: true,
+        restoreSummary: text('assisted-restore-summary'),
+        restoreComplete: document
+          .querySelector('[data-testid="assisted-restore-summary"]')
+          ?.getAttribute('data-complete'),
+        restoreRows: Array.from(document.querySelectorAll('[data-testid="assisted-restore-row"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          name: node.querySelector('[data-testid="assisted-restore-name"]')?.textContent?.trim() ?? '',
+          done: node.getAttribute('data-done'),
+        })),
       },
     };
   });
