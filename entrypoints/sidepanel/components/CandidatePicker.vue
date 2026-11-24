@@ -11,6 +11,7 @@ const props = defineProps<{
   query: string;
   busy: boolean;
   blockedReason: string | null;
+  note: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -57,6 +58,7 @@ function onSearch(event: Event): void {
     <IneligibleList v-if="unavailable.length > 0" :entries="unavailable" />
 
     <p v-if="blockedReason !== null" class="error" data-testid="picker-blocked">{{ blockedReason }}</p>
+    <p v-else-if="note !== null" class="note" data-testid="picker-mode-note">{{ note }}</p>
 
     <div class="actions">
       <button

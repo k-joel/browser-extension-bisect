@@ -216,6 +216,28 @@ body {
   font-weight: 600;
 }
 
+.assisted {
+  gap: var(--space-3);
+}
+
+.assisted h3.section-heading {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.assisted .ext {
+  grid-template-columns: 1fr auto;
+}
+
+.assisted-progress {
+  font-variant-numeric: tabular-nums;
+}
+
+.checklist-done[data-done="true"] {
+  color: var(--accent);
+}
+
 .restore {
   padding-top: var(--space-3);
   border-top: 1px solid var(--border);

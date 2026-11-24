@@ -1,7 +1,10 @@
 import type {
+  BaselineMode,
   CandidateExtension,
   CapabilityReport,
+  EnabledStateMap,
   IneligibleReason,
+  ManualBatch,
   RestoreError,
   SessionStatus,
   SessionView,
@@ -48,6 +51,7 @@ export type PanelScreen =
   | 'picker'
   | 'preflight'
   | 'baseline'
+  | 'assisted-baseline'
   | 'trial'
   | 'host-issue'
   | 'completed'
@@ -63,6 +67,7 @@ export interface ScreenInput {
 export interface RestoreOutcome {
   restored: boolean;
   errors: RestoreError[];
+  manualIds?: string[];
 }
 
 export interface RestoreFailure {
@@ -231,9 +236,21 @@ export function resolveScreen({ session, preflightOpen }: ScreenInput): PanelScr
   if (session.status === 'aborted' && session.abortReason === 'host-issue') return 'host-issue';
   if (session.status === 'completed' && session.culpritId !== null) return 'completed';
   if (session.status === 'inconclusive') return 'inconclusive';
+  if (isAssistedBaseline(session)) return 'assisted-baseline';
+  if (session.status === 'baseline') return 'baseline';
   if (isBaselineQuestion(session)) return 'baseline';
   if (isTrialQuestion(session) || needsNextTrial(session)) return 'trial';
   return 'progress';
+}
+
+/**
+ * A manual all-off batch still waiting on the user. Only the baseline is in scope
+ * here; assisted trials are ISS-006, so a later manual round falls through to the
+ * progress screen instead of showing verdict buttons that nothing has verified.
+ */
+export function isAssistedBaseline(view: SessionView): boolean {
+  const trial = view.currentTrial;
+  return view.status === 'awaiting-manual-toggle' && trial !== null && trial.round === 0 && trial.manual;
 }
 
 export function describeSessionStatus(status: SessionStatus): string {
@@ -269,4 +286,104 @@ export function describeProgress(view: SessionView): string {
 export function findCandidate(candidates: CandidateExtension[], extensionId: string | null): CandidateExtension | null {
   if (extensionId === null) return null;
   return candidates.find((candidate) => candidate.id === extensionId) ?? null;
+}
+
+/**
+ * Assisted mode never toggles anything, so the baseline is a checklist the add-on
+ * can verify. `external` is the faster attestation offered on the same screen and
+ * is recorded by `recordExternalBaseline`, not by the start. An enterprise-policy
+ * install reports `canAutoToggle`, in which case the automated baseline runs.
+ */
+export function baselineModeFor(capability: CapabilityReport, requested: BaselineMode): BaselineMode {
+  if (capability.canAutoToggle) return 'auto';
+  return requested === 'external' ? 'external' : 'manual';
+}
+
+export function isAssisted(capability: CapabilityReport | null): boolean {
+  return capability !== null && !capability.canAutoToggle;
+}
+
+export interface ManualProgress {
+  done: number;
+  total: number;
+  remainingIds: string[];
+  complete: boolean;
+}
+
+/**
+ * "6 of 8 off": the count of candidates already in the target state, so the user
+ * sees progress even when a toggle they did not expect also drifted.
+ */
+export function manualProgress(batch: ManualBatch, actual: EnabledStateMap): ManualProgress {
+  const targets: [string, boolean][] = [
+    ...batch.enableIds.map((id): [string, boolean] => [id, true]),
+    ...batch.disableIds.map((id): [string, boolean] => [id, false]),
+  ];
+  const remainingIds = targets.filter(([id, enabled]) => actual[id] !== enabled).map(([id]) => id);
+  const total = targets.length;
+  return { done: total - remainingIds.length, total, remainingIds, complete: remainingIds.length === 0 };
+}
+
+export function formatManualProgress(progress: ManualProgress): string {
+  return `${progress.done} of ${progress.total} done`;
+}
+
+export function manualInstruction(batch: ManualBatch, candidates: CandidateExtension[]): string {
+  const names = (ids: string[]) =>
+    ids.map((id) => candidates.find((candidate) => candidate.id === id)?.name ?? id).join(', ');
+  const parts: string[] = [];
+  if (batch.disableIds.length > 0) parts.push(`turn off ${names(batch.disableIds)}`);
+  if (batch.enableIds.length > 0) parts.push(`turn on ${names(batch.enableIds)}`);
+  return `${parts.join(' and ')} in the Add-ons Manager.`.replace(/^./, (first) => first.toUpperCase());
+}
+
+/**
+ * The copyable fallback when `about:addons` cannot be opened: the exact per-extension
+ * names and target states, so the user can still do the work from memory.
+ */
+export function manualChecklistLines(
+  batch: ManualBatch,
+  candidates: CandidateExtension[],
+): { id: string; name: string; target: 'On' | 'Off' }[] {
+  const nameOf = (id: string) => candidates.find((candidate) => candidate.id === id)?.name ?? id;
+  return [
+    ...batch.disableIds.map((id) => ({ id, name: nameOf(id), target: 'Off' as const })),
+    ...batch.enableIds.map((id) => ({ id, name: nameOf(id), target: 'On' as const })),
+  ];
+}
+
+export interface AssistedRestoreRow {
+  id: string;
+  name: string;
+  done: boolean;
+}
+
+export interface AssistedRestoreSummary {
+  total: number;
+  remaining: number;
+  rows: AssistedRestoreRow[];
+  complete: boolean;
+}
+
+/**
+ * The assisted restore checklist: every touched candidate with its original state,
+ * ticked when the browser reports it already back.
+ */
+export function assistedRestoreSummary(
+  manualIds: readonly string[],
+  restoredIds: readonly string[],
+  candidates: CandidateExtension[],
+): AssistedRestoreSummary {
+  const ids = [...new Set([...restoredIds, ...manualIds])];
+  const rows = ids.map((id) => ({
+    id,
+    name: candidates.find((candidate) => candidate.id === id)?.name ?? id,
+    done: restoredIds.includes(id),
+  }));
+  return {
+    total: rows.length,
+    remaining: rows.filter((row) => !row.done).length,
+    rows,
+    complete: rows.length > 0 && rows.every((row) => row.done),
+  };
 }

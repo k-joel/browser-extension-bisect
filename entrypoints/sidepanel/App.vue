@@ -4,11 +4,17 @@ import type {
   BisectConfig,
   CandidateExtension,
   CapabilityReport,
+  DriftReport,
+  EnabledStateMap,
   IneligibleExtension,
+  ManualBatch,
+  RestoreResult,
   SessionView,
   Verdict,
 } from '@/utils/bisect/domain';
 import { messenger, type SessionMutationResult } from '@/utils/messaging';
+import AssistedBaseline from './components/AssistedBaseline.vue';
+import AssistedRestore from './components/AssistedRestore.vue';
 import BaselineScreen from './components/BaselineScreen.vue';
 import CandidatePicker from './components/CandidatePicker.vue';
 import CapabilityReportView from './components/CapabilityReport.vue';
@@ -22,10 +28,13 @@ import RestorePanel from './components/RestorePanel.vue';
 import SessionProgress from './components/SessionProgress.vue';
 import TrialScreen from './components/TrialScreen.vue';
 import {
+  baselineModeFor,
   buildPickerRows,
   describeProgress,
   findCandidate,
   formatTestTab,
+  isAssisted,
+  manualProgress,
   plural,
   type RestoreOutcome,
   type RestoreSummary,
@@ -48,6 +57,10 @@ const busy = ref(false);
 const preflightOpen = ref(false);
 const restoreOutcome = ref<RestoreOutcome | null>(null);
 const reloadMessage = ref<string | null>(null);
+const manualBatch = ref<ManualBatch | null>(null);
+const manualDrift = ref<DriftReport | null>(null);
+const addonManagerMessage = ref<string | null>(null);
+const assistedRestore = ref<RestoreResult | null>(null);
 
 const excludedIds = computed(() => config.value?.excludedExtensionIds ?? []);
 
@@ -64,10 +77,13 @@ const testTabWarning = computed(() =>
 );
 
 const blockedReason = computed(() => {
-  if (capability.value !== null && !capability.value.canAutoToggle) {
-    return 'Automatic toggling is unavailable in this browser, so the automated baseline cannot run.';
-  }
-  return included.value.length === 0 ? 'No eligible enabled extensions.' : null;
+  if (included.value.length === 0) return 'No eligible enabled extensions.';
+  return null;
+});
+
+const capabilityNote = computed(() => {
+  if (!isAssisted(capability.value)) return null;
+  return 'Assisted mode: this browser does not let the add-on toggle extensions, so you apply the baseline yourself.';
 });
 
 const screen = computed(() => resolveScreen({ session: session.value, preflightOpen: preflightOpen.value }));
@@ -88,12 +104,29 @@ const visibleCount = computed(() => {
   return rows.value.filter((row) => row.name.toLowerCase().includes(term.toLowerCase())).length;
 });
 
+const manualActual = computed<EnabledStateMap>(() => manualDrift.value?.actual ?? {});
+
+const manual = computed(() =>
+  manualBatch.value === null ? null : manualProgress(manualBatch.value, manualActual.value),
+);
+
+const manualProgressAnnouncement = computed(() => {
+  const progress = manual.value;
+  if (progress === null) return 'Waiting for the extension list.';
+  if (progress.complete) return 'Every candidate is in the baseline state. Verify to continue.';
+  return `${progress.done} of ${progress.total} done. ${plural(progress.remainingIds.length, 'extension')} still to toggle.`;
+});
+
 const announcement = computed(() => {
   if (state.value === 'loading') return 'Loading extensions…';
   if (state.value === 'error') return 'Extensions could not be loaded';
   switch (screen.value) {
     case 'preflight':
-      return `${plural(included.value.length, 'extension')} will be disabled. Nothing is toggled yet.`;
+      return isAssisted(capability.value)
+        ? `${plural(included.value.length, 'extension')} will be turned off by you. Nothing is toggled for you.`
+        : `${plural(included.value.length, 'extension')} will be disabled. Nothing is toggled yet.`;
+    case 'assisted-baseline':
+      return manualProgressAnnouncement.value;
     case 'baseline':
       return 'Baseline ready. Answer whether the problem persists.';
     case 'trial':
@@ -190,10 +223,11 @@ function closePreflight(): void {
 
 async function startBaseline(): Promise<void> {
   const candidateIds = included.value.map((candidate) => candidate.id);
+  const mode = baselineModeFor(capability.value ?? FALLBACK_CAPABILITY, 'manual');
   const result = await run(() =>
     messenger.sendMessage('startSession', {
       candidateIds,
-      baselineMode: 'auto',
+      baselineMode: mode,
       testTab: testTab.value,
     }),
   );
@@ -201,11 +235,71 @@ async function startBaseline(): Promise<void> {
   session.value = result;
   preflightOpen.value = false;
   restoreOutcome.value = null;
+  assistedRestore.value = null;
+  addonManagerMessage.value = null;
+  await refreshManualState();
+}
+
+const FALLBACK_CAPABILITY: CapabilityReport = {
+  browserName: 'unknown',
+  canAutoToggle: false,
+  selfInstallType: 'unknown',
+  sideSurface: 'side-panel',
+};
+
+/**
+ * The assisted baseline has no `applyTargetState` result to show: the batch is the
+ * trial's target, and the drift tells the panel how far along the user is.
+ */
+async function refreshManualState(): Promise<void> {
+  const current = session.value;
+  const trial = current?.currentTrial ?? null;
+  if (current === null || current.status !== 'awaiting-manual-toggle' || trial === null) {
+    manualBatch.value = null;
+    manualDrift.value = null;
+    return;
+  }
+  const drift = await run(() => messenger.sendMessage('getDrift'));
+  if (drift === null) return;
+  manualDrift.value = drift;
+  manualBatch.value = { enableIds: trial.enabledIds, disableIds: trial.disabledIds };
+}
+
+async function openAddonManager(): Promise<void> {
+  addonManagerMessage.value = null;
+  const result = await run(() => messenger.sendMessage('openAddonManager'));
+  if (result === null) return;
+  addonManagerMessage.value = result.opened
+    ? 'The Add-ons Manager is open in a new tab. Turn the listed extensions off, then verify.'
+    : `The Add-ons Manager could not be opened (${result.error ?? 'unknown reason'}). Use the copyable list instead.`;
+}
+
+async function verifyManualState(): Promise<void> {
+  await refreshManualState();
+  const drift = manualDrift.value;
+  if (drift === null) return;
+  const confirmed = await run(() => messenger.sendMessage('confirmManualState'));
+  if (confirmed === null) return;
+  session.value = confirmed;
+  manualBatch.value = null;
+  manualDrift.value = null;
+  addonManagerMessage.value = null;
+}
+
+async function attestExternal(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('recordExternalBaseline'));
+  if (result !== null) session.value = result;
+}
+
+async function verifyAssistedRestore(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('verifyRestore'));
+  if (result !== null) assistedRestore.value = result;
 }
 
 function applyMutation(result: SessionMutationResult): void {
   session.value = result.session;
   if (result.restore !== null) restoreOutcome.value = result.restore;
+  assistedRestore.value = null;
 }
 
 async function applyTrial(): Promise<void> {
@@ -225,7 +319,9 @@ async function submitVerdict(verdict: Verdict): Promise<void> {
 
 async function restore(): Promise<void> {
   const result = await run(() => messenger.sendMessage('resetSession', { restore: true }));
-  if (result !== null) applyMutation(result);
+  if (result === null) return;
+  applyMutation(result);
+  if (isAssisted(capability.value)) await verifyAssistedRestore();
 }
 
 async function reloadTestTab(): Promise<void> {
@@ -264,6 +360,20 @@ onMounted(load);
         @start="startBaseline"
         @cancel="closePreflight"
         @bind="bindTestTab"
+      />
+
+      <AssistedBaseline
+        v-else-if="screen === 'assisted-baseline' && session !== null"
+        :session="session"
+        :batch="manualBatch"
+        :progress="manual"
+        :busy="busy"
+        :addon-manager-message="addonManagerMessage"
+        @open-addons="openAddonManager"
+        @verify="verifyManualState"
+        @attest="attestExternal"
+        @copy="addonManagerMessage = 'The list is copied.'"
+        @reload="reloadTestTab"
       />
 
       <BaselineScreen
@@ -321,11 +431,23 @@ onMounted(load);
           :query="query"
           :busy="busy"
           :blocked-reason="blockedReason"
+          :note="capabilityNote"
           @update:query="query = $event"
           @toggle="toggleCandidate"
           @start="openPreflight"
         />
       </template>
+
+      <AssistedRestore
+        v-if="isAssisted(capability) && session !== null && restoreOutcome !== null"
+        :manual-ids="restoreOutcome.manualIds ?? []"
+        :restored-ids="assistedRestore?.restoredIds ?? []"
+        :candidates="culprits"
+        :summary="restoreSummary"
+        :busy="busy"
+        @verify="verifyAssistedRestore"
+        @open-addons="openAddonManager"
+      />
 
       <RestorePanel :summary="restoreSummary" :busy="busy" :available="restoreAvailable" @restore="restore" />
     </template>

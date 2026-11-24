@@ -244,8 +244,9 @@ export function recordExternalBaseline(rawDependencies: SessionDependencies): Pr
   return serialize(async () => {
     const log = await requireLog();
     const view = viewOf(log);
+    const baselineOpen = view.status === 'baseline' || view.status === 'awaiting-manual-toggle';
     const trialNotStarted = view.currentTrial === null || view.currentTrial.round === 0;
-    if (view.status !== 'baseline' || !trialNotStarted) {
+    if (!baselineOpen || !trialNotStarted) {
       throw new SessionError(`Cannot record an external baseline while the session is ${view.status}`);
     }
 

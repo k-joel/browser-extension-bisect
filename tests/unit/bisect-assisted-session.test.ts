@@ -260,13 +260,35 @@ describe('external baseline attestation', () => {
     expect(harness.surface.setEnabledCalls).toEqual([]);
   });
 
-  it('refuses an external attestation once a trial has started', async () => {
+  it('accepts the external attestation from the manual baseline screen without any toggle', async () => {
+    const harness = createHarness([ALPHA, BRAVO]);
+    const started = await startSession(harness.dependencies, {
+      candidateIds: ['aaaa', 'bbbb'],
+      baselineMode: 'manual',
+      testTab: null,
+    });
+    expect(started.status).toBe('awaiting-manual-toggle');
+
+    const attested = await recordExternalBaseline(harness.dependencies);
+
+    expect(attested.status).toBe('awaiting-verdict');
+    expect(attested.suspects).toEqual(['aaaa', 'bbbb']);
+    expect(harness.surface.setEnabledCalls).toEqual([]);
+    const log = await readBisectLog();
+    expect(log?.events.at(-1)?.payload).toEqual({ mode: 'external', verdict: 'gone' });
+  });
+
+  it('refuses an external attestation once a partition trial has started', async () => {
     const harness = createHarness([ALPHA, BRAVO]);
     await startSession(harness.dependencies, {
       candidateIds: ['aaaa', 'bbbb'],
       baselineMode: 'manual',
       testTab: null,
     });
+    await userToggles(harness.surface, { aaaa: false, bbbb: false });
+    await confirmManualState(harness.dependencies);
+    await submitVerdict(harness.dependencies, { verdict: 'gone' });
+    await applyTrial(harness.dependencies);
 
     await expect(recordExternalBaseline(harness.dependencies)).rejects.toThrow(/Cannot record an external baseline/);
   });
