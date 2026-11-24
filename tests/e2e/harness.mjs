@@ -369,6 +369,31 @@ export async function readSessionState(page) {
       completed: {
         culpritName: text('culprit-name'),
         detail: text('culprit-detail'),
+        restoreLabel: document.querySelector('[data-testid="completed-restore"]')?.textContent?.trim() ?? null,
+      },
+      trial: {
+        progress: text('trial-progress'),
+        question: text('trial-question'),
+        enabled: text('trial-enabled'),
+        disabled: text('trial-disabled'),
+        planEnabled: text('trial-plan-enabled'),
+        planDisabled: text('trial-plan-disabled'),
+        persistsLabel: text('verdict-persists'),
+        goneLabel: text('verdict-gone'),
+        applyLabel: document.querySelector('[data-testid="trial-apply"]')?.textContent?.trim() ?? null,
+        retryLabel: document.querySelector('[data-testid="trial-retry"]')?.textContent?.trim() ?? null,
+        history: Array.from(document.querySelectorAll('[data-testid="trial-history-row"]')).map((node) => ({
+          round: node.getAttribute('data-round'),
+          enabled: node.querySelector('[data-testid="trial-history-enabled"]')?.textContent?.trim() ?? '',
+          disabled: node.querySelector('[data-testid="trial-history-disabled"]')?.textContent?.trim() ?? '',
+          verdict: node.querySelector('[data-testid="trial-history-verdict"]')?.textContent?.trim() ?? '',
+        })),
+      },
+      inconclusive: {
+        reason: text('inconclusive-reason'),
+        ambiguity: Array.from(document.querySelectorAll('[data-testid="inconclusive-ambiguity-entry"]')).map(
+          (node) => node.querySelector('[data-testid="inconclusive-ambiguity-name"]')?.textContent?.trim() ?? '',
+        ),
       },
       restore: {
         visible: document.querySelector('[data-testid="restore-panel"]') !== null,
@@ -445,6 +470,39 @@ export async function resetBisectState(page) {
     const api = globalThis.browser ?? globalThis.chrome;
     await api.storage.local.remove(['bisectLog', 'bisectConfig']);
   });
+}
+
+/**
+ * Puts the fixture extensions back to the enabled/disabled split the baseline
+ * scenario expects, so one failed scenario cannot cascade into the next (a
+ * leftover all-off state leaves the picker with no eligible candidates).
+ */
+export async function restoreFixtureState(page, { candidates, dormant }) {
+  return page.evaluate(
+    async (fixtures) => {
+      const api = globalThis.browser ?? globalThis.chrome;
+      const all = await api.management.getAll();
+      const restore = [];
+      for (const id of fixtures.candidateIds) restore.push([id, true]);
+      if (fixtures.dormantId !== null) restore.push([fixtures.dormantId, false]);
+      const results = [];
+      for (const [id, enabled] of restore) {
+        const current = all.find((entry) => entry.id === id);
+        if (current === undefined || current.enabled === enabled) continue;
+        try {
+          await api.management.setEnabled(id, enabled);
+          results.push({ id, enabled, ok: true });
+        } catch (error) {
+          results.push({ id, enabled, ok: false, message: String(error?.message ?? error) });
+        }
+      }
+      return results;
+    },
+    {
+      candidateIds: candidates.map((entry) => entry.id),
+      dormantId: dormant?.id ?? null,
+    },
+  );
 }
 
 /**

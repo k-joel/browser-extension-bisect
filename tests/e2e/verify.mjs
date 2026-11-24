@@ -18,6 +18,7 @@ import {
   readSessionState,
   reloadExtensionPage,
   resetBisectState,
+  restoreFixtureState,
   SIDEPANEL_ROOT_SELECTOR,
   waitForAttribute,
   waitForLog,
@@ -25,7 +26,7 @@ import {
 
 const ARTIFACTS_DIR = path.resolve('.agent-artifacts');
 const SEARCH_SELECTOR = '[data-testid="candidate-search"]';
-const SCENARIOS = ['candidate-picker', 'session-baseline'];
+const SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -337,8 +338,14 @@ async function runSessionBaselineScenario({ surface, session, installed, testPag
 
   await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await clickTestId(surface, 'verdict-gone');
-  const advanced = await waitForScreen(surface, 'progress');
-  record('gone-verdict-advances-the-flow', advanced.screen === 'progress', { screen: advanced.screen });
+  const advanced = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan' },
+  );
+  record('gone-verdict-advances-the-flow', advanced.screen === 'trial', { screen: advanced.screen });
 
   await clickTestId(surface, 'restore-button');
   const restored = await waitFor(
@@ -402,6 +409,183 @@ async function runSessionBaselineScenario({ surface, session, installed, testPag
     candidateIds.every((id) => afterHostRestore[id] === true) &&
       untouchableIds.every((id) => afterHostRestore[id] === before[id]),
     { before, afterHostRestore, candidateIds, untouchableIds },
+  );
+
+  const errors = collectErrors(session.recorder);
+  record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
+  record('no-page-errors', errors.pageErrors.length === 0, { errors: errors.pageErrors });
+  record('no-console-errors', errors.consoleErrors.length === 0, { errors: errors.consoleErrors });
+  record('no-request-failures', errors.requestFailures.length === 0, { errors: errors.requestFailures });
+
+  return { steps };
+}
+
+/**
+ * Full search to a known culprit. The harness is the oracle: it answers every
+ * verdict from the fixture it knows is faulty, so the add-on's own batching is
+ * the only thing under test. Fixture Alpha is the culprit, which means the first
+ * partition leaves it *enabled*, so the search also exercises the final
+ * confirmation trial before naming it.
+ */
+async function runPartitionLoopScenario({ surface, session, installed, testPage, fixtureServer }) {
+  const steps = [];
+  const record = makeRecorder(steps);
+  const { candidates, theme, dormant } = extensionGroups(installed);
+
+  const culprit = candidates.find((entry) => entry.dir === FIXTURES.alpha.dir);
+  const innocent = candidates.find((entry) => entry.dir === FIXTURES.bravo.dir);
+  if (culprit === undefined || innocent === undefined) {
+    throw new Error('The partition-loop scenario needs the alpha and bravo fixtures');
+  }
+
+  const untouchableIds = [theme?.id, dormant?.id].filter((id) => typeof id === 'string');
+  const candidateIds = candidates.map((entry) => entry.id);
+  const before = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+
+  const initial = await waitForCandidateState(surface, (state) => state.state === 'ready');
+  record('partition-starts-from-the-picker', initial.screen === 'picker', { screen: initial.screen });
+
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  await focusPage(testPage);
+  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await clickTestId(surface, 'preflight-bind');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.preflight.testTab !== 'No test tab bound' ? state : null;
+    },
+    { label: 'the bound test tab' },
+  );
+
+  await clickTestId(surface, 'preflight-start');
+  await waitForScreen(surface, 'baseline');
+
+  const afterBaseline = await readExtensionEnabledStates(surface, candidateIds);
+  record(
+    'partition-baseline-disables-every-candidate',
+    candidateIds.every((id) => afterBaseline[id] === false),
+    { afterBaseline },
+  );
+
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-gone');
+  const firstTrial = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan' },
+  );
+  record('clean-baseline-advances-to-the-first-trial', firstTrial.screen === 'trial', { screen: firstTrial.screen });
+  record(
+    'first-trial-progress-reads-as-the-spec',
+    /^Trial \d+ of ~\d+ · \d+ suspects?$/.test(firstTrial.trial.progress ?? ''),
+    { progress: firstTrial.trial.progress },
+  );
+
+  let answered = 0;
+  let screen = firstTrial;
+  for (let guard = 0; guard < 12; guard += 1) {
+    if (screen.screen === 'completed' || screen.screen === 'inconclusive') break;
+    if (screen.screen !== 'trial') throw new Error(`Unexpected screen during the search: ${screen.screen}`);
+    if (screen.trial.applyLabel === null) throw new Error('The trial screen showed no plan to apply');
+
+    await clickTestId(surface, 'trial-apply');
+    const applied = await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        const isAnsweredTrial =
+          state.screen === 'trial' && state.trial.applyLabel === null && state.trial.persistsLabel !== null;
+        return isAnsweredTrial ? state : null;
+      },
+      { label: 'the applied trial batch' },
+    );
+
+    record(
+      `trial-${answered + 1}-uses-the-exact-verdict-labels`,
+      applied.trial.persistsLabel === 'Problem persists' && applied.trial.goneLabel === 'Problem is gone',
+      { persists: applied.trial.persistsLabel, gone: applied.trial.goneLabel },
+    );
+
+    const enabledNames = (applied.trial.enabled ?? '').split(', ').filter((name) => name.length > 0);
+    const symptomPresent = enabledNames.includes(culprit.name);
+    const choice = symptomPresent ? 'persists' : 'gone';
+    answered += 1;
+
+    await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+    await clickTestId(surface, `verdict-${choice}`);
+    screen = await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        if (state.screen === 'completed' || state.screen === 'inconclusive') return state;
+        const isNextPlan = state.screen === 'trial' && state.trial.applyLabel !== null;
+        return isNextPlan ? state : null;
+      },
+      { label: 'the next trial plan or the result' },
+    );
+  }
+
+  record('search-answers-every-trial', answered >= 1, { answered });
+  record('search-terminates-with-the-known-culprit', screen.screen === 'completed', {
+    screen: screen.screen,
+    answered,
+  });
+  record('search-names-the-fixture-culprit', screen.completed.culpritName === culprit.name, {
+    culpritName: screen.completed.culpritName,
+    expected: culprit.name,
+  });
+  record('search-exercises-the-final-confirmation', answered >= 2, {
+    answered,
+    note: 'the culprit was enabled by the first half-split',
+  });
+
+  const afterCompletion = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  record('culprit-is-left-disabled', afterCompletion[culprit.id] === false, {
+    culprit: culprit.id,
+    enabled: afterCompletion[culprit.id],
+  });
+  record('cleared-candidates-are-left-enabled', afterCompletion[innocent.id] === true, {
+    innocent: innocent.id,
+    enabled: afterCompletion[innocent.id],
+  });
+  record(
+    'search-leaves-non-candidates-untouched',
+    untouchableIds.every((id) => afterCompletion[id] === before[id]),
+    { before, afterCompletion, untouchableIds },
+  );
+
+  record(
+    'completed-screen-explains-the-culprit-stays-disabled',
+    (screen.completed.detail ?? '').includes('still disabled'),
+    {
+      detail: screen.completed.detail,
+    },
+  );
+  record('restore-visible-on-the-completed-screen', screen.restore.visible, { visible: screen.restore.visible });
+  record('completed-screen-offers-a-prominent-restore', screen.completed.restoreLabel === 'Restore', {
+    restoreLabel: screen.completed.restoreLabel,
+  });
+
+  await clickTestId(surface, 'restore-button');
+  const restored = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'restored' ? state : null;
+    },
+    { label: 'the restored screen' },
+  );
+  record('completed-restore-lands-on-the-restored-screen', restored.screen === 'restored', { screen: restored.screen });
+
+  const afterRestore = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  record('restore-re-enables-the-culprit', afterRestore[culprit.id] === true, {
+    culprit: culprit.id,
+    enabled: afterRestore[culprit.id],
+  });
+  record(
+    'restore-leaves-non-candidates-untouched',
+    untouchableIds.every((id) => afterRestore[id] === before[id]),
+    { before, afterRestore, untouchableIds },
   );
 
   const errors = collectErrors(session.recorder);
@@ -500,6 +684,16 @@ async function runScenarioForBrowser(browserName, scenario, session, context) {
 
   if (browserName === 'firefox') return runAssistedCapabilityScenario({ surface: context.surface, session });
 
+  if (scenario === 'partition-loop') {
+    return runPartitionLoopScenario({
+      surface: context.surface,
+      session,
+      installed: context.installed,
+      testPage: context.page,
+      fixtureServer: context.fixtureServer,
+    });
+  }
+
   return runSessionBaselineScenario({
     surface: context.surface,
     session,
@@ -557,6 +751,7 @@ async function runBrowser(browserName, options) {
       };
       if (browserName === 'chrome') {
         await resetBisectState(surface);
+        await restoreFixtureState(surface, { candidates: eligibleInstalled, dormant: dormantInstalled });
         await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
       }
       try {
