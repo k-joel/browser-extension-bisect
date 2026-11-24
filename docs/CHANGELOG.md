@@ -144,6 +144,11 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - `ManagementPort` contract with Chrome and Firefox adapters behind one shared eligibility filter and ordering helper, and an injectable management surface so adapters are testable without a browser.
 - Four typed messages (`getCapabilities`, `listCandidates`, `getConfig`, `updateConfig`) on the existing messaging protocol.
 - E2E fixture extensions and a multi-install harness path, with a direct `sidepanel.html` navigation that asserts the candidate list on both browsers, plus a Chrome `session-baseline` scenario covering pre-flight, the all-off baseline, the test-tab reload, the `gone` advance, the `persists` host-issue abort, and Restore of only the touched candidates.
+- Firefox assisted trials: after the assisted baseline, each partition is presented as a manual batch with a separate "keep on" checklist and a "turn off" checklist, an Open Add-ons Manager action, "n of m matched" progress, and a Verify action. The session stays in `awaiting-manual-toggle` until `management.getAll()` confirms the batch, and only then does the trial screen show the verdict buttons ([ADR-008](DECISIONS.md), [ADR-013](DECISIONS.md)).
+- `management` `onEnabled`/`onDisabled` events debounce a re-verify, so the progress counter keeps up with the user's own toggles without a button press per extension.
+- Assisted restore stays pending until the browser state matches or the user explicitly accepts the remaining differences; an acceptance never upgrades to a complete restore, and a candidate that disappeared is reported as a failure.
+- Enterprise-policy installs (`installType === "admin"`) use the automated diff and per-id error path, covered by a contract test that runs Chrome and an `admin` Firefox install against the same expectations.
+- Firefox E2E scenario `assisted-trials`, which runs the assisted loop to the known culprit through the documented test-mode driver, asserting the verdict buttons are absent before each verification and present after, and that the culprit is left disabled (`firefoxPath: "test-mode-driver"`).
 - Popup with an enable/disable switch, an interaction counter, and a persisted batch-size setting, all backed by typed local storage.
 - Content script on all pages that renders a `data-ext-bisect-state` DOM marker and keeps it in sync with stored state.
 - Test-mode builds (`EXT_TEST_MODE=1`) with `?tabId=` popup targeting and `[EXT_BG_ERR]` error logging for automation; production builds strip these hooks.
@@ -154,7 +159,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 ### Changed
 
 - `BisectConfig.testTab.url` is `string | null`: without the `tabs` permission neither browser exposes `tab.url`, so the binding records the tab id and the panel shows `Tab #N` when no URL is available ([ADR-017](DECISIONS.md)).
-- `management.verifyState` and `management.watchEvents` remain `not implemented`; the baseline uses `applyTargetState` and `restore` only (ISS-009).
+- `management.verifyState` and `management.watchEvents` are implemented by both adapters: the automated rail compares the expected map against `getAll()`, and the assisted rail splits a mismatch into pending manual toggles and unexpected ones and debounces its event signal.
 
 ### Fixed
 

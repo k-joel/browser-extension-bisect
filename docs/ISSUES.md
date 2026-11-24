@@ -181,15 +181,15 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Run the assisted trial loop on Firefox: show which extensions to enable and which to disable, open the Add-ons Manager, watch management events, verify the batch, and only then accept a verdict. Assisted restore stays pending until the state matches or the user explicitly accepts the remaining differences. Enterprise-policy installs use the automated path.
 - **Blocked by**: ISS-004, ISS-005.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, a860732). The Firefox E2E reports `firefoxPath: "test-mode-driver"`.
 
-- [ ] Each trial shows enable and disable checklists, an Open Add-ons Manager action, manual-state progress, and a Verify action.
-- [ ] Verdict buttons appear only after verification; `management` events debounce re-verification.
-- [ ] Cleared extensions stay enabled; the suspect pool shrinks exactly as in the automated flow.
-- [ ] Assisted restore stays restore-pending until the state matches or the user accepts the remaining differences; failures are reported.
-- [ ] Enterprise-policy installs (`installType === "admin"`) use the automated diff and error path and are covered by a contract test.
-- [ ] The Firefox E2E scenario runs the assisted flow through the real management path or the documented test-mode driver and reports which path ran.
-- [ ] The quality gates pass.
+- [x] Each trial shows enable and disable checklists, an Open Add-ons Manager action, manual-state progress, and a Verify action.
+- [x] Verdict buttons appear only after verification; `management` events debounce re-verification.
+- [x] Cleared extensions stay enabled; the suspect pool shrinks exactly as in the automated flow.
+- [x] Assisted restore stays restore-pending until the state matches or the user accepts the remaining differences; failures are reported.
+- [x] Enterprise-policy installs (`installType === "admin"`) use the automated diff and error path and are covered by a contract test.
+- [x] The Firefox E2E scenario runs the assisted flow through the real management path or the documented test-mode driver and reports which path ran.
+- [x] The quality gates pass.
 
 ### ISS-007: History and copyable log/report
 
