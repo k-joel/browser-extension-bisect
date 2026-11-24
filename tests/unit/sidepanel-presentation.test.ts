@@ -5,10 +5,15 @@ import {
   formatIneligibleReason,
   formatSideSurface,
   formatToggleMode,
+  formatTrialProgress,
   initialsFor,
+  manualChecklistLines,
+  manualInstruction,
+  manualProgress,
   matchesSearch,
+  resolveScreen,
 } from '@/entrypoints/sidepanel/presentation';
-import type { CandidateExtension, CapabilityReport, IneligibleExtension } from '@/utils/bisect/domain';
+import type { CandidateExtension, CapabilityReport, IneligibleExtension, SessionView } from '@/utils/bisect/domain';
 
 const CHROME: CapabilityReport = {
   browserName: 'chrome',
@@ -125,5 +130,131 @@ describe('row ordering', () => {
     expect(compareByNameThenId({ name: 'Alpha', id: 'zzz' }, { name: 'Alpha', id: 'aaa' })).toBeGreaterThan(0);
     expect(compareByNameThenId({ name: 'Alpha', id: 'a' }, { name: 'Bravo', id: 'a' })).toBeLessThan(0);
     expect(compareByNameThenId({ name: 'Alpha', id: 'a' }, { name: 'Alpha', id: 'a' })).toBe(0);
+  });
+});
+
+function sessionView(overrides: Partial<SessionView> = {}): SessionView {
+  return {
+    sessionId: 's1',
+    status: 'awaiting-verdict',
+    capability: FIREFOX,
+    baselineMode: 'manual',
+    candidateOrder: [candidate('aaaa', 'Alpha'), candidate('bbbb', 'Bravo')],
+    originalEnabledIds: ['aaaa', 'bbbb'],
+    suspects: ['aaaa', 'bbbb'],
+    cleared: [],
+    currentTrial: null,
+    trials: [],
+    culpritId: null,
+    ambiguityIds: [],
+    abortReason: null,
+    testTab: null,
+    progress: null,
+    manualBatch: null,
+    createdAt: 1,
+    updatedAt: 2,
+    ...overrides,
+  };
+}
+
+describe('assisted trial screen routing', () => {
+  it('routes a manual partition batch to the assisted trial screen', () => {
+    const view = sessionView({
+      status: 'awaiting-manual-toggle',
+      currentTrial: {
+        round: 1,
+        enabledIds: ['aaaa'],
+        disabledIds: ['bbbb'],
+        targetState: { enabled: ['aaaa'], disabled: ['bbbb'], allOutsideSuspectsEnabled: true },
+        verdict: null,
+        appliedAt: 1,
+        errors: [],
+        manual: true,
+      },
+      manualBatch: { enableIds: ['aaaa'], disableIds: ['bbbb'] },
+    });
+
+    expect(resolveScreen({ session: view, preflightOpen: false })).toBe('assisted-trial');
+  });
+
+  it('keeps the assisted baseline on its own screen', () => {
+    const view = sessionView({
+      status: 'awaiting-manual-toggle',
+      currentTrial: {
+        round: 0,
+        enabledIds: [],
+        disabledIds: ['aaaa', 'bbbb'],
+        targetState: { enabled: [], disabled: ['aaaa', 'bbbb'], allOutsideSuspectsEnabled: true },
+        verdict: null,
+        appliedAt: 1,
+        errors: [],
+        manual: true,
+      },
+      manualBatch: { enableIds: [], disableIds: ['aaaa', 'bbbb'] },
+    });
+
+    expect(resolveScreen({ session: view, preflightOpen: false })).toBe('assisted-baseline');
+  });
+
+  it('routes a verified manual trial to the ordinary trial screen', () => {
+    const view = sessionView({
+      status: 'awaiting-verdict',
+      currentTrial: {
+        round: 1,
+        enabledIds: ['aaaa'],
+        disabledIds: ['bbbb'],
+        targetState: { enabled: ['aaaa'], disabled: ['bbbb'], allOutsideSuspectsEnabled: true },
+        verdict: null,
+        appliedAt: 1,
+        errors: [],
+        manual: true,
+      },
+    });
+
+    expect(resolveScreen({ session: view, preflightOpen: false })).toBe('trial');
+  });
+});
+
+describe('assisted trial checklists', () => {
+  const CANDIDATES = [candidate('aaaa', 'Alpha'), candidate('bbbb', 'Bravo'), candidate('cccc', 'Charlie')];
+
+  it('splits the batch into an enable and a disable checklist with names', () => {
+    const rows = manualChecklistLines({ enableIds: ['aaaa', 'bbbb'], disableIds: ['cccc'] }, CANDIDATES);
+
+    expect(rows).toEqual([
+      { id: 'cccc', name: 'Charlie', target: 'Off' },
+      { id: 'aaaa', name: 'Alpha', target: 'On' },
+      { id: 'bbbb', name: 'Bravo', target: 'On' },
+    ]);
+  });
+
+  it('reports manual progress as "n of m matched"', () => {
+    const progress = manualProgress(
+      { enableIds: ['aaaa', 'bbbb'], disableIds: ['cccc'] },
+      {
+        aaaa: true,
+        bbbb: false,
+        cccc: false,
+      },
+    );
+
+    expect(progress.done).toBe(2);
+    expect(progress.total).toBe(3);
+    expect(progress.remainingIds).toEqual(['bbbb']);
+    expect(progress.complete).toBe(false);
+    expect(formatTrialProgress(progress)).toBe('2 of 3 matched');
+  });
+
+  it('treats a fully matched batch as complete', () => {
+    const progress = manualProgress({ enableIds: ['aaaa'], disableIds: ['bbbb'] }, { aaaa: true, bbbb: false });
+
+    expect(progress.complete).toBe(true);
+    expect(formatTrialProgress(progress)).toBe('2 of 2 matched');
+  });
+
+  it('names the extensions the enable half refers to', () => {
+    expect(manualInstruction({ enableIds: ['aaaa'], disableIds: ['bbbb'] }, CANDIDATES)).toBe(
+      'Turn off Bravo and turn on Alpha in the Add-ons Manager.',
+    );
   });
 });

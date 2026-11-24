@@ -15,6 +15,7 @@ import type {
 import { messenger, type SessionMutationResult } from '@/utils/messaging';
 import AssistedBaseline from './components/AssistedBaseline.vue';
 import AssistedRestore from './components/AssistedRestore.vue';
+import AssistedTrial from './components/AssistedTrial.vue';
 import BaselineScreen from './components/BaselineScreen.vue';
 import CandidatePicker from './components/CandidatePicker.vue';
 import CapabilityReportView from './components/CapabilityReport.vue';
@@ -61,6 +62,7 @@ const manualBatch = ref<ManualBatch | null>(null);
 const manualDrift = ref<DriftReport | null>(null);
 const addonManagerMessage = ref<string | null>(null);
 const assistedRestore = ref<RestoreResult | null>(null);
+const restoreAccepted = ref(false);
 
 const excludedIds = computed(() => config.value?.excludedExtensionIds ?? []);
 
@@ -126,6 +128,8 @@ const announcement = computed(() => {
         ? `${plural(included.value.length, 'extension')} will be turned off by you. Nothing is toggled for you.`
         : `${plural(included.value.length, 'extension')} will be disabled. Nothing is toggled yet.`;
     case 'assisted-baseline':
+      return manualProgressAnnouncement.value;
+    case 'assisted-trial':
       return manualProgressAnnouncement.value;
     case 'baseline':
       return 'Baseline ready. Answer whether the problem persists.';
@@ -237,6 +241,7 @@ async function startBaseline(): Promise<void> {
   preflightOpen.value = false;
   restoreOutcome.value = null;
   assistedRestore.value = null;
+  restoreAccepted.value = false;
   addonManagerMessage.value = null;
   await refreshManualState();
 }
@@ -249,8 +254,9 @@ const FALLBACK_CAPABILITY: CapabilityReport = {
 };
 
 /**
- * The assisted baseline has no `applyTargetState` result to show: the batch is the
- * trial's target, and the drift tells the panel how far along the user is.
+ * A manual batch has no `applyTargetState` result to show: the batch is the trial's
+ * own target, and the drift tells the panel how far along the user is. The baseline
+ * batch and every partition batch use the same procedure, so one refresh serves both.
  */
 async function refreshManualState(): Promise<void> {
   const current = session.value;
@@ -263,7 +269,7 @@ async function refreshManualState(): Promise<void> {
   const drift = await run(() => messenger.sendMessage('getDrift'));
   if (drift === null) return;
   manualDrift.value = drift;
-  manualBatch.value = { enableIds: trial.enabledIds, disableIds: trial.disabledIds };
+  manualBatch.value = current.manualBatch ?? { enableIds: trial.enabledIds, disableIds: trial.disabledIds };
 }
 
 async function openAddonManager(): Promise<void> {
@@ -297,20 +303,39 @@ async function verifyAssistedRestore(): Promise<void> {
   if (result !== null) assistedRestore.value = result;
 }
 
+/**
+ * The user may decide that what is left of the restore is fine. The background
+ * records the acceptance, and the panel keeps showing `restoreOutcome` so the
+ * remaining differences stay visible instead of being relabelled as a success.
+ */
+async function acceptAssistedRestore(): Promise<void> {
+  const accepted = await run(() => messenger.sendMessage('acceptRestore'));
+  if (accepted === null) return;
+  restoreAccepted.value = true;
+  session.value = accepted;
+  await verifyAssistedRestore();
+}
+
 function applyMutation(result: SessionMutationResult): void {
   session.value = result.session;
   if (result.restore !== null) restoreOutcome.value = result.restore;
   assistedRestore.value = null;
+  restoreAccepted.value = false;
 }
 
 async function applyTrial(): Promise<void> {
   const result = await run(() => messenger.sendMessage('applyTrial'));
-  if (result !== null) session.value = result;
+  if (result === null) return;
+  session.value = result;
+  addonManagerMessage.value = null;
+  await refreshManualState();
 }
 
 async function retryTrial(): Promise<void> {
   const result = await run(() => messenger.sendMessage('retryTrial', {}));
-  if (result !== null) applyMutation(result);
+  if (result === null) return;
+  applyMutation(result);
+  await refreshManualState();
 }
 
 async function submitVerdict(verdict: Verdict): Promise<void> {
@@ -374,6 +399,18 @@ onMounted(load);
         @verify="verifyManualState"
         @attest="attestExternal"
         @copy="addonManagerMessage = 'The list is copied.'"
+        @reload="reloadTestTab"
+      />
+
+      <AssistedTrial
+        v-else-if="screen === 'assisted-trial' && session !== null"
+        :session="session"
+        :batch="manualBatch"
+        :progress="manual"
+        :busy="busy"
+        :addon-manager-message="addonManagerMessage"
+        @open-addons="openAddonManager"
+        @verify="verifyManualState"
         @reload="reloadTestTab"
       />
 
@@ -446,8 +483,10 @@ onMounted(load);
         :candidates="culprits"
         :summary="restoreSummary"
         :busy="busy"
+        :accepted="restoreAccepted"
         @verify="verifyAssistedRestore"
         @open-addons="openAddonManager"
+        @accept="acceptAssistedRestore"
       />
 
       <RestorePanel :summary="restoreSummary" :busy="busy" :available="restoreAvailable" @restore="restore" />

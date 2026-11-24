@@ -52,6 +52,7 @@ export type PanelScreen =
   | 'preflight'
   | 'baseline'
   | 'assisted-baseline'
+  | 'assisted-trial'
   | 'trial'
   | 'host-issue'
   | 'completed'
@@ -239,18 +240,29 @@ export function resolveScreen({ session, preflightOpen }: ScreenInput): PanelScr
   if (isAssistedBaseline(session)) return 'assisted-baseline';
   if (session.status === 'baseline') return 'baseline';
   if (isBaselineQuestion(session)) return 'baseline';
+  if (isAssistedTrial(session)) return 'assisted-trial';
   if (isTrialQuestion(session) || needsNextTrial(session)) return 'trial';
   return 'progress';
 }
 
 /**
  * A manual all-off batch still waiting on the user. Only the baseline is in scope
- * here; assisted trials are ISS-006, so a later manual round falls through to the
- * progress screen instead of showing verdict buttons that nothing has verified.
+ * here; an assisted partition batch has its own screen, because it asks the user to
+ * enable *and* disable and must not offer a verdict before the state is verified.
  */
 export function isAssistedBaseline(view: SessionView): boolean {
   const trial = view.currentTrial;
   return view.status === 'awaiting-manual-toggle' && trial !== null && trial.round === 0 && trial.manual;
+}
+
+/**
+ * An assisted partition batch: the session is waiting for the user to match the
+ * batch, and no verdict exists yet. The panel shows the two checklists and a Verify
+ * action, and withholds both verdict buttons until `confirmManualState` succeeds.
+ */
+export function isAssistedTrial(view: SessionView): boolean {
+  const trial = view.currentTrial;
+  return view.status === 'awaiting-manual-toggle' && trial !== null && trial.round > 0 && trial.manual;
 }
 
 export function describeSessionStatus(status: SessionStatus): string {
@@ -326,6 +338,14 @@ export function manualProgress(batch: ManualBatch, actual: EnabledStateMap): Man
 
 export function formatManualProgress(progress: ManualProgress): string {
   return `${progress.done} of ${progress.total} done`;
+}
+
+/**
+ * The trial wording: the user is matching a batch that has both directions, so
+ * "matched" describes the goal better than "done" does.
+ */
+export function formatTrialProgress(progress: ManualProgress): string {
+  return `${progress.done} of ${progress.total} matched`;
 }
 
 export function manualInstruction(batch: ManualBatch, candidates: CandidateExtension[]): string {

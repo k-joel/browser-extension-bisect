@@ -368,3 +368,210 @@ describe('assisted restore', () => {
     expect(harness.wrapper.get('[data-testid="restore-summary"]').attributes('data-complete')).toBe('false');
   });
 });
+
+/**
+ * The assisted trial screen: the add-on may not toggle anything, so the panel asks
+ * the user to match the batch and only then offers a verdict. Verdict presence is
+ * the state signal every other test relies on, so absence is asserted explicitly.
+ */
+describe('assisted trial screen', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+    messenger.removeAllListeners();
+    installMessagingBridge();
+  });
+
+  async function startAssistedTrial(
+    installs: Install[] = [
+      { id: 'aaaa', name: 'Alpha Blocker' },
+      { id: 'bbbb', name: 'Bravo Reader' },
+      { id: 'cccc', name: 'Charlie Toolbar' },
+    ],
+  ): Promise<Harness> {
+    const harness = mountAssisted(installs);
+    await flushPromises();
+    await startAssistedBaseline(harness);
+    await userToggles(harness.surface, Object.fromEntries(installs.map((install) => [install.id, false])));
+    await harness.wrapper.get('[data-testid="assisted-verify"]').trigger('click');
+    await flushPromises();
+    await harness.wrapper.get('[data-testid="verdict-gone"]').trigger('click');
+    await flushPromises();
+    await harness.wrapper.get('[data-testid="trial-apply"]').trigger('click');
+    await flushPromises();
+    return harness;
+  }
+
+  it('routes an assisted partition batch to the assisted trial screen', async () => {
+    const harness = await startAssistedTrial();
+
+    expect(screenOf(harness.wrapper)).toBe('assisted-trial');
+    expect(harness.wrapper.find('[data-testid="assisted-trial"]').exists()).toBe(true);
+  });
+
+  it('shows separate enable and disable checklists instead of one blob', async () => {
+    const harness = await startAssistedTrial();
+
+    const enableRows = harness.wrapper.findAll('[data-testid="assisted-trial-enable-row"]');
+    const disableRows = harness.wrapper.findAll('[data-testid="assisted-trial-disable-row"]');
+
+    expect(enableRows.map((row) => row.get('[data-testid="assisted-trial-enable-name"]').text())).toEqual([
+      'Alpha Blocker',
+      'Bravo Reader',
+    ]);
+    expect(disableRows.map((row) => row.get('[data-testid="assisted-trial-disable-name"]').text())).toEqual([
+      'Charlie Toolbar',
+    ]);
+  });
+
+  it('does not render the verdict buttons before verification', async () => {
+    const harness = await startAssistedTrial();
+
+    expect(harness.wrapper.find('[data-testid="verdict-persists"]').exists()).toBe(false);
+    expect(harness.wrapper.find('[data-testid="verdict-gone"]').exists()).toBe(false);
+  });
+
+  it('offers the Add-ons Manager, Verify and the manual progress', async () => {
+    const harness = await startAssistedTrial();
+
+    expect(harness.wrapper.find('[data-testid="assisted-trial-open-addons"]').exists()).toBe(true);
+    expect(harness.wrapper.find('[data-testid="assisted-trial-verify"]').exists()).toBe(true);
+    // Round 1 disables the tail suspect, which is already off after the baseline.
+    expect(harness.wrapper.get('[data-testid="assisted-trial-progress"]').text()).toContain('1 of 3 matched');
+    expect(harness.wrapper.get('[data-testid="assisted-trial-progress"]').attributes('data-matched')).toBe('false');
+  });
+
+  it('reports manual progress once the user matches the batch through management', async () => {
+    const harness = await startAssistedTrial();
+
+    await userToggles(harness.surface, { aaaa: true });
+    await harness.wrapper.get('[data-testid="assisted-trial-verify"]').trigger('click');
+    await flushPromises();
+
+    expect(screenOf(harness.wrapper)).toBe('assisted-trial');
+    expect(harness.wrapper.get('[data-testid="sidepanel-live"]').text()).toContain('2 of 3 done');
+    expect(harness.wrapper.get('[data-testid="assisted-trial-progress"]').text()).toContain('2 of 3 matched');
+    expect(harness.wrapper.find('[data-testid="verdict-gone"]').exists()).toBe(false);
+  });
+
+  it('reveals the exact verdict labels only after the batch verifies', async () => {
+    const harness = await startAssistedTrial();
+    await userToggles(harness.surface, { aaaa: true, bbbb: true });
+
+    expect(harness.wrapper.find('[data-testid="verdict-gone"]').exists()).toBe(false);
+
+    await harness.wrapper.get('[data-testid="assisted-trial-verify"]').trigger('click');
+    await flushPromises();
+
+    expect(screenOf(harness.wrapper)).toBe('trial');
+    expect(harness.wrapper.get('[data-testid="verdict-persists"]').text()).toBe('Problem persists');
+    expect(harness.wrapper.get('[data-testid="verdict-gone"]').text()).toBe('Problem is gone');
+  });
+
+  it('reports the unverified batch instead of accepting it', async () => {
+    const harness = await startAssistedTrial();
+
+    await harness.wrapper.get('[data-testid="assisted-trial-verify"]').trigger('click');
+    await flushPromises();
+
+    expect(harness.wrapper.get('[data-testid="sidepanel-error"]').text()).toContain('does not match this batch yet');
+    expect(screenOf(harness.wrapper)).toBe('assisted-trial');
+  });
+
+  it('reports the Add-ons Manager outcome and falls back to the copyable list', async () => {
+    const harness = await startAssistedTrial();
+
+    await harness.wrapper.get('[data-testid="assisted-trial-open-addons"]').trigger('click');
+    await flushPromises();
+
+    expect(harness.wrapper.get('[data-testid="assisted-trial-addons-message"]').text()).toMatch(
+      /open in a new tab|could not be opened/,
+    );
+    expect(harness.wrapper.findAll('[data-testid="assisted-trial-enable-row"]').length).toBeGreaterThan(0);
+    expect(harness.wrapper.findAll('[data-testid="assisted-trial-disable-row"]').length).toBeGreaterThan(0);
+  });
+
+  it('keeps the cleared candidates on the enable checklist across the loop', async () => {
+    const harness = await startAssistedTrial([
+      { id: 'aaaa', name: 'Alpha Blocker' },
+      { id: 'bbbb', name: 'Bravo Reader' },
+      { id: 'cccc', name: 'Charlie Toolbar' },
+      { id: 'dddd', name: 'Delta Helper' },
+    ]);
+
+    // Round 1 asks for the first half on and the second half off.
+    await userToggles(harness.surface, { aaaa: true, bbbb: true, cccc: false, dddd: false });
+    await harness.wrapper.get('[data-testid="assisted-trial-verify"]').trigger('click');
+    await flushPromises();
+
+    await harness.wrapper.get('[data-testid="verdict-gone"]').trigger('click');
+    await flushPromises();
+    await harness.wrapper.get('[data-testid="trial-apply"]').trigger('click');
+    await flushPromises();
+
+    const enableNames = harness.wrapper
+      .findAll('[data-testid="assisted-trial-enable-row"]')
+      .map((row) => row.get('[data-testid="assisted-trial-enable-name"]').text());
+
+    expect(screenOf(harness.wrapper)).toBe('assisted-trial');
+    expect(enableNames).toEqual(['Alpha Blocker', 'Bravo Reader', 'Charlie Toolbar']);
+  });
+});
+
+describe('assisted restore pending and explicit accept', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+    messenger.removeAllListeners();
+    installMessagingBridge();
+  });
+
+  async function restoreOnce(): Promise<Harness> {
+    const harness = mountAssisted();
+    await flushPromises();
+    await startAssistedBaseline(harness);
+    await userToggles(harness.surface, { aaaa: false, bbbb: false });
+    await harness.wrapper.get('[data-testid="assisted-verify"]').trigger('click');
+    await flushPromises();
+    await harness.wrapper.get('[data-testid="verdict-persists"]').trigger('click');
+    await flushPromises();
+    await harness.wrapper.get('[data-testid="restore-button"]').trigger('click');
+    await flushPromises();
+    return harness;
+  }
+
+  it('stays restore-pending while the checklist is unfinished', async () => {
+    const harness = await restoreOnce();
+
+    const summary = harness.wrapper.get('[data-testid="assisted-restore-summary"]');
+    expect(summary.attributes('data-complete')).toBe('false');
+    expect(summary.text()).toContain('still to turn back on');
+    expect(harness.wrapper.find('[data-testid="assisted-restore-accept"]').exists()).toBe(true);
+  });
+
+  it('offers the explicit accept of the remaining differences', async () => {
+    const harness = await restoreOnce();
+    await userToggles(harness.surface, { aaaa: true });
+
+    await harness.wrapper.get('[data-testid="assisted-restore-accept"]').trigger('click');
+    await flushPromises();
+
+    const log = await readBisectLog();
+    expect(log?.events.at(-1)?.payload).toMatchObject({
+      restored: false,
+      manualIds: ['bbbb'],
+      accepted: true,
+    });
+    expect(harness.wrapper.get('[data-testid="assisted-restore-accepted"]').text()).toContain('accepted');
+  });
+
+  it('reports completion once the checklist verifies, without the accept action', async () => {
+    const harness = await restoreOnce();
+    await userToggles(harness.surface, { aaaa: true, bbbb: true });
+    await harness.wrapper.get('[data-testid="assisted-restore-verify"]').trigger('click');
+    await flushPromises();
+
+    expect(harness.wrapper.get('[data-testid="assisted-restore-summary"]').attributes('data-complete')).toBe('true');
+    expect(harness.wrapper.find('[data-testid="assisted-restore-accept"]').exists()).toBe(false);
+  });
+});

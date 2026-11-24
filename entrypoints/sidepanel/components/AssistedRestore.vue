@@ -9,11 +9,13 @@ const props = defineProps<{
   candidates: CandidateExtension[];
   summary: RestoreSummary | null;
   busy: boolean;
+  accepted: boolean;
 }>();
 
 const emit = defineEmits<{
   (event: 'verify'): void;
   (event: 'open-addons'): void;
+  (event: 'accept'): void;
 }>();
 
 const checklist = computed(() => assistedRestoreSummary(props.manualIds, props.restoredIds, props.candidates));
@@ -23,6 +25,11 @@ const headline = computed(() => {
   if (checklist.value.complete) return 'Every touched extension is enabled again.';
   return `${plural(checklist.value.remaining, 'extension')} still to turn back on.`;
 });
+
+const failures = computed(() => props.summary?.failures ?? []);
+
+/** An explicit accept is only meaningful while something is genuinely left over. */
+const canAccept = computed(() => !checklist.value.complete || failures.value.length > 0);
 </script>
 
 <template>
@@ -68,6 +75,19 @@ const headline = computed(() => {
       <button type="button" data-testid="assisted-restore-verify" :disabled="busy" @click="emit('verify')">
         Verify the restore
       </button>
+      <button
+        v-if="canAccept"
+        type="button"
+        data-testid="assisted-restore-accept"
+        :disabled="busy"
+        @click="emit('accept')"
+      >
+        Accept the remaining differences
+      </button>
     </div>
+
+    <p v-if="accepted" class="note" data-testid="assisted-restore-accepted" role="status">
+      You accepted the remaining differences. The extensions listed above were left as they are.
+    </p>
   </section>
 </template>
