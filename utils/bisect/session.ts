@@ -409,6 +409,15 @@ export function getSession(): Promise<SessionView | null> {
   return serialize(async () => reduceLog(await readBisectLog()));
 }
 
+/**
+ * A read of the persisted log for the history screen and the two copy actions. It
+ * enters the same queue as the mutating commands so a copy taken while a verdict is
+ * being recorded observes either the old log or the new one, never a torn read.
+ */
+export function getLog(): Promise<BisectLog | null> {
+  return serialize(() => readBisectLog());
+}
+
 function assertTrialAppliable(status: SessionView['status']): void {
   if (status === 'completed' || status === 'inconclusive' || status === 'aborted' || status === 'restored') {
     throw new SessionError(`Cannot apply a trial while the session is ${status}`);

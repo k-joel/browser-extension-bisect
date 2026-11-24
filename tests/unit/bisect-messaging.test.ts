@@ -166,6 +166,39 @@ describe('session messaging protocol', () => {
     await expect(messenger.sendMessage('getSession')).resolves.toBeNull();
   });
 
+  it('returns null from getLog before any session exists', async () => {
+    registerSessionHandlers();
+
+    await expect(messenger.sendMessage('getLog')).resolves.toBeNull();
+  });
+
+  it('round-trips getLog with exactly the persisted log', async () => {
+    registerSessionHandlers();
+    await messenger.sendMessage('startSession', {
+      candidateIds: ['aaaa'],
+      baselineMode: 'auto',
+      testTab: { tabId: 12, url: null },
+    });
+
+    const log = await messenger.sendMessage('getLog');
+
+    await expect(readBisectLog()).resolves.toEqual(log);
+    expect(log?.sessionId).toEqual(expect.any(String));
+    expect(log?.events.map((event) => event.type)).toEqual(['session-started', 'trial-started', 'trial-applied']);
+  });
+
+  it('getLog observes a verdict appended after it, so the copy is never stale', async () => {
+    registerSessionHandlers();
+    await messenger.sendMessage('startSession', { candidateIds: ['aaaa'], baselineMode: 'auto', testTab: null });
+    const before = await messenger.sendMessage('getLog');
+
+    await messenger.sendMessage('submitVerdict', { verdict: 'gone' });
+    const after = await messenger.sendMessage('getLog');
+
+    expect(before?.events.at(-1)?.type).toBe('trial-applied');
+    expect(after?.events.length).toBe((before?.events.length ?? 0) + 2);
+  });
+
   it('starts a session and returns the derived view over the wire', async () => {
     registerSessionHandlers();
 

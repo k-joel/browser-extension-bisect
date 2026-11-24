@@ -1,6 +1,7 @@
 import { defineExtensionMessaging } from '@webext-core/messaging';
 import type {
   BisectConfig,
+  BisectLog,
   CandidateLists,
   CapabilityReport,
   DriftReport,
@@ -65,6 +66,8 @@ export interface ProtocolMap {
   getConfig(): BisectConfig;
   updateConfig(changes: Partial<BisectConfig>): BisectConfig;
   getSession(): SessionView | null;
+  /** The persisted bisect log, or `null` when nothing has been recorded yet. */
+  getLog(): BisectLog | null;
   startSession(request: StartSessionRequest): SessionView;
   applyTrial(): SessionView;
   submitVerdict(payload: { verdict: Verdict }): SessionMutationResult;

@@ -8,6 +8,7 @@ import {
   applyTrial,
   bindTestTab,
   confirmManualState,
+  getLog,
   getSession,
   recordExternalBaseline,
   reloadTestTab,
@@ -150,6 +151,7 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('updateConfig', ({ data }) => updateBisectConfig(data));
 
   messenger.onMessage('getSession', () => getSession());
+  messenger.onMessage('getLog', () => getLog());
   messenger.onMessage('startSession', ({ data }) => startSession(sessionDependencies(), data));
   messenger.onMessage('applyTrial', () => applyTrial(sessionDependencies()));
   messenger.onMessage('submitVerdict', async ({ data }): Promise<SessionMutationResult> => {
