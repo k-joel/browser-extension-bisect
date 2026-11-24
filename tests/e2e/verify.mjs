@@ -5,6 +5,7 @@ import { startFixtureServer } from './fixture-server.mjs';
 import { ELIGIBLE_FIXTURES, FIXTURES, fixturesFor } from './fixtures/fixtures.mjs';
 import {
   BACKGROUND_READY_LOG,
+  captureClipboard,
   clickTestId,
   collectErrors,
   disableExtensionThroughSurface,
@@ -14,6 +15,7 @@ import {
   launchTestBrowser,
   markPageForReloadCheck,
   readCandidateState,
+  readClipboardCaptures,
   readExtensionEnabledStates,
   readManualExtensionState,
   readPageReloadMarker,
@@ -433,6 +435,148 @@ async function runSessionBaselineScenario({ surface, session, installed, testPag
 }
 
 /**
+ * The history must read as the search happened: the baseline first, then every trial
+ * in round order with its two batches and its verdict, and the outcome. The two copy
+ * actions are driven through the panel and read back from the wrapped clipboard, so
+ * the assertions cover the product path rather than a re-render of the same data.
+ */
+async function assertHistoryAndCopy({ surface, record, screen, culprit, answered }) {
+  await captureClipboard(surface);
+  await clickTestId(surface, 'completed-history');
+  const history = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'history' ? state : null;
+    },
+    { label: 'the history screen' },
+  );
+
+  record('completed-screen-links-to-the-history', history.screen === 'history', { screen: history.screen });
+  record('history-names-the-session', (history.history.sessionId ?? '').startsWith('Session session-'), {
+    sessionId: history.history.sessionId,
+  });
+
+  const rounds = history.history.entries.map((entry) => entry.round);
+  record(
+    'history-lists-the-baseline-first-and-every-trial-in-order',
+    rounds[0] === '0' &&
+      rounds.length === answered + 1 &&
+      rounds.every((round, index) => round === String(index)),
+    { rounds, answered },
+  );
+  record(
+    'history-marks-the-first-entry-as-the-baseline',
+    history.history.entries[0]?.kind === 'baseline' && history.history.entries[0]?.label === 'Baseline check',
+    { first: history.history.entries[0] },
+  );
+  record(
+    'history-shows-an-enabled-and-disabled-batch-per-entry',
+    history.history.entries.every(
+      (entry) => (entry.enabled ?? '').startsWith('Enabled: ') && (entry.disabled ?? '').startsWith('Disabled: '),
+    ),
+    { entries: history.history.entries },
+  );
+  record(
+    'history-baseline-disables-every-candidate',
+    (history.history.entries[0]?.enabled ?? '') === 'Enabled: None' &&
+      (history.history.entries[0]?.disabled ?? '').includes(culprit.name),
+    { baseline: history.history.entries[0] },
+  );
+  record(
+    'history-carries-an-exact-verdict-label-per-entry',
+    history.history.entries.every(
+      (entry) => entry.verdict === 'Problem persists' || entry.verdict === 'Problem is gone',
+    ),
+    { verdicts: history.history.entries.map((entry) => entry.verdict) },
+  );
+  record(
+    'history-names-the-culprit-as-the-outcome',
+    history.history.outcome === 'culprit' &&
+      (history.history.outcomeLabel ?? '').includes(culprit.name) &&
+      history.history.outcomeNames.includes(culprit.name),
+    { outcome: history.history.outcome, label: history.history.outcomeLabel },
+  );
+  record(
+    'history-offers-a-disabled-replay-affordance',
+    history.history.replayDisabled === true,
+    { replayDisabled: history.history.replayDisabled },
+  );
+
+  await clickTestId(surface, 'history-copy-log');
+  const logCopy = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.history.copyStatus === 'copied' ? state : null;
+    },
+    { label: 'the copied log confirmation' },
+  );
+  record('copy-log-confirms-successfully', logCopy.history.copyStatus === 'copied', {
+    status: logCopy.history.copyStatus,
+    message: logCopy.history.copyMessage,
+  });
+
+  const afterLogCopy = await readClipboardCaptures(surface);
+  const logText = afterLogCopy[0] ?? '';
+  const parsedLog = JSON.parse(logText || '{}');
+  record('copy-log-produces-non-empty-json', logText.length > 0 && parsedLog.schemaVersion === 1, {
+    length: logText.length,
+    schemaVersion: parsedLog.schemaVersion,
+  });
+  record(
+    'copy-log-matches-the-persisted-log',
+    typeof parsedLog.sessionId === 'string' &&
+      (history.history.sessionId ?? '').includes(parsedLog.sessionId) &&
+      Array.isArray(parsedLog.events) &&
+      parsedLog.events.at(-1)?.type === 'session-completed',
+    { sessionId: parsedLog.sessionId, lastEvent: parsedLog.events?.at(-1)?.type },
+  );
+
+  await clickTestId(surface, 'history-copy-report');
+  const reportCopy = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.history.copyStatus === 'copied' && state.history.copyMessage !== logCopy.history.copyMessage
+        ? state
+        : null;
+    },
+    { label: 'the copied report confirmation' },
+  );
+  record('copy-report-confirms-successfully', reportCopy.history.copyStatus === 'copied', {
+    status: reportCopy.history.copyStatus,
+    message: reportCopy.history.copyMessage,
+  });
+
+  const afterReportCopy = await readClipboardCaptures(surface);
+  const reportText = afterReportCopy[1] ?? '';
+  record('copy-report-produces-non-empty-text', reportText.length > 0, { length: reportText.length });
+  record(
+    'copy-report-carries-the-session-id-and-the-candidates',
+    reportText.includes(parsedLog.sessionId ?? '\u0000') && reportText.includes(culprit.name),
+    { sessionId: parsedLog.sessionId, culprit: culprit.name },
+  );
+  record(
+    'copy-report-lists-the-baseline-the-trials-and-the-outcome',
+    reportText.includes('Baseline check') && reportText.includes('Trial 1') && reportText.includes('Outcome:'),
+    { head: reportText.slice(0, 200) },
+  );
+
+  await clickTestId(surface, 'history-back');
+  const back = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'completed' ? state : null;
+    },
+    { label: 'the completed screen after leaving the history' },
+  );
+  record('history-returns-to-the-session-screen', back.screen === 'completed', { screen: back.screen });
+  record(
+    'completed-screen-offers-a-disabled-replay',
+    screen.completed.replayDisabled === true && (screen.completed.replayNote ?? '').includes('not available yet'),
+    { replayDisabled: screen.completed.replayDisabled, note: screen.completed.replayNote },
+  );
+}
+
+/**
  * Full search to a known culprit. The harness is the oracle: it answers every
  * verdict from the fixture it knows is faulty, so the add-on's own batching is
  * the only thing under test. Fixture Alpha is the culprit, which means the first
@@ -578,6 +722,8 @@ async function runPartitionLoopScenario({ surface, session, installed, testPage,
   record('completed-screen-offers-a-prominent-restore', screen.completed.restoreLabel === 'Restore', {
     restoreLabel: screen.completed.restoreLabel,
   });
+
+  await assertHistoryAndCopy({ surface, record, screen, culprit, answered });
 
   await clickTestId(surface, 'restore-button');
   const restored = await waitFor(

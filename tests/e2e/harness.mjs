@@ -12,6 +12,7 @@ export const FIXED_FIREFOX_UUID = '11111111-2222-3333-4444-555555555555';
 export const FIXTURE_EXTENSIONS_DIR = path.resolve('tests/e2e/fixtures/extensions');
 export const TEST_DRIVER_GLOBAL = '__extBisectTestDriver';
 export const TEST_DRIVER_STORAGE_KEY = 'bisectTestDriver';
+export const CLIPBOARD_CAPTURE_GLOBAL = '__bisectClipboardCapture';
 
 const BENIGN_MESSAGE_PATTERNS = [/favicon\.ico/i];
 const MAX_RECORDED_ENTRIES = 200;
@@ -424,6 +425,9 @@ export async function readSessionState(page) {
         culpritName: text('culprit-name'),
         detail: text('culprit-detail'),
         restoreLabel: document.querySelector('[data-testid="completed-restore"]')?.textContent?.trim() ?? null,
+        historyLabel: document.querySelector('[data-testid="completed-history"]')?.textContent?.trim() ?? null,
+        replayDisabled: document.querySelector('[data-testid="completed-replay"]')?.disabled ?? null,
+        replayNote: text('completed-replay-note'),
       },
       trial: {
         progress: text('trial-progress'),
@@ -448,6 +452,35 @@ export async function readSessionState(page) {
         ambiguity: Array.from(document.querySelectorAll('[data-testid="inconclusive-ambiguity-entry"]')).map(
           (node) => node.querySelector('[data-testid="inconclusive-ambiguity-name"]')?.textContent?.trim() ?? '',
         ),
+        historyLabel: document.querySelector('[data-testid="inconclusive-history"]')?.textContent?.trim() ?? null,
+        replayDisabled: document.querySelector('[data-testid="inconclusive-replay"]')?.disabled ?? null,
+      },
+      history: {
+        sessionId: text('history-session-id'),
+        candidates: text('history-candidates'),
+        baselineMode: text('history-baseline-mode'),
+        entries: Array.from(document.querySelectorAll('[data-testid="history-entry"]')).map((node) => ({
+          round: node.getAttribute('data-round'),
+          kind: node.getAttribute('data-kind'),
+          label: node.querySelector('[data-testid="history-entry-round"]')?.textContent?.trim() ?? null,
+          enabled: node.querySelector('[data-testid="history-entry-enabled"]')?.textContent?.trim() ?? null,
+          disabled: node.querySelector('[data-testid="history-entry-disabled"]')?.textContent?.trim() ?? null,
+          verdict: node.querySelector('[data-testid="history-entry-verdict"]')?.textContent?.trim() ?? null,
+          retry:
+            node.querySelector('[data-testid="history-entry-retry"]')?.textContent?.trim() ??
+            null,
+        })),
+        outcome: document.querySelector('[data-testid="history-outcome"]')?.getAttribute('data-outcome') ?? null,
+        outcomeLabel: text('history-outcome-label'),
+        outcomeNames: Array.from(document.querySelectorAll('[data-testid="history-outcome-name"]')).map(
+          (node) => node.textContent?.trim() ?? '',
+        ),
+        copyLogLabel: document.querySelector('[data-testid="history-copy-log"]')?.textContent?.trim() ?? null,
+        copyReportLabel: document.querySelector('[data-testid="history-copy-report"]')?.textContent?.trim() ?? null,
+        replayDisabled: document.querySelector('[data-testid="history-replay"]')?.disabled ?? null,
+        copyStatus: document.querySelector('[data-testid="copy-status"]')?.getAttribute('data-status') ?? null,
+        copyMessage: text('copy-status-message'),
+        copyFallback: document.querySelector('[data-testid="copy-fallback-text"]')?.value ?? null,
       },
       restore: {
         visible: document.querySelector('[data-testid="restore-panel"]') !== null,
@@ -523,6 +556,30 @@ export async function readSessionState(page) {
       },
     };
   });
+}
+
+/**
+ * A headless browser has no real clipboard, and reading it back is not exposed over
+ * CDP or BiDi. The page's `navigator.clipboard.writeText` is therefore wrapped so the
+ * copy action is still driven by the product code and the written text is readable
+ * afterwards; the add-on's own fallback chain stays exercised because the wrapper
+ * resolves instead of the browser clipboard.
+ */
+export async function captureClipboard(page) {
+  return page.evaluate((globalName) => {
+    const store = { writes: [] };
+    globalThis[globalName] = store;
+    const clipboard = navigator.clipboard ?? {};
+    clipboard.writeText = async (text) => {
+      store.writes.push(text);
+    };
+    Object.defineProperty(navigator, 'clipboard', { value: clipboard, configurable: true });
+    return { installed: true };
+  }, CLIPBOARD_CAPTURE_GLOBAL);
+}
+
+export async function readClipboardCaptures(page) {
+  return page.evaluate((globalName) => globalThis[globalName]?.writes ?? [], CLIPBOARD_CAPTURE_GLOBAL);
 }
 
 export async function clickTestId(page, testId) {
