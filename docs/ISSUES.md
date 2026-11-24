@@ -142,16 +142,16 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: On Chrome, start a bisect session from the candidate picker: bind the test tab, review the consent screen, and run the all-off baseline. The session snapshots the candidate order and original enabled states in the bisect log, disables every candidate through the management port, reloads the test tab, records the baseline verdict, proceeds on `gone`, and aborts as a host issue on `persists`. Restore is available on every screen and returns only touched candidates to their original states.
 - **Blocked by**: ISS-002.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-24, 93f8515). Firefox reports `assisted-capability-only` for the baseline until ISS-005.
 
-- [ ] Pre-flight lists the candidates, explains the culprit-left-disabled and restore policy, binds the current test tab, and requires an explicit Start.
-- [ ] Chrome disables every candidate, leaves non-candidates untouched, reloads the bound tab, waits for completion with a timeout, and asks the baseline verdict.
-- [ ] The baseline verdict is appended to the bisect log; `persists` aborts as a host issue and restores; `gone` advances to the first trial.
-- [ ] `N = 0` blocks start; `N = 1` resolves from the baseline and leaves the culprit disabled.
-- [ ] Restore is visible, touches only candidates the session changed, reports per-extension failures, and never claims a full restore when a re-enable fails.
-- [ ] Reloading the panel or terminating the worker rehydrates the session view from the log.
-- [ ] Unit and component tests with a fake management port cover baseline modes, host issue, `N = 0`, `N = 1`, and restore; the Chrome E2E scenario installs fixture extensions and asserts the all-off baseline and restore.
-- [ ] The quality gates pass.
+- [x] Pre-flight lists the candidates, explains the culprit-left-disabled and restore policy, binds the current test tab, and requires an explicit Start.
+- [x] Chrome disables every candidate, leaves non-candidates untouched, reloads the bound tab, waits for completion with a timeout, and asks the baseline verdict.
+- [x] The baseline verdict is appended to the bisect log; `persists` aborts as a host issue and restores; `gone` advances to the first trial.
+- [x] `N = 0` blocks start; `N = 1` resolves from the baseline and leaves the culprit disabled.
+- [x] Restore is visible, touches only candidates the session changed, reports per-extension failures, and never claims a full restore when a re-enable fails.
+- [x] Reloading the panel or terminating the worker rehydrates the session view from the log.
+- [x] Unit and component tests with a fake management port cover baseline modes, host issue, `N = 0`, `N = 1`, and restore; the Chrome E2E scenario installs fixture extensions and asserts the all-off baseline and restore.
+- [x] The quality gates pass.
 
 ### ISS-004: Chrome automated partition loop, culprit, inconclusive
 
