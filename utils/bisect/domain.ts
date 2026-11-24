@@ -189,6 +189,8 @@ export interface SessionProgress {
   suspectCount: number;
 }
 
+export type AbortReason = 'host-issue';
+
 export interface SessionView {
   sessionId: string;
   status: SessionStatus;
@@ -201,6 +203,7 @@ export interface SessionView {
   trials: Trial[];
   culpritId: string | null;
   ambiguityIds: string[];
+  abortReason: AbortReason | null;
   testTab: TestTabBinding | null;
   progress: SessionProgress | null;
   createdAt: number;

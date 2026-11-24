@@ -78,6 +78,7 @@ interface SessionAccumulator {
   trials: Trial[];
   culpritId: string | null;
   ambiguityIds: string[];
+  abortReason: SessionView['abortReason'];
   testTab: SessionView['testTab'];
   createdAt: number;
   updatedAt: number;
@@ -173,13 +174,14 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       acc.status = 'inconclusive';
       return;
     case 'session-reset':
-      acc.status = 'restored';
+      acc.status = acc.abortReason === null ? 'restored' : 'aborted';
       return;
   }
 }
 
 function applyBaseline(acc: SessionAccumulator, verdict: Verdict): void {
   if (verdict === 'persists') {
+    acc.abortReason = 'host-issue';
     acc.status = 'aborted';
     return;
   }
@@ -230,6 +232,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     trials: [],
     culpritId: null,
     ambiguityIds: [],
+    abortReason: null,
     testTab: null,
     createdAt: 0,
     updatedAt: 0,
@@ -250,6 +253,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     trials: acc.trials,
     culpritId: acc.culpritId,
     ambiguityIds: acc.ambiguityIds,
+    abortReason: acc.abortReason,
     testTab: acc.testTab,
     progress:
       acc.originalEnabledIds.length === 0

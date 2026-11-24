@@ -174,6 +174,7 @@ describe('bisect domain surface', () => {
       trials: [trial],
       culpritId: null,
       ambiguityIds: [],
+      abortReason: null,
       testTab: null,
       progress: { trialNumber: 1, estimatedTrials: 3, suspectCount: 1 },
       createdAt: 1,

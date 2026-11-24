@@ -109,8 +109,22 @@ describe('reduceLog baseline', () => {
     const view = reduceLog(logOf([STARTED, event('baseline-recorded', { mode: 'auto', verdict: 'persists' })]));
 
     expect(view?.status).toBe('aborted');
+    expect(view?.abortReason).toBe('host-issue');
     expect(view?.culpritId).toBeNull();
     expect(view?.suspects).toEqual(['aaaa', 'bbbb', 'cccc']);
+  });
+
+  it('keeps the host-issue verdict after the abort restores every candidate', () => {
+    const view = reduceLog(
+      logOf([
+        STARTED,
+        event('baseline-recorded', { mode: 'auto', verdict: 'persists' }),
+        event('session-reset', { restored: true, errors: [] }),
+      ]),
+    );
+
+    expect(view?.status).toBe('aborted');
+    expect(view?.abortReason).toBe('host-issue');
   });
 });
 
