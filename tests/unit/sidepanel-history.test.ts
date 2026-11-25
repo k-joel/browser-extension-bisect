@@ -242,6 +242,30 @@ describe('history outcome', () => {
     expect(model.outcome.kind).toBe('in-progress');
     expect(model.outcome.label).toContain('Waiting for your verdict');
   });
+
+  /**
+   * `session-reset` moves the status to `restored` but keeps the ambiguity set, so the
+   * history must still report the inconclusive conclusion instead of reducing it to a
+   * generic restore.
+   */
+  it('keeps the inconclusive outcome after the user restores', () => {
+    const log = logOf([
+      startEvent([ALPHA, BRAVO]),
+      ...baselineTrial(['aaaa', 'bbbb']),
+      ...partition(1, ['aaaa'], ['bbbb']),
+      event('verdict-recorded', { round: 1, verdict: 'persists' }),
+      event('session-inconclusive', { ambiguityIds: ['aaaa'], reason: 'final-confirmation-persists' }),
+      event('session-reset', { restored: true, errors: [] }),
+    ]);
+    const view = viewOf(log);
+
+    const model = buildHistory(view, log);
+
+    expect(view.status).toBe('restored');
+    expect(model.outcome.kind).toBe('inconclusive');
+    expect(model.outcome.names).toEqual(['Alpha Blocker']);
+    expect(model.outcome.note).toBe('Every touched extension is back to its original state.');
+  });
 });
 
 describe('history baseline without a recorded trial', () => {

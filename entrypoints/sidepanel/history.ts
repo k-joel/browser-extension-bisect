@@ -140,7 +140,33 @@ function baselineEntry(
   };
 }
 
-function outcomeOf(view: SessionView, restored: boolean, nameOf: (id: string) => string): HistoryOutcome {
+type TerminalOutcome = 'completed' | 'inconclusive' | 'aborted' | null;
+
+/**
+ * `session-reset` overwrites the status with `restored` but leaves `culpritId` and
+ * `ambiguityIds` intact, so the status alone cannot say how the search ended. The
+ * terminal events are the audit record of the conclusion and are what the history
+ * must report, even after the user restores.
+ */
+function terminalOutcomeOf(log: BisectLog | null): TerminalOutcome {
+  if (log === null) return null;
+  let outcome: TerminalOutcome = null;
+  for (const event of log.events) {
+    if (event.type === 'session-completed') outcome = 'completed';
+    else if (event.type === 'session-inconclusive') outcome = 'inconclusive';
+    else if (event.type === 'baseline-recorded' && event.payload.verdict === 'persists') outcome = 'aborted';
+  }
+  return outcome;
+}
+
+function outcomeOf(
+  view: SessionView,
+  log: BisectLog | null,
+  restored: boolean,
+  nameOf: (id: string) => string,
+): HistoryOutcome {
+  const terminal = terminalOutcomeOf(log);
+
   if (view.culpritId !== null) {
     const name = nameOf(view.culpritId);
     return {
@@ -150,7 +176,7 @@ function outcomeOf(view: SessionView, restored: boolean, nameOf: (id: string) =>
       note: restored ? RESTORED_NOTE : null,
     };
   }
-  if (view.status === 'inconclusive') {
+  if (terminal === 'inconclusive' || view.ambiguityIds.length > 0) {
     return {
       kind: 'inconclusive',
       label: 'Inconclusive: no single culprit was identified',
@@ -158,7 +184,7 @@ function outcomeOf(view: SessionView, restored: boolean, nameOf: (id: string) =>
       note: restored ? RESTORED_NOTE : null,
     };
   }
-  if (view.abortReason !== null) {
+  if (terminal === 'aborted' || view.abortReason !== null) {
     return {
       kind: 'aborted',
       label: 'Aborted: the problem persists with every extension off, so no extension is implicated',
@@ -192,7 +218,7 @@ export function buildHistory(view: SessionView, log: BisectLog | null): HistoryM
     baselineModeLabel: BASELINE_MODE_LABELS[view.baselineMode],
     testTabLabel: formatTestTab(view.testTab),
     entries,
-    outcome: outcomeOf(view, lastRestoreComplete(log), nameOf),
+    outcome: outcomeOf(view, log, lastRestoreComplete(log), nameOf),
   };
 }
 

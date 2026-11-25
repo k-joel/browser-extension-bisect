@@ -337,11 +337,22 @@ async function acceptAssistedRestore(): Promise<void> {
   await verifyAssistedRestore();
 }
 
-function applyMutation(result: SessionMutationResult): void {
+/**
+ * The history reads the persisted log for the restore note and the report, so a
+ * mutation taken while it is open must re-read it. Without this the panel would show
+ * the session view of the new log next to history text rendered from the old one.
+ */
+async function refreshHistoryIfOpen(): Promise<void> {
+  if (!historyOpen.value) return;
+  historyLog.value = await run(() => messenger.sendMessage('getLog'));
+}
+
+async function applyMutation(result: SessionMutationResult): Promise<void> {
   session.value = result.session;
   if (result.restore !== null) restoreOutcome.value = result.restore;
   assistedRestore.value = null;
   restoreAccepted.value = false;
+  await refreshHistoryIfOpen();
 }
 
 async function applyTrial(): Promise<void> {
@@ -350,24 +361,25 @@ async function applyTrial(): Promise<void> {
   session.value = result;
   addonManagerMessage.value = null;
   await refreshManualState();
+  await refreshHistoryIfOpen();
 }
 
 async function retryTrial(): Promise<void> {
   const result = await run(() => messenger.sendMessage('retryTrial', {}));
   if (result === null) return;
-  applyMutation(result);
+  await applyMutation(result);
   await refreshManualState();
 }
 
 async function submitVerdict(verdict: Verdict): Promise<void> {
   const result = await run(() => messenger.sendMessage('submitVerdict', { verdict }));
-  if (result !== null) applyMutation(result);
+  if (result !== null) await applyMutation(result);
 }
 
 async function restore(): Promise<void> {
   const result = await run(() => messenger.sendMessage('resetSession', { restore: true }));
   if (result === null) return;
-  applyMutation(result);
+  await applyMutation(result);
   if (isAssisted(capability.value)) await verifyAssistedRestore();
 }
 

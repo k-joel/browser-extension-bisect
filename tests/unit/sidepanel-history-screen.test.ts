@@ -391,4 +391,28 @@ describe('history links from the terminal screens', () => {
     expect(screenOf(harness.wrapper)).toBe('history');
     expect(harness.wrapper.get('[data-testid="history-outcome"]').attributes('data-outcome')).toBe('inconclusive');
   });
+
+  /**
+   * Restore is rendered on every screen, so the user can restore straight from the
+   * history. The status then becomes `restored`, but the search still ended
+   * inconclusive and the report must keep saying so.
+   */
+  it('keeps the inconclusive outcome in the history after restoring from it', async () => {
+    const harness = await mountHarness();
+    await startLoop(harness);
+    await click(harness.wrapper, 'verdict-gone');
+    await click(harness.wrapper, 'trial-apply');
+    await click(harness.wrapper, 'verdict-persists');
+    await click(harness.wrapper, 'trial-apply');
+    await click(harness.wrapper, 'verdict-persists');
+    await click(harness.wrapper, 'inconclusive-history');
+
+    await click(harness.wrapper, 'restore-button');
+
+    const log = await readBisectLog();
+    expect(log?.events.at(-1)?.type).toBe('session-reset');
+    expect(screenOf(harness.wrapper)).toBe('history');
+    expect(harness.wrapper.get('[data-testid="history-outcome"]').attributes('data-outcome')).toBe('inconclusive');
+    expect(harness.wrapper.get('[data-testid="history-outcome-note"]').text()).toContain('back to its original state');
+  });
 });
