@@ -52,7 +52,7 @@ function harness(): Harness {
 function rejectNextWrite(message = 'QUOTA_BYTES quota exceeded'): () => void {
   const original = fakeBrowser.storage.local.set.bind(fakeBrowser.storage.local);
   let armed = true;
-  fakeBrowser.storage.local.set = async (items: unknown) => {
+  fakeBrowser.storage.local.set = async (items: Record<string, unknown>) => {
     if (armed) {
       armed = false;
       throw new Error(message);
@@ -164,7 +164,11 @@ describe('a rejected storage write', () => {
 
     restorers.push(rejectNextWrite());
     await expect(
-      startSession(h.dependencies, { candidateIds: THREE.map((entry) => entry.id), baselineMode: 'auto', testTab: null }),
+      startSession(h.dependencies, {
+        candidateIds: THREE.map((entry) => entry.id),
+        baselineMode: 'auto',
+        testTab: null,
+      }),
     ).rejects.toThrow(/could not be saved/);
 
     expect(await readBisectLog()).toBeNull();

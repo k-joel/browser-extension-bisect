@@ -141,6 +141,67 @@ export async function waitForAttribute(page, name, timeout = 15000) {
   return null;
 }
 
+/**
+ * A second side panel for the convergence scenario. Each panel is its own extension page,
+ * so both are the same `sidepanel.html` on the same extension origin — the harness never
+ * fakes a panel by reusing the first page, because a shared page cannot prove convergence.
+ */
+export async function openSecondPanel(session) {
+  const page = await session.newPage();
+  await gotoExtensionPage(page, `${session.extensionOrigin}/sidepanel.html`, { selector: SIDEPANEL_ROOT_SELECTOR });
+  return page;
+}
+
+/**
+ * Records a browser start the way `runtime.onStartup` does, so the reconciliation offer is
+ * live content and not a hand-seeded fixture. A real restart would also drop the extension
+ * pages, so the harness reopens the panel afterwards; Puppeteer cannot restart a profile
+ * in place, and the offer is derived from this stored signal plus the log.
+ */
+export async function simulateBrowserRestart(page) {
+  return page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const stored = await api.storage.local.get('bisectLog');
+    const log = stored?.bisectLog ?? null;
+    if (log === null) {
+      await api.storage.local.remove('bisectStartupSignal');
+      return { raised: false, sessionId: null, eventCount: 0 };
+    }
+    const signal = { sessionId: log.sessionId ?? null, eventCount: log.events?.length ?? 0 };
+    await api.storage.local.set({ bisectStartupSignal: signal });
+    return { raised: true, ...signal };
+  });
+}
+
+export async function readStartupSignal(page) {
+  return page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const stored = await api.storage.local.get('bisectStartupSignal');
+    return stored?.bisectStartupSignal ?? null;
+  });
+}
+
+/**
+ * Fails the next `storage.local.set` the way a full disk does. The E2E cannot fill a real
+ * profile, so the page's writer is wrapped once and the product path behind it is
+ * unchanged: `setValue` still runs and still rejects.
+ */
+export async function failNextStorageWrite(page, message = 'QUOTA_BYTES quota exceeded') {
+  return page.evaluate((text) => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const original = api.storage.local.set.bind(api.storage.local);
+    let armed = true;
+    api.storage.local.set = async (items) => {
+      if (armed) {
+        armed = false;
+        throw new Error(text);
+      }
+      return original(items);
+    };
+    return { armed: true };
+  }, message);
+}
+
 async function launchChrome({ headless, recorder, extPath }) {
   const browser = await puppeteer.launch({
     browser: 'chrome',
@@ -686,6 +747,22 @@ export async function readSessionState(page) {
             ),
           })),
       },
+      startup: {
+        visible: document.querySelector('[data-testid="startup-reconciliation"]') !== null,
+        restarted: document.querySelector('[data-testid="startup-reconciliation"]')?.getAttribute('data-restarted'),
+        status: document.querySelector('[data-testid="startup-reconciliation"]')?.getAttribute('data-status'),
+        headline: text('startup-reconciliation-headline'),
+        detail: text('startup-reconciliation-detail'),
+        difference: text('startup-reconciliation-difference'),
+        differs: document
+          .querySelector('[data-testid="startup-reconciliation-difference"]')
+          ?.getAttribute('data-differs'),
+        resumeLabel: document.querySelector('[data-testid="startup-resume"]')?.textContent?.trim() ?? null,
+        restoreLabel: document.querySelector('[data-testid="startup-restore"]')?.textContent?.trim() ?? null,
+        dismissLabel: document.querySelector('[data-testid="startup-dismiss"]')?.textContent?.trim() ?? null,
+        hasResume: document.querySelector('[data-testid="startup-resume"]') !== null,
+        hasRestore: document.querySelector('[data-testid="startup-restore"]') !== null,
+      },
       picker: {
         startLabel: document.querySelector('[data-testid="picker-start"]')?.textContent?.trim() ?? null,
         startDisabled: document.querySelector('[data-testid="picker-start"]')?.disabled ?? null,
@@ -822,11 +899,14 @@ export async function readPageReloadMarker(page) {
  * Drops the persisted bisect state so the next panel load renders the candidate
  * picker with no session. Starting another session in-app is ISS-004+ scope, so
  * the harness owns the reset when one launch must cover more than one flow.
+ *
+ * The startup signal goes with the log: it names a session that no longer exists, and a
+ * leftover one would make the next scenario believe a browser restart interrupted it.
  */
 export async function resetBisectState(page) {
   await page.evaluate(async () => {
     const api = globalThis.browser ?? globalThis.chrome;
-    await api.storage.local.remove(['bisectLog', 'bisectConfig']);
+    await api.storage.local.remove(['bisectLog', 'bisectConfig', 'bisectStartupSignal']);
   });
 }
 

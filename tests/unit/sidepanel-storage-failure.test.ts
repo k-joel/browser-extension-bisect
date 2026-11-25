@@ -32,7 +32,7 @@ function makeSurface(): FakeManagement {
 function rejectNextWrite(message = 'QUOTA_BYTES quota exceeded'): () => void {
   const original = fakeBrowser.storage.local.set.bind(fakeBrowser.storage.local);
   let armed = true;
-  fakeBrowser.storage.local.set = async (items: unknown) => {
+  fakeBrowser.storage.local.set = async (items: Record<string, unknown>) => {
     if (armed) {
       armed = false;
       throw new Error(message);
@@ -123,7 +123,9 @@ describe('side panel storage failure', () => {
 
     expect(screenOf(wrapper)).toBe('trial');
     expect(errorText(wrapper)).toBe('');
-    expect((await messenger.sendMessage('getSession')) as SessionView | null).toMatchObject({ status: 'awaiting-verdict' });
+    expect((await messenger.sendMessage('getSession')) as SessionView | null).toMatchObject({
+      status: 'awaiting-verdict',
+    });
   });
 
   it('leaves the persisted log untouched so a reopened panel reads the same session', async () => {

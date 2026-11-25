@@ -15,6 +15,7 @@ import {
   hasTestDriverGlobal,
   launchTestBrowser,
   markPageForReloadCheck,
+  openSecondPanel,
   readBoundTestTab,
   readCandidateState,
   readClipboardCaptures,
@@ -33,6 +34,7 @@ import {
   setExtensionEnabled,
   setManualExtensionState,
   setToggleError,
+  simulateBrowserRestart,
   uninstallExtension,
   waitForAttribute,
   waitForLog,
@@ -50,6 +52,7 @@ const SCENARIOS = [
   'drift',
   'toggle-failure',
   'mid-session-changes',
+  'startup-convergence',
 ];
 const CHROME_SCENARIOS = [
   'candidate-picker',
@@ -57,6 +60,8 @@ const CHROME_SCENARIOS = [
   'partition-loop',
   'drift',
   'toggle-failure',
+  'startup-convergence',
+  // Last: it closes the test tab and uninstalls a fixture, so nothing may follow it.
   'mid-session-changes',
 ];
 const FIREFOX_SCENARIOS = ['candidate-picker', 'assisted-baseline', 'assisted-external', 'assisted-trials'];
@@ -2025,9 +2030,10 @@ async function runMidSessionChangesScenario({ surface, session, installed, testP
   ).length;
 
   await uninstallExtension(session, bravo.id);
-  await clickTestId(surface, 'trial-apply');
-
-  const paused = await waitForScreen(surface, 'snapshot-change');
+  // The removal is the background's own trigger, so the panel converges on the pause
+  // without waiting for the user to answer a trial that no longer exists. A command at
+  // this point would be refused; asserting the pause arrives unaided proves convergence.
+  const paused = await waitForScreen(surface, 'snapshot-change', 20000);
   record('removed-candidate-pauses-the-session', paused.screen === 'snapshot-change', { screen: paused.screen });
   record(
     'removal-is-reported-with-its-own-row',
@@ -2102,6 +2108,183 @@ async function runMidSessionChangesScenario({ surface, session, installed, testP
   return { steps };
 }
 
+/**
+ * Startup reconciliation and multi-panel convergence, on one live browser.
+ *
+ * A real browser restart is out of reach for Puppeteer — it would drop the profile the
+ * fixture extensions are installed into — so the harness writes the same stored signal
+ * `runtime.onStartup` writes and the product derives the offer from it, exactly as it
+ * would after a restart. Everything the assertions read is rendered by the panel.
+ */
+async function runStartupConvergenceScenario({ surface, second, installed, testPage, fixtureServer }) {
+  const steps = [];
+  const record = makeRecorder(steps);
+  const { candidates } = extensionGroups(installed);
+  const candidateIds = candidates.map((entry) => entry.id);
+
+  const initial = await waitForCandidateState(surface, (state) => state.state === 'ready');
+  record('startup-scenario-starts-with-the-picker', initial.screen === 'picker', { screen: initial.screen });
+
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  await focusPage(testPage);
+  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await clickTestId(surface, 'preflight-bind');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.preflight.testTab !== 'No test tab bound' ? state : null;
+    },
+    { label: 'the bound test tab' },
+  );
+  await clickTestId(surface, 'preflight-start');
+  await waitForScreen(surface, 'baseline');
+
+  await clickTestId(surface, 'verdict-gone');
+  const planned = await waitForScreen(surface, 'trial');
+  record('startup-scenario-reaches-a-trial-plan', planned.trial.applyLabel !== null, {
+    applyLabel: planned.trial.applyLabel,
+  });
+
+  await clickTestId(surface, 'trial-apply');
+  const awaiting = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.persistsLabel !== null ? state : null;
+    },
+    { label: 'the answered trial' },
+  );
+  record('startup-scenario-answers-a-trial', awaiting.trial.persistsLabel !== null, {
+    persists: awaiting.trial.persistsLabel,
+  });
+
+  const noOffer = await readSessionState(surface);
+  record('startup-offer-is-absent-without-a-restart', !noOffer.startup.visible, {
+    visible: noOffer.startup.visible,
+  });
+
+  const log = await readPersistedBisectLog(surface);
+  const eventsBeforeRestart = log?.events?.length ?? 0;
+
+  const signal = await simulateBrowserRestart(surface);
+  record(
+    'startup-signal-records-the-session-it-interrupted',
+    signal.raised && signal.sessionId === log?.sessionId && signal.eventCount === eventsBeforeRestart,
+    { signal, sessionId: log?.sessionId, eventsBeforeRestart },
+  );
+
+  await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+  const offered = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.startup.visible ? state : null;
+    },
+    { label: 'the startup reconciliation offer' },
+  );
+
+  record('startup-offer-appears-after-a-restart', offered.startup.visible, { visible: offered.startup.visible });
+  record('startup-offer-names-the-restart', offered.startup.restarted === 'true', {
+    restarted: offered.startup.restarted,
+    headline: offered.startup.headline,
+  });
+  record(
+    'startup-offer-explains-both-actions',
+    /Resume/.test(offered.startup.detail ?? '') && /Restore/.test(offered.startup.detail ?? ''),
+    { detail: offered.startup.detail },
+  );
+  record('startup-offer-offers-resume-and-restore', offered.startup.hasResume && offered.startup.hasRestore, {
+    resume: offered.startup.resumeLabel,
+    restore: offered.startup.restoreLabel,
+  });
+
+  const logAtRestart = await readPersistedBisectLog(surface);
+  record('startup-reconciliation-toggles-nothing', (logAtRestart?.events?.length ?? -1) === eventsBeforeRestart, {
+    eventsBeforeRestart,
+    eventsAfter: logAtRestart?.events?.length ?? null,
+  });
+  const enabledAtRestart = await readExtensionEnabledStates(surface, candidateIds);
+  record(
+    'startup-reconciliation-leaves-the-browser-as-it-found-it',
+    Object.values(enabledAtRestart).some((enabled) => enabled === false),
+    { enabledAtRestart },
+  );
+
+  await clickTestId(surface, 'startup-resume');
+  const resumed = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return !state.startup.visible && state.screen === 'trial' ? state : null;
+    },
+    { label: 'the resumed trial' },
+  );
+  record('startup-resume-closes-the-offer', !resumed.startup.visible, { visible: resumed.startup.visible });
+  record('startup-resume-returns-to-the-trial', resumed.trial.persistsLabel !== null, {
+    persists: resumed.trial.persistsLabel,
+  });
+
+  const resumedLog = await readPersistedBisectLog(surface);
+  record('startup-resume-records-the-resumption', resumedLog?.events?.at(-1)?.type === 'session-resumed', {
+    lastEvent: resumedLog?.events?.at(-1)?.type ?? null,
+  });
+  record('startup-resume-keeps-the-same-session', resumedLog?.sessionId === log?.sessionId, {
+    before: log?.sessionId,
+    after: resumedLog?.sessionId,
+  });
+
+  const afterResume = await readSessionState(surface);
+  record('startup-offer-does-not-come-back-after-resume', !afterResume.startup.visible, {
+    visible: afterResume.startup.visible,
+  });
+
+  record(
+    'second-panel-is-a-separate-extension-page',
+    second !== surface && (await second.evaluate(() => location.href)).endsWith('/sidepanel.html'),
+    { secondUrl: await second.evaluate(() => location.href) },
+  );
+
+  const secondReady = await waitFor(
+    async () => {
+      const state = await readSessionState(second);
+      return state.screen !== null ? state : null;
+    },
+    { label: 'the second panel' },
+  );
+  record('second-panel-shows-the-same-session', secondReady.screen === afterResume.screen, {
+    first: afterResume.screen,
+    second: secondReady.screen,
+  });
+
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-persists');
+  const firstAdvanced = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.trial.applyLabel !== null || state.screen === 'completed' ? state : null;
+    },
+    { label: 'the first panel after the verdict' },
+  );
+
+  const secondConverged = await waitFor(
+    async () => {
+      const state = await readSessionState(second);
+      return state.screen === firstAdvanced.screen ? state : null;
+    },
+    { label: 'the second panel converging' },
+  );
+  record('second-panel-converges-on-the-first-one-verdict', secondConverged.screen === firstAdvanced.screen, {
+    first: firstAdvanced.screen,
+    second: secondConverged.screen,
+  });
+
+  const convergedLog = await readPersistedBisectLog(second);
+  record('both-panels-observe-one-log', convergedLog?.sessionId === log?.sessionId, {
+    first: log?.sessionId,
+    converged: convergedLog?.sessionId,
+  });
+
+  return { steps };
+}
+
 async function captureFailure(surface, page, browserName, scenario) {
   const file = path.join(ARTIFACTS_DIR, `failure-${browserName}-${scenario}.png`);
   for (const target of [surface, page]) {
@@ -2169,6 +2352,16 @@ async function runScenarioForBrowser(browserName, scenario, session, context) {
     return runAssistedTrialsScenario({
       surface: context.surface,
       session,
+      installed: context.installed,
+      testPage: context.page,
+      fixtureServer: context.fixtureServer,
+    });
+  }
+
+  if (scenario === 'startup-convergence') {
+    return runStartupConvergenceScenario({
+      surface: context.surface,
+      second: context.second,
       installed: context.installed,
       testPage: context.page,
       fixtureServer: context.fixtureServer,
@@ -2282,8 +2475,12 @@ async function runBrowser(browserName, options) {
         await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
       }
       try {
+        // A second panel is its own page on the same extension origin, opened after the
+        // reset so it reads the scenario's own state and not the previous one's.
+        const second = scenario === 'startup-convergence' ? await openSecondPanel(session) : null;
         const { steps, firefoxPath } = await runScenarioForBrowser(browserName, scenario, session, {
           surface,
+          second,
           installed,
           eligibleInstalled,
           fixtureServer,
@@ -2292,6 +2489,7 @@ async function runBrowser(browserName, options) {
         result.steps = steps;
         if (firefoxPath !== undefined) result.firefoxPath = firefoxPath;
         result.ok = true;
+        if (second !== null) await second.close().catch(() => undefined);
       } catch (error) {
         const errors = collectErrors(session.recorder);
         result.errors = {

@@ -96,7 +96,7 @@ describe('StartupReconciliation component contract', () => {
     });
 
     expect(wrapper.find('[data-testid="startup-resume"]').exists()).toBe(false);
-    expect(wrapper.get('[data-testid="startup-restore"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="startup-restore"]').exists()).toBe(true);
   });
 
   it('says the browser matches the log when the drift is in sync', () => {
