@@ -290,6 +290,32 @@ describe('history baseline without a recorded trial', () => {
     expect(model.baselineModeLabel).toBe(BASELINE_MODE_LABELS.external);
     expect(model.testTabLabel).toBe('No test tab bound');
   });
+
+  /**
+   * The panel starts a Firefox session at `manual` because that is the mode its start
+   * screen offers; the Troubleshoot-Mode attestation is what makes the baseline
+   * `external`. The report must print the mode the log actually recorded, or it labels
+   * the manual baseline directly above the external attestation note.
+   */
+  it('reports an external mode the session did not start with', () => {
+    const log = logOf([
+      event('session-started', {
+        candidateOrder: [ALPHA, BRAVO],
+        capability: CAPABILITY,
+        baselineMode: 'manual',
+        testTab: null,
+      }),
+      event('baseline-recorded', { mode: 'external', verdict: 'gone' }),
+    ]);
+
+    const model = buildHistory(viewOf(log), log);
+    const report = renderBisectReport(model);
+
+    expect(model.baselineModeLabel).toBe(BASELINE_MODE_LABELS.external);
+    expect(report).toContain(`Baseline mode: ${BASELINE_MODE_LABELS.external}`);
+    expect(report).not.toContain(`Baseline mode: ${BASELINE_MODE_LABELS.manual}`);
+    expect(model.entries[0]?.note).toContain('Troubleshoot Mode');
+  });
 });
 
 describe('report renderer', () => {

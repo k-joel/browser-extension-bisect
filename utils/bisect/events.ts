@@ -163,6 +163,9 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       acc.createdAt = event.at;
       return;
     case 'baseline-recorded':
+      // The recorded mode wins over the mode a start screen guessed: a Firefox session
+      // starts as `manual` and becomes `external` only through the attestation.
+      acc.baselineMode = event.payload.mode;
       applyBaseline(acc, event.payload.verdict);
       return;
     case 'trial-started':

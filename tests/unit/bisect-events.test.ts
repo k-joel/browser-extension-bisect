@@ -114,6 +114,22 @@ describe('reduceLog baseline', () => {
     expect(view?.suspects).toEqual(['aaaa', 'bbbb', 'cccc']);
   });
 
+  /**
+   * The panel starts a Firefox session as `manual` because that is the mode the start screen
+   * offers, and only the attestation turns it into an `external` baseline. The recorded mode
+   * is the authoritative one, so the report cannot print the manual label above the
+   * Troubleshoot-Mode note.
+   */
+  it('lets the recorded baseline mode override the mode the session started with', () => {
+    const view = reduceLog(logOf([STARTED, event('baseline-recorded', { mode: 'external', verdict: 'gone' })]));
+
+    expect(view?.baselineMode).toBe('external');
+  });
+
+  it('keeps the started mode until a baseline is recorded', () => {
+    expect(reduceLog(logOf([STARTED]))?.baselineMode).toBe('auto');
+  });
+
   it('keeps the host-issue verdict after the abort restores every candidate', () => {
     const view = reduceLog(
       logOf([
