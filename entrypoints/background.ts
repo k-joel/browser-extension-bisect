@@ -12,7 +12,7 @@ import {
   createSnapshotWatcher,
   declineEscalation,
   getLog,
-  getSession,
+  readSessionView,
   recordEscalationResult,
   recordExternalBaseline,
   recordSnapshotPause,
@@ -158,7 +158,7 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('getConfig', () => readBisectConfig());
   messenger.onMessage('updateConfig', ({ data }) => updateBisectConfig(data));
 
-  messenger.onMessage('getSession', () => getSession());
+  messenger.onMessage('getSession', () => readSessionView(sessionDependencies()));
   messenger.onMessage('getLog', () => getLog());
   messenger.onMessage('replayLog', ({ data }) => replayLog(data.log));
   messenger.onMessage('startSession', ({ data }) => startSession(sessionDependencies(), data));

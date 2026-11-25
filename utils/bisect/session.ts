@@ -675,6 +675,23 @@ export function getSession(): Promise<SessionView | null> {
 }
 
 /**
+ * The session view plus whatever the browser says about the snapshot *right now*.
+ *
+ * A pausing change is already in the log, so it survives a worker restart; an install
+ * never pauses and must not grow the append-only log, so it is derived on each read
+ * instead. Both land in `changes`, which is the field the panel warns from, and neither
+ * touches `candidateOrder`.
+ */
+export async function readSessionView(rawDependencies: SessionDependencies): Promise<SessionView | null> {
+  const view = await getSession();
+  if (view === null) return null;
+  if (view.changes.length > 0) return view;
+
+  const changes = await detectSnapshotChanges(rawDependencies, view);
+  return changes.length === 0 ? view : { ...view, changes };
+}
+
+/**
  * A read of the persisted log for the history screen and the two copy actions. It
  * enters the same queue as the mutating commands so a copy taken while a verdict is
  * being recorded observes either the old log or the new one, never a torn read.

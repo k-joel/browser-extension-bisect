@@ -9,8 +9,10 @@ import {
   isTrialQuestion,
   needsNextTrial,
   partitionPreview,
+  testTabPromptOf,
   VERDICT_LABELS,
 } from '../presentation';
+import TestTabPromptView from './TestTabPrompt.vue';
 import TrialHistory from './TrialHistory.vue';
 
 const props = defineProps<{
@@ -27,12 +29,14 @@ const emit = defineEmits<{
   (event: 'undo-verdict'): void;
   (event: 'verdict', verdict: Verdict): void;
   (event: 'reload'): void;
+  (event: 'bind-tab'): void;
   (event: 'history'): void;
 }>();
 
 const asking = computed(() => isTrialQuestion(props.session));
 const awaitingApply = computed(() => needsNextTrial(props.session));
 const trial = computed(() => props.session.currentTrial);
+const testTabPrompt = computed(() => testTabPromptOf(props.session));
 
 const preview = computed(() => partitionPreview(props.session.suspects));
 
@@ -135,6 +139,14 @@ const question = computed(() => {
           {{ appliedDisabledNames.length === 0 ? 'None' : appliedDisabledNames.join(', ') }}
         </dd>
       </dl>
+
+      <TestTabPromptView
+        v-if="testTabPrompt !== null"
+        :prompt="testTabPrompt"
+        :busy="busy"
+        @bind="emit('bind-tab')"
+        @reload="emit('reload')"
+      />
 
       <div class="actions">
         <button type="button" data-testid="verdict-persists" :disabled="busy" @click="emit('verdict', 'persists')">

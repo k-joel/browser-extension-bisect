@@ -11,6 +11,8 @@ import type {
   SessionPause,
   SessionStatus,
   SessionView,
+  SnapshotChange,
+  SnapshotChangeKind,
   TestTabBinding,
   ToggleErrorCode,
   Verdict,
@@ -60,6 +62,7 @@ export type PanelScreen =
   | 'trial'
   | 'paused'
   | 'toggle-failure'
+  | 'snapshot-change'
   | 'history'
   | 'replay'
   | 'host-issue'
@@ -254,7 +257,10 @@ export function resolveScreen({
   if (replayOpen) return 'replay';
   if (historyOpen) return 'history';
   if (session.status === 'restored') return 'restored';
-  if (session.status === 'paused') return isToggleFailure(session) ? 'toggle-failure' : 'paused';
+  if (session.status === 'paused') {
+    if (isSnapshotPause(session)) return 'snapshot-change';
+    return isToggleFailure(session) ? 'toggle-failure' : 'paused';
+  }
   if (session.status === 'aborted' && session.abortReason === 'host-issue') return 'host-issue';
   if (session.status === 'completed' && session.culpritId !== null) return 'completed';
   if (session.status === 'inconclusive') return 'inconclusive';
@@ -615,4 +621,127 @@ export function isToggleFailure(view: SessionView): boolean {
   const pause = view.pause;
   if (view.status !== 'paused' || pause === null) return false;
   return pause.errors.length > 0;
+}
+
+/**
+ * The pause a mid-session install/update/removal opened. It is told apart from drift and
+ * from a toggle failure by the changes it carries, not by its reason string, so the panel
+ * keeps rendering the same screen even if the reason vocabulary grows.
+ */
+export function isSnapshotPause(view: SessionView): boolean {
+  if (view.status !== 'paused') return false;
+  const changes = view.pause?.changes ?? [];
+  return changes.some((change) => change.kind !== 'installed');
+}
+
+/**
+ * True when the browser reported a change that is only a warning. An install is recorded
+ * nowhere in the log, so this reads the pause: a pause for an install alone never exists,
+ * and the warning the panel renders comes from `SessionView.changes` in that case.
+ */
+export function isSnapshotWarningOnly(view: SessionView): boolean {
+  const changes = view.changes;
+  if (changes.length === 0) return false;
+  return changes.every((change) => change.kind === 'installed');
+}
+
+/**
+ * The test tab stopped being usable for this batch. It is a hint, not a gate: the batch
+ * is in the browser and the user can still see whether the symptom happens, so the panel
+ * offers a rebind beside the verdict buttons rather than replacing them.
+ */
+export function testTabPromptOf(view: SessionView): TestTabPrompt | null {
+  const trial = view.currentTrial;
+  if (trial === null || trial.testTab === null) return null;
+  if (trial.verdict !== null) return null;
+
+  if (trial.testTab.status === 'closed') {
+    return {
+      kind: 'closed',
+      tabId: trial.testTab.tabId,
+      headline: 'The test tab was closed.',
+      detail: 'Bind another tab to keep the automatic reload, or answer the verdict without one.',
+      action: 'Bind another test tab',
+    };
+  }
+  if (trial.testTab.status === 'unsettled') {
+    return {
+      kind: 'unsettled',
+      tabId: trial.testTab.tabId,
+      headline: 'The test tab did not finish loading.',
+      detail: 'Reload it yourself once it is ready, then answer the verdict. The batch is already applied.',
+      action: 'Reload the test tab again',
+    };
+  }
+  return null;
+}
+
+export interface TestTabPrompt {
+  kind: 'closed' | 'unsettled';
+  tabId: number | null;
+  headline: string;
+  detail: string;
+  action: string;
+}
+
+/**
+ * A candidate that the browser installed, updated, or removed under the session. The
+ * snapshot is unchanged by definition, so the warning is always a sentence about the
+ * difference and never a change to the candidate list.
+ */
+export interface SnapshotWarningRow {
+  kind: SnapshotChangeKind;
+  id: string;
+  name: string;
+  detail: string;
+}
+
+const SNAPSHOT_KIND_TEXT: Record<SnapshotChangeKind, { label: string; detail: string }> = {
+  installed: {
+    label: 'Installed during this session',
+    detail: 'It was installed after the session started, so it is not a candidate in this search.',
+  },
+  updated: {
+    label: 'Updated during this session',
+    detail: 'The version changed after the snapshot was taken, so the search paused instead of answering.',
+  },
+  removed: {
+    label: 'Removed during this session',
+    detail: 'It is no longer installed, so the trial that included it cannot be answered.',
+  },
+};
+
+export const SNAPSHOT_KIND_ORDER: readonly SnapshotChangeKind[] = ['removed', 'updated', 'installed'];
+
+export function summarizeSnapshotChanges(changes: readonly SnapshotChange[]): SnapshotWarningRow[] {
+  return changes.map((change) => ({
+    kind: change.kind,
+    id: change.extensionId,
+    name: change.name,
+    detail: SNAPSHOT_KIND_TEXT[change.kind].detail,
+  }));
+}
+
+export function formatSnapshotKind(kind: SnapshotChangeKind): string {
+  return SNAPSHOT_KIND_TEXT[kind].label;
+}
+
+/**
+ * Only a change that invalidated the trial asks for restore-or-restart. An install never
+ * reaches a pause, so it never offers a choice: nothing about the search changed.
+ */
+export function needsSnapshotDecision(view: SessionView): boolean {
+  if (view.status !== 'paused') return false;
+  const changes = view.pause?.changes ?? [];
+  return changes.some((change) => change.kind !== 'installed');
+}
+
+export function describeSnapshotPause(changes: readonly SnapshotChange[]): string {
+  if (changes.length === 0) return 'The browser changed under this session.';
+  const parts = changes.map((change) => {
+    if (change.kind === 'removed') return `${change.name} was removed`;
+    if (change.kind === 'updated') return `${change.name} was updated`;
+    return `${change.name} was installed`;
+  });
+  return `The browser changed under this session: ${parts.join(', ')}. The trial on screen can no longer be answered.`;
 }

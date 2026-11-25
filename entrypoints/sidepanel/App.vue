@@ -34,6 +34,8 @@ import ReplayScreen from './components/ReplayScreen.vue';
 import RestoredScreen from './components/RestoredScreen.vue';
 import RestorePanel from './components/RestorePanel.vue';
 import SessionProgress from './components/SessionProgress.vue';
+import SnapshotChangeScreen from './components/SnapshotChangeScreen.vue';
+import SnapshotWarning from './components/SnapshotWarning.vue';
 import ToggleFailurePanel from './components/ToggleFailurePanel.vue';
 import TrialScreen from './components/TrialScreen.vue';
 import { enableExtensionWithClick } from './escalation';
@@ -91,6 +93,7 @@ const replaySource = ref<BisectLog | null>(null);
 const replayEdits = ref<ReplayEdits>({});
 const replayResult = ref<ReplayResult | null>(null);
 const replayCopyStatus = ref<CopyStatus | null>(null);
+const dismissedSnapshotKeys = ref<string[]>([]);
 
 const excludedIds = computed(() => config.value?.excludedExtensionIds ?? []);
 
@@ -211,6 +214,38 @@ const toggleFailureAnnouncement = computed(() => {
   return `A toggle failed for ${count}. Restore all extensions, or re-enable them in the extension manager.`;
 });
 
+/**
+ * The warning is the install case only. A pausing change already owns the screen, and it
+ * says everything the warning would; showing both would announce the same event twice.
+ */
+const snapshotWarningVisible = computed(() => {
+  const current = session.value;
+  if (current === null || current.status === 'paused') return false;
+  const keys = current.changes.map(snapshotKeyOf);
+  return keys.some((key) => !dismissedSnapshotKeys.value.includes(key));
+});
+
+const snapshotAnnouncement = computed(() => {
+  const current = session.value;
+  if (current === null) return '';
+  const changes = current.changes.filter((change) => !dismissedSnapshotKeys.value.includes(snapshotKeyOf(change)));
+  if (changes.length === 0) return '';
+  return `The browser changed under this session: ${changes
+    .map((change) => `${change.name} was ${change.kind === 'installed' ? 'installed' : change.kind}`)
+    .join(', ')}. The candidates are unchanged.`;
+});
+
+function snapshotKeyOf(change: { kind: string; extensionId: string }): string {
+  return `${change.kind}:${change.extensionId}`;
+}
+
+function dismissSnapshotWarning(): void {
+  const current = session.value;
+  if (current === null) return;
+  const seen = new Set([...dismissedSnapshotKeys.value, ...current.changes.map(snapshotKeyOf)]);
+  dismissedSnapshotKeys.value = [...seen];
+}
+
 const announcement = computed(() => {
   if (state.value === 'loading') return 'Loading extensions…';
   if (state.value === 'error') return 'Extensions could not be loaded';
@@ -229,6 +264,8 @@ const announcement = computed(() => {
       return pausedAnnouncement.value;
     case 'toggle-failure':
       return toggleFailureAnnouncement.value;
+    case 'snapshot-change':
+      return `${snapshotAnnouncement.value} Choose restore or restart with a fresh snapshot.`;
     case 'trial':
       return session.value === null ? '' : describeProgress(session.value);
     case 'inconclusive':
@@ -440,11 +477,22 @@ async function refreshHistoryIfOpen(): Promise<void> {
   historyLog.value = await run(() => messenger.sendMessage('getLog'));
 }
 
+/**
+ * The live snapshot comparison is derived on every read rather than stored, because an
+ * install must not grow the append-only log. A mutation therefore re-reads the session so
+ * the panel converges on the same decorated view a fresh panel would see.
+ */
+async function refreshSession(): Promise<void> {
+  const current = await messenger.sendMessage('getSession').catch(() => null);
+  if (current !== null) session.value = current;
+}
+
 async function applyMutation(result: SessionMutationResult): Promise<void> {
   session.value = result.session;
   if (result.restore !== null) restoreOutcome.value = result.restore;
   assistedRestore.value = null;
   restoreAccepted.value = false;
+  await refreshSession();
   await refreshHistoryIfOpen();
 }
 
@@ -453,6 +501,7 @@ async function applyTrial(): Promise<void> {
   if (result === null) return;
   session.value = result;
   addonManagerMessage.value = null;
+  await refreshSession();
   await refreshManualState();
   await refreshHistoryIfOpen();
 }
@@ -498,6 +547,17 @@ async function reloadTestTab(): Promise<void> {
 }
 
 /**
+ * The rebind a closed test tab asks for. The background resolves the active tab, so the
+ * user focuses the page that reproduces the symptom and presses the prompt's action.
+ */
+async function bindTestTabFromPrompt(): Promise<void> {
+  await bindTestTab();
+  if (config.value?.testTab === null) return;
+  const current = await run(() => messenger.sendMessage('getSession'));
+  if (current !== null) session.value = current;
+}
+
+/**
  * The gesture-bound retry. The `setEnabled` runs here, in the click handler's own task,
  * because a background handler has no user activation; only the outcome crosses the
  * message boundary, and the background records it.
@@ -522,6 +582,23 @@ async function declineEscalation(): Promise<void> {
   if (result === null) return;
   await applyMutation(result);
   if (isAssisted(capability.value)) await verifyAssistedRestore();
+}
+
+/**
+ * The fresh snapshot a mid-session change asks for. The panel drops its cached views
+ * because the session id changes, and re-reads the candidates: an extension that arrived
+ * during the old session is a legitimate candidate in the new one.
+ */
+async function restartSession(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('restartSession'));
+  if (result === null) return;
+  await applyMutation(result);
+  dismissedSnapshotKeys.value = [];
+  restoreOutcome.value = null;
+  assistedRestore.value = null;
+  restoreAccepted.value = false;
+  await refreshConfig();
+  await refreshManualState();
 }
 
 async function openHistory(): Promise<void> {
@@ -632,6 +709,12 @@ onMounted(load);
     <template v-if="state === 'ready' && capability !== null">
       <CapabilityReportView :capability="capability" />
 
+      <SnapshotWarning
+        v-if="session !== null && snapshotWarningVisible"
+        :session="session"
+        @dismiss="dismissSnapshotWarning"
+      />
+
       <PreflightConsent
         v-if="screen === 'preflight'"
         :candidates="included"
@@ -690,7 +773,16 @@ onMounted(load);
         @undo-verdict="undoLastVerdict"
         @verdict="submitVerdict"
         @reload="reloadTestTab"
+        @bind-tab="bindTestTabFromPrompt"
         @history="openHistory"
+      />
+
+      <SnapshotChangeScreen
+        v-else-if="screen === 'snapshot-change' && session !== null"
+        :session="session"
+        :busy="busy"
+        @restore="restore"
+        @restart="restartSession"
       />
 
       <ToggleFailurePanel
