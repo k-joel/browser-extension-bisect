@@ -31,7 +31,7 @@ export interface BindTestTabRequest {
  */
 export interface SessionMutationResult {
   session: SessionView;
-  restore: { restored: boolean; errors: RestoreError[]; manualIds: string[] } | null;
+  restore: { restored: boolean; errors: RestoreError[]; manualIds: string[]; declined: boolean } | null;
 }
 
 /**
@@ -79,6 +79,12 @@ export interface ProtocolMap {
    */
   undoLastVerdict(): SessionMutationResult;
   resetSession(payload: { restore: boolean }): SessionMutationResult;
+  /**
+   * SPEC §Error handling, `User aborts`. The panel asks "Restore all extensions?" first;
+   * `restore: true` runs the restore, `restore: false` leaves the touched extensions as
+   * the session left them and records the decision on the `session-reset`.
+   */
+  abortSession(payload: { restore: boolean }): SessionMutationResult;
   bindTestTab(payload: BindTestTabRequest): BisectConfig;
   reloadTestTab(): ReloadTestTabResult;
   getDrift(): DriftReport;

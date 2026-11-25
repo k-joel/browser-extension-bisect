@@ -208,7 +208,19 @@ export interface BisectEventPayloads {
   'session-resumed': { reason: string };
   'session-completed': { culpritId: string };
   'session-inconclusive': { ambiguityIds: string[]; reason: string };
-  'session-reset': { restored: boolean; errors: RestoreError[]; manualIds?: string[]; accepted?: boolean };
+  /**
+   * `declined` is the user's own answer to the abort question: true means the extensions
+   * were deliberately left as they are, which is a different fact from a restore that
+   * failed. Without it a declined abort and a complete one would both read `restored:
+   * false` with no errors.
+   */
+  'session-reset': {
+    restored: boolean;
+    errors: RestoreError[];
+    manualIds?: string[];
+    accepted?: boolean;
+    declined?: boolean;
+  };
 }
 
 export type BisectEventType = keyof BisectEventPayloads;
@@ -291,6 +303,13 @@ export interface SessionRestore {
   errors: RestoreError[];
   manualIds: string[];
   accepted: boolean;
+  /**
+   * The user stopped the session and answered "no" to "Restore all extensions?". The
+   * extensions the session changed are knowingly still off, which is a decision rather
+   * than a failure, so the restore stays pending until someone presses Restore
+   * (SPEC §Error handling, `User aborts`).
+   */
+  declined: boolean;
 }
 
 export interface SessionView {

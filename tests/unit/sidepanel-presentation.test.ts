@@ -310,7 +310,10 @@ describe('restored screen status', () => {
    * leftovers, never from `status: 'restored'`.
    */
   it('claims success only when nothing is left over', () => {
-    const status = describeRestoreStatus({ restored: true, errors: [], manualIds: [], accepted: false }, CANDIDATES);
+    const status = describeRestoreStatus(
+      { restored: true, errors: [], manualIds: [], accepted: false, declined: false },
+      CANDIDATES,
+    );
 
     expect(status.complete).toBe(true);
     expect(status.leftover).toEqual([]);
@@ -321,7 +324,7 @@ describe('restored screen status', () => {
 
   it('names the extensions that are still off and what to do about them', () => {
     const status = describeRestoreStatus(
-      { restored: false, errors: [], manualIds: ['aaaa', 'bbbb'], accepted: false },
+      { restored: false, errors: [], manualIds: ['aaaa', 'bbbb'], accepted: false, declined: false },
       CANDIDATES,
     );
 
@@ -342,6 +345,7 @@ describe('restored screen status', () => {
         errors: [{ extensionId: 'cccc', code: 'manual-recovery-required', message: 'greylisted' }],
         manualIds: [],
         accepted: false,
+        declined: false,
       },
       CANDIDATES,
     );
@@ -354,7 +358,7 @@ describe('restored screen status', () => {
 
   it('stops asking for a next step once the user accepted the remaining differences', () => {
     const status = describeRestoreStatus(
-      { restored: false, errors: [], manualIds: ['bbbb'], accepted: true },
+      { restored: false, errors: [], manualIds: ['bbbb'], accepted: true, declined: false },
       CANDIDATES,
     );
 

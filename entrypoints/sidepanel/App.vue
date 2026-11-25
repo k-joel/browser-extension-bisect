@@ -20,6 +20,8 @@ import { watchBisectLog } from '@/utils/bisect/events';
 import { type ManualStateReport, watchManualState } from '@/utils/bisect/manual-state';
 import { messenger, type SessionMutationResult } from '@/utils/messaging';
 import { type CopyStatus, copyText, MANUAL_COPY_MESSAGE } from './clipboard';
+import AbortedScreen from './components/AbortedScreen.vue';
+import AbortPanel from './components/AbortPanel.vue';
 import AssistedBaseline from './components/AssistedBaseline.vue';
 import AssistedRestore from './components/AssistedRestore.vue';
 import AssistedTrial from './components/AssistedTrial.vue';
@@ -51,6 +53,7 @@ import {
   describeRestoreStatus,
   findCandidate,
   formatTestTab,
+  isAbortableScreen,
   isAssisted,
   isTerminalStatus,
   manualProgress,
@@ -163,14 +166,19 @@ const restoreSummary = computed<RestoreSummary | null>(() =>
  * The outcome the restored screen renders. The panel's own `restoreOutcome` is the freshest
  * report — it carries what the restore attempt just found — but a panel that reopened after
  * the restore has none, so the recorded `session-reset` on the session view is the fallback.
- * Both shapes are the same three fields, and the screen never reads the status: a
- * `restored` status is an audit state, not a claim that the browser state matches.
+ * Both shapes carry the same fields, and the screen never reads the status: a `restored`
+ * status is an audit state, not a claim that the browser state matches.
  */
 const restoredOutcome = computed<RestoreOutcome | null>(() => {
   if (restoreOutcome.value !== null) return restoreOutcome.value;
   const recorded = session.value?.restore ?? null;
   if (recorded === null) return null;
-  return { restored: recorded.restored, errors: recorded.errors, manualIds: recorded.manualIds };
+  return {
+    restored: recorded.restored,
+    errors: recorded.errors,
+    manualIds: recorded.manualIds,
+    declined: recorded.declined,
+  };
 });
 
 const restoreStatus = computed<RestoreStatus>(() =>
@@ -182,6 +190,7 @@ const restoreStatus = computed<RestoreStatus>(() =>
           errors: restoredOutcome.value.errors,
           manualIds: restoredOutcome.value.manualIds ?? [],
           accepted: restoreAccepted.value || (session.value?.restore?.accepted ?? false),
+          declined: restoredOutcome.value.declined === true,
         },
     culprits.value,
   ),
@@ -197,6 +206,14 @@ const restoreAvailable = computed(() => session.value !== null && session.value.
 const newSession = computed<NewSessionOffer | null>(() =>
   session.value === null || !isTerminalStatus(session.value.status) ? null : newSessionOffer(session.value),
 );
+
+/**
+ * SPEC §Error handling, `User aborts`. The action is offered while the search is still
+ * running — including the assisted screens and the paused ones, which is exactly when a
+ * user gives up — and withheld from the picker, the read-only history and replay views,
+ * and the terminal screens where Restore and Start over already say what to do.
+ */
+const abortable = computed(() => state.value === 'ready' && session.value !== null && isAbortableScreen(screen.value));
 
 /** The pause a failed toggle or a failed escalation opened, if that is what is showing. */
 const togglePause = computed(() => {
@@ -322,6 +339,8 @@ const announcement = computed(() => {
       return 'No single culprit was identified; the remaining candidates are listed.';
     case 'host-issue':
       return 'No extension is implicated; this is a browser or machine issue.';
+    case 'aborted':
+      return 'Session stopped. The extensions this session changed are still in the state the session left them.';
     case 'history':
       return historyAnnouncement.value;
     case 'replay':
@@ -640,6 +659,18 @@ async function restore(): Promise<void> {
   if (result === null) return;
   await applyMutation(result);
   if (isAssisted(capability.value)) await verifyAssistedRestore();
+}
+
+/**
+ * SPEC §Error handling, `User aborts`. Both answers go through the same command, because
+ * both end the session and both append a `session-reset`: what differs is whether the
+ * restore ran, and the panel reports whichever happened instead of assuming the yes.
+ */
+async function abort(restoreFirst: boolean): Promise<void> {
+  const result = await run(() => messenger.sendMessage('abortSession', { restore: restoreFirst }));
+  if (result === null) return;
+  await applyMutation(result);
+  if (restoreFirst && isAssisted(capability.value)) await verifyAssistedRestore();
 }
 
 async function reloadTestTab(): Promise<void> {
@@ -1044,6 +1075,15 @@ onUnmounted(() => {
         @start-over="startNewSession"
       />
 
+      <AbortedScreen
+        v-else-if="screen === 'aborted' && newSession !== null"
+        :restore-summary-headline="restoreSummary?.headline ?? null"
+        :offer="newSession"
+        :busy="busy"
+        @restore="restore"
+        @start-over="startNewSession"
+      />
+
       <CompletedScreen
         v-else-if="screen === 'completed' && newSession !== null"
         :culprit="culprit"
@@ -1095,6 +1135,8 @@ onUnmounted(() => {
         @open-addons="openAddonManager"
         @accept="acceptAssistedRestore"
       />
+
+      <AbortPanel v-if="abortable" :busy="busy" @abort="abort" />
 
       <RestorePanel :summary="restoreSummary" :busy="busy" :available="restoreAvailable" @restore="restore" />
     </template>

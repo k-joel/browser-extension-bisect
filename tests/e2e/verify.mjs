@@ -445,6 +445,131 @@ async function runSessionBaselineScenario({ surface, session, installed, testPag
     { before, afterHostRestore, candidateIds, untouchableIds },
   );
 
+  // ---- The user aborts. SPEC §Error handling, last row. ------------------------------
+  await resetBisectState(surface);
+  await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+  await waitForCandidateState(surface, (state) => state.state === 'ready');
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  await clickTestId(surface, 'preflight-start');
+  await waitForScreen(surface, 'baseline');
+
+  const beforeAbort = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  const onBaseline = await readSessionState(surface);
+  record('live-screen-offers-the-abort-action', onBaseline.abort.visible && onBaseline.abort.actionLabel !== null, {
+    abort: onBaseline.abort,
+  });
+  record('abort-asks-nothing-until-the-action-is-pressed', onBaseline.abort.question === null, {
+    question: onBaseline.abort.question,
+  });
+
+  await clickTestId(surface, 'abort-session');
+  const asking = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.abort.question !== null ? state : null;
+    },
+    { label: 'the abort question' },
+  );
+  record('abort-asks-whether-to-restore', asking.abort.question === 'Restore all extensions?', {
+    question: asking.abort.question,
+  });
+  record(
+    'abort-defaults-to-yes',
+    asking.abort.restoreDefault === 'true' &&
+      asking.abort.restoreLabel !== null &&
+      asking.abort.leaveLabel !== null &&
+      asking.abort.cancelLabel !== null,
+    { abort: asking.abort },
+  );
+  record(
+    'abort-asks-before-it-toggles-anything',
+    JSON.stringify(await readExtensionEnabledStates(surface, candidateIds)) ===
+      JSON.stringify(Object.fromEntries(candidateIds.map((id) => [id, beforeAbort[id]]))) &&
+      asking.screen === 'baseline',
+    { screen: asking.screen },
+  );
+
+  await clickTestId(surface, 'abort-cancel');
+  const cancelled = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.abort.question === null ? state : null;
+    },
+    { label: 'the abort question closing' },
+  );
+  record('abort-can-be-cancelled', cancelled.screen === 'baseline' && cancelled.abort.question === null, {
+    screen: cancelled.screen,
+  });
+
+  // ---- Answering "no": the state is kept and the choice is recorded ------------------
+  await clickTestId(surface, 'abort-session');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.abort.question !== null ? state : null;
+    },
+    { label: 'the abort question again' },
+  );
+  await clickTestId(surface, 'abort-leave');
+  const declined = await waitForScreen(surface, 'aborted');
+
+  record('aborting-without-restore-lands-on-the-aborted-screen', declined.screen === 'aborted', {
+    screen: declined.screen,
+  });
+  record(
+    'aborted-screen-says-the-extensions-move-nothing',
+    (declined.aborted.explanation ?? '').includes('still in the state the session left them'),
+    { explanation: declined.aborted.explanation },
+  );
+  record('aborted-screen-offers-restore', declined.aborted.restoreLabel === 'Restore all extensions', {
+    restoreLabel: declined.aborted.restoreLabel,
+  });
+
+  const afterDeclined = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  record(
+    'aborting-without-restore-leaves-the-browser-alone',
+    JSON.stringify(afterDeclined) === JSON.stringify(beforeAbort),
+    {
+      beforeAbort,
+      afterDeclined,
+    },
+  );
+
+  const declinedLog = await readPersistedBisectLog(surface);
+  const declinedReset = (declinedLog?.events ?? []).at(-1);
+  record(
+    'aborting-without-restore-records-the-decision',
+    declinedReset?.type === 'session-reset' &&
+      declinedReset.payload.restored === false &&
+      declinedReset.payload.declined === true,
+    { lastEvent: declinedReset },
+  );
+  record(
+    'declined-abort-keeps-the-restore-owed',
+    declined.newSession.blocked === 'true' && (declined.newSession.note ?? '').includes('Restore all extensions first'),
+    { newSession: declined.newSession },
+  );
+
+  // ---- Answering "yes": the restore runs and the log says so -------------------------
+  await clickTestId(surface, 'aborted-restore');
+  const abortRestored = await waitForScreen(surface, 'restored');
+  record('aborting-with-restore-lands-on-the-restored-screen', abortRestored.screen === 'restored', {
+    screen: abortRestored.screen,
+  });
+  record('aborting-with-restore-reports-a-complete-restore', abortRestored.restore.complete === 'true', {
+    complete: abortRestored.restore.complete,
+    summary: abortRestored.restore.summary,
+  });
+
+  const afterAbortRestore = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  record(
+    'aborting-with-restore-re-enables-only-the-touched-candidates',
+    candidateIds.every((id) => afterAbortRestore[id] === true) &&
+      untouchableIds.every((id) => afterAbortRestore[id] === before[id]),
+    { before, afterAbortRestore, candidateIds, untouchableIds },
+  );
+
   const errors = collectErrors(session.recorder);
   record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
   record('no-page-errors', errors.pageErrors.length === 0, { errors: errors.pageErrors });

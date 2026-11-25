@@ -260,14 +260,25 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
     case 'session-reset':
       acc.manualBatch = null;
       acc.pause = null;
-      acc.resetRecorded = true;
+      /**
+       * A declined abort records the user's decision but re-enables nothing, so it is not
+       * a restore: `restorePending` has to stay true, or the panel would offer a new
+       * session from a browser that is still reduced and the startup offer would go quiet.
+       */
+      if (event.payload.declined !== true) acc.resetRecorded = true;
       acc.restore = {
         restored: event.payload.restored,
         errors: event.payload.errors,
         manualIds: [...(event.payload.manualIds ?? [])],
         accepted: event.payload.accepted === true,
+        declined: event.payload.declined === true,
       };
-      acc.status = acc.abortReason === null ? 'restored' : 'aborted';
+      /**
+       * A declined abort is the one reset that leaves the browser reduced on purpose, so
+       * the session lands on `aborted` — the status whose meaning is "the user stopped;
+       * restore is pending or declined" — instead of the `restored` audit state.
+       */
+      acc.status = acc.abortReason === null && event.payload.declined !== true ? 'restored' : 'aborted';
       return;
   }
 }

@@ -236,7 +236,7 @@ describe('session messaging protocol', () => {
 
     expect(result.session.status).toBe('aborted');
     expect(result.session.abortReason).toBe('host-issue');
-    expect(result.restore).toEqual({ restored: true, errors: [], manualIds: [] });
+    expect(result.restore).toEqual({ restored: true, errors: [], manualIds: [], declined: false });
   });
 
   it('returns a null restore outcome when the verdict appends no session-reset', async () => {
@@ -278,6 +278,7 @@ describe('session messaging protocol', () => {
       restored: false,
       errors: [{ extensionId: 'aaaa', code: 'manual-recovery-required', message: 'greylisted' }],
       manualIds: [],
+      declined: false,
     });
     expect(result.session.status).toBe('restored');
   });

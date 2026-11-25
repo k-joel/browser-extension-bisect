@@ -1100,6 +1100,68 @@ export function resetSession(
   });
 }
 
+/** The statuses an abort can end: anything short of a recorded terminal audit state. */
+const ABORTABLE_STATUSES: readonly SessionStatus[] = [
+  'preparing',
+  'baseline',
+  'trial',
+  'applying',
+  'awaiting-verdict',
+  'awaiting-manual-toggle',
+  'paused',
+];
+
+/**
+ * SPEC §Error handling, `User aborts`: the UI asks "Restore all?" with yes as the default
+ * and records the decision.
+ *
+ * Both answers end the session and both are recorded as a `session-reset`, because the
+ * event is the audit record of what happened to the browser. The difference is what it
+ * says. Yes runs the ordinary restore and reports what it actually managed, so a partial
+ * re-enable is still partial. No re-enables nothing, leaves every extension exactly as the
+ * session left it, and records `declined: true` so a later reader — the restored screen,
+ * the startup offer, `restorePending` — can tell a decision from a failure instead of
+ * inferring one from an empty error list.
+ *
+ * The declined case deliberately does not record the reset as satisfying the restore: the
+ * extensions the session touched are still off, so `restorePending` stays true and the
+ * panel keeps holding back a new session until someone really restores.
+ */
+export function abortSession(
+  rawDependencies: SessionDependencies,
+  payload: { restore: boolean },
+): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+
+    if (!ABORTABLE_STATUSES.includes(view.status)) {
+      throw new SessionError(`The session is already over (${view.status}), so there is nothing to abort.`);
+    }
+
+    if (!payload.restore) {
+      return viewOf(
+        await appendAndPersist(log, 'session-reset', dependencies.now(), {
+          restored: false,
+          errors: [],
+          manualIds: [],
+          declined: true,
+        }),
+      );
+    }
+
+    const restored = await restoreTouched(dependencies, view);
+    return viewOf(
+      await appendAndPersist(log, 'session-reset', dependencies.now(), {
+        restored: restored.complete,
+        errors: restored.errors,
+        manualIds: restored.manualIds,
+      }),
+    );
+  });
+}
+
 export function bindTestTab(_dependencies: SessionDependencies, payload: TestTabBinding): Promise<BisectConfig> {
   return serialize(async () => updateBisectConfig({ testTab: { tabId: payload.tabId, url: payload.url } }));
 }

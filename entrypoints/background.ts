@@ -5,6 +5,7 @@ import { readBisectLog, reduceLog } from '@/utils/bisect/events';
 import { createFirefoxPort } from '@/utils/bisect/firefox-port';
 import { replayLog } from '@/utils/bisect/replay';
 import {
+  abortSession,
   acceptRestore,
   applyTrial,
   assistedSessionIsWaiting,
@@ -111,6 +112,7 @@ async function readRestoreOutcome(): Promise<NonNullable<SessionMutationResult['
     restored: last.payload.restored,
     errors: last.payload.errors,
     manualIds: last.payload.manualIds ?? [],
+    declined: last.payload.declined === true,
   };
 }
 
@@ -230,6 +232,14 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
       tracked(async () => {
         const session = await resetSession(sessionDependencies(), data);
         return { session, restore: data.restore ? await readRestoreOutcome() : null };
+      }),
+  );
+  messenger.onMessage(
+    'abortSession',
+    ({ data }): Promise<SessionMutationResult> =>
+      tracked(async () => {
+        const session = await abortSession(sessionDependencies(), data);
+        return { session, restore: await readRestoreOutcome() };
       }),
   );
   messenger.onMessage(

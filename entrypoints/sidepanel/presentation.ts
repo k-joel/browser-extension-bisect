@@ -68,6 +68,7 @@ export type PanelScreen =
   | 'history'
   | 'replay'
   | 'host-issue'
+  | 'aborted'
   | 'completed'
   | 'inconclusive'
   | 'restored'
@@ -84,6 +85,8 @@ export interface RestoreOutcome {
   restored: boolean;
   errors: RestoreError[];
   manualIds?: string[];
+  /** The user answered "no" to the abort question: knowingly left the extensions off. */
+  declined?: boolean;
 }
 
 export interface RestoreFailure {
@@ -264,6 +267,7 @@ export function resolveScreen({
     return isToggleFailure(session) ? 'toggle-failure' : 'paused';
   }
   if (session.status === 'aborted' && session.abortReason === 'host-issue') return 'host-issue';
+  if (session.status === 'aborted') return 'aborted';
   if (session.status === 'completed' && session.culpritId !== null) return 'completed';
   if (session.status === 'inconclusive') return 'inconclusive';
   if (isAssistedBaseline(session)) return 'assisted-baseline';
@@ -283,6 +287,31 @@ const TERMINAL_STATUSES: readonly SessionStatus[] = ['completed', 'inconclusive'
 
 export function isTerminalStatus(status: SessionStatus): boolean {
   return TERMINAL_STATUSES.includes(status);
+}
+
+/**
+ * The screens where a session is still running and the user may stop it. The picker has
+ * no session to abort, the history and replay are read-only views of one, and the
+ * terminal screens are exactly what an abort produces — offering Stop there would be a
+ * second way to do what Restore and Start over already do.
+ */
+const ABORTABLE_SCREENS: readonly PanelScreen[] = [
+  'baseline',
+  'assisted-baseline',
+  'assisted-trial',
+  'trial',
+  'paused',
+  'toggle-failure',
+  'snapshot-change',
+  'progress',
+];
+
+/**
+ * SPEC §Error handling, `User aborts`: the abort action belongs to the live session, so
+ * it is offered wherever a session still has work to do and nowhere else.
+ */
+export function isAbortableScreen(screen: PanelScreen): boolean {
+  return ABORTABLE_SCREENS.includes(screen);
 }
 
 export interface NewSessionOffer {

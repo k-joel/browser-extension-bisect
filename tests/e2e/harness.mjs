@@ -773,6 +773,27 @@ export async function readSessionState(page) {
         note: text('new-session-note'),
         policy: text('new-session-policy'),
       },
+      /**
+       * SPEC §Error handling, `User aborts`. `restoreDefault` names which of the two
+       * answers the panel marks as the default one, so a scenario can prove the SPEC's
+       * "default yes" instead of reading the answer order.
+       */
+      abort: {
+        visible: document.querySelector('[data-testid="abort-panel"]') !== null,
+        actionLabel: document.querySelector('[data-testid="abort-session"]')?.textContent?.trim() ?? null,
+        question: text('abort-question'),
+        detail: text('abort-detail'),
+        restoreLabel: document.querySelector('[data-testid="abort-restore"]')?.textContent?.trim() ?? null,
+        restoreDefault: document.querySelector('[data-testid="abort-restore"]')?.getAttribute('data-default') ?? null,
+        leaveLabel: document.querySelector('[data-testid="abort-leave"]')?.textContent?.trim() ?? null,
+        cancelLabel: document.querySelector('[data-testid="abort-cancel"]')?.textContent?.trim() ?? null,
+      },
+      aborted: {
+        visible: document.querySelector('[data-testid="aborted-screen"]') !== null,
+        explanation: text('aborted-explanation'),
+        guidance: text('aborted-guidance'),
+        restoreLabel: document.querySelector('[data-testid="aborted-restore"]')?.textContent?.trim() ?? null,
+      },
       assisted: {
         explanation: text('assisted-explanation'),
         attestLabel: document.querySelector('[data-testid="assisted-attest"]')?.textContent?.trim() ?? null,
