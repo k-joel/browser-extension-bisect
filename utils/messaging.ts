@@ -95,6 +95,12 @@ export interface ProtocolMap {
    * It is the only command allowed to see a mid-session install or update as a candidate.
    */
   restartSession(): SessionMutationResult;
+  /**
+   * Replaces a terminal session's log with an empty one, which is the only route from a
+   * finished session back to the picker. Refused for a live session and refused while a
+   * restore is still pending.
+   */
+  startNewSession(): SessionView | null;
   confirmManualState(): SessionView;
   recordExternalBaseline(): SessionView;
   verifyRestore(): RestoreResult;

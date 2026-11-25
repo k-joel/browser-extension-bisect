@@ -114,6 +114,7 @@ interface SessionAccumulator {
   testTab: SessionView['testTab'];
   manualBatch: ManualBatch | null;
   pause: SessionPause | null;
+  resetRecorded: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -254,6 +255,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
     case 'session-reset':
       acc.manualBatch = null;
       acc.pause = null;
+      acc.resetRecorded = true;
       acc.status = acc.abortReason === null ? 'restored' : 'aborted';
       return;
   }
@@ -304,6 +306,19 @@ function applyVerdict(acc: SessionAccumulator, verdict: Verdict): void {
   acc.status = 'awaiting-verdict';
 }
 
+/**
+ * The ids any applied batch moved. A session that touched nothing can be replaced
+ * without a restore; one that did must be restored first.
+ */
+function touchedCountOf(trials: readonly Trial[]): number {
+  const touched = new Set<string>();
+  for (const trial of trials) {
+    for (const id of trial.enabledIds) touched.add(id);
+    for (const id of trial.disabledIds) touched.add(id);
+  }
+  return touched.size;
+}
+
 export function reduceLog(log: BisectLog | null): SessionView | null {
   if (log === null || log.events.length === 0) return null;
 
@@ -323,6 +338,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     testTab: null,
     manualBatch: null,
     pause: null,
+    resetRecorded: false,
     createdAt: 0,
     updatedAt: 0,
   };
@@ -330,6 +346,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
   for (const event of log.events) applyEvent(acc, event);
 
   const lastTrial = acc.trials.at(-1) ?? null;
+  const touchedCount = touchedCountOf(acc.trials);
   return {
     sessionId: log.sessionId,
     status: acc.status,
@@ -348,6 +365,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     manualBatch: acc.manualBatch,
     pause: acc.pause,
     changes: acc.pause?.changes ?? [],
+    restorePending: !acc.resetRecorded && touchedCount > 0,
     progress:
       acc.originalEnabledIds.length === 0
         ? null

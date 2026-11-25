@@ -50,7 +50,10 @@ import {
   findCandidate,
   formatTestTab,
   isAssisted,
+  isTerminalStatus,
   manualProgress,
+  type NewSessionOffer,
+  newSessionOffer,
   plural,
   type RestoreOutcome,
   type RestoreSummary,
@@ -154,6 +157,15 @@ const restoreSummary = computed<RestoreSummary | null>(() =>
 );
 
 const restoreAvailable = computed(() => session.value !== null && session.value.status !== 'restored');
+
+/**
+ * The way out of a finished session, offered on the four terminal screens. The SPEC
+ * allows a new session from every one of them; the offer is held back while a restore is
+ * still owed, because the replacement log re-enables nothing.
+ */
+const newSession = computed<NewSessionOffer | null>(() =>
+  session.value === null || !isTerminalStatus(session.value.status) ? null : newSessionOffer(session.value),
+);
 
 /** The pause a failed toggle or a failed escalation opened, if that is what is showing. */
 const togglePause = computed(() => {
@@ -638,6 +650,44 @@ async function restartSession(): Promise<void> {
   await refreshManualState();
 }
 
+/**
+ * A finished session gives way to a new one: the background replaces the log, so the
+ * panel drops every view it cached for the old session and re-reads the candidates. The
+ * result is `null`, which is exactly the "no session" state `resolveScreen` turns into the
+ * picker. It is written out rather than going through `run()` because a `null` result is
+ * the success case here, not the refusal one.
+ */
+async function startNewSession(): Promise<void> {
+  busy.value = true;
+  try {
+    const next = await messenger.sendMessage('startNewSession');
+    errorMessage.value = null;
+    session.value = next;
+    historyOpen.value = false;
+    historyLog.value = null;
+    replayOpen.value = false;
+    replaySource.value = null;
+    replayEdits.value = {};
+    replayResult.value = null;
+    restoreOutcome.value = null;
+    assistedRestore.value = null;
+    restoreAccepted.value = false;
+    reloadMessage.value = null;
+    addonManagerMessage.value = null;
+    manualBatch.value = null;
+    manualDrift.value = null;
+    dismissedSnapshotKeys.value = [];
+    startupReconciliation.value = null;
+    startupDismissed.value = false;
+    preflightOpen.value = false;
+    await refreshConfig();
+  } catch (error) {
+    errorMessage.value = describeError(error);
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function openHistory(): Promise<void> {
   copyStatus.value = null;
   historyLog.value = await run(() => messenger.sendMessage('getLog'));
@@ -916,34 +966,47 @@ onUnmounted(() => {
       />
 
       <InconclusiveScreen
-        v-else-if="screen === 'inconclusive' && session !== null"
+        v-else-if="screen === 'inconclusive' && session !== null && newSession !== null"
         :session="session"
         :busy="busy"
         :restore-summary-headline="restoreSummary?.headline ?? null"
+        :offer="newSession"
         @restore="restore"
         @history="openHistory"
         @replay="openReplay"
+        @start-over="startNewSession"
       />
 
       <HostIssueScreen
-        v-else-if="screen === 'host-issue'"
+        v-else-if="screen === 'host-issue' && newSession !== null"
         :restore-summary-headline="restoreSummary?.headline ?? null"
+        :offer="newSession"
         :busy="busy"
         @restore="restore"
+        @start-over="startNewSession"
       />
 
       <CompletedScreen
-        v-else-if="screen === 'completed'"
+        v-else-if="screen === 'completed' && newSession !== null"
         :culprit="culprit"
         :culprit-id="session?.culpritId ?? ''"
         :busy="busy"
         :restore-summary-headline="restoreSummary?.headline ?? null"
+        :offer="newSession"
         @restore="restore"
         @history="openHistory"
         @replay="openReplay"
+        @start-over="startNewSession"
       />
 
-      <RestoredScreen v-else-if="screen === 'restored'" :summary="restoreSummary" :busy="busy" @restore="restore" />
+      <RestoredScreen
+        v-else-if="screen === 'restored' && newSession !== null"
+        :summary="restoreSummary"
+        :offer="newSession"
+        :busy="busy"
+        @restore="restore"
+        @start-over="startNewSession"
+      />
 
       <SessionProgress v-else-if="screen === 'progress' && session !== null" :session="session" />
 

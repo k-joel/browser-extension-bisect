@@ -1058,6 +1058,49 @@ export function bindTestTab(_dependencies: SessionDependencies, payload: TestTab
   return serialize(async () => updateBisectConfig({ testTab: { tabId: payload.tabId, url: payload.url } }));
 }
 
+/**
+ * The way out of a finished session. SPEC §Session lifecycle allows
+ * `completed|inconclusive|aborted → restored, new session` and `restored → preparing`,
+ * and this is the only command that creates the second log: the terminal screens
+ * otherwise have no route back to the picker.
+ *
+ * Two rules keep it honest. The session must be terminal, so "one active session" still
+ * holds and a live search can never be discarded by a stray click. And the touched
+ * candidates must already be restored when the session applied anything, because the
+ * new log starts from "every candidate is enabled" and nothing else would re-enable
+ * them — this command deliberately toggles nothing, so a lost log cannot strand the
+ * browser in a reduced state.
+ *
+ * The replacement is an empty log rather than a deleted one: `readBisectLog` returns
+ * `null` for both, but a stored log keeps the storage item's shape valid and makes the
+ * change a normal append-only write through the one writer.
+ */
+const REPLACEABLE_STATUSES: readonly SessionStatus[] = ['completed', 'inconclusive', 'aborted', 'restored'];
+
+export function startNewSession(rawDependencies: SessionDependencies): Promise<SessionView | null> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await readBisectLog();
+    const view = reduceLog(log);
+    if (log === null || view === null) return null;
+
+    if (!REPLACEABLE_STATUSES.includes(view.status)) {
+      throw new SessionError(
+        `The session is ${view.status}, so this session is still live: finish or abort it before starting a new one. The add-on cannot replace it yet.`,
+      );
+    }
+    if (view.restorePending) {
+      throw new SessionError(
+        'Restore the extensions this session changed before starting a new session, so none of them is left disabled.',
+      );
+    }
+
+    const next = createEmptyLog(dependencies.newSessionId());
+    await writeBisectLog(next);
+    return reduceLog(next);
+  });
+}
+
 export function reloadTestTab(rawDependencies: SessionDependencies): Promise<ReloadTestTabResult> {
   const dependencies = resolveDependencies(rawDependencies);
   return serialize(async () => {

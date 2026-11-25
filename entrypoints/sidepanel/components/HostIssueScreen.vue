@@ -1,10 +1,14 @@
 <script setup lang="ts">
+import type { NewSessionOffer } from '../presentation';
+import NewSessionAction from './NewSessionAction.vue';
+
 defineProps<{
   restoreSummaryHeadline: string | null;
+  offer: NewSessionOffer;
   busy: boolean;
 }>();
 
-const emit = defineEmits<(event: 'restore') => void>();
+const emit = defineEmits<(event: 'restore' | 'start-over') => void>();
 </script>
 
 <template>
@@ -24,5 +28,7 @@ const emit = defineEmits<(event: 'restore') => void>();
         Restore all extensions
       </button>
     </div>
+
+    <NewSessionAction :offer="offer" :busy="busy" @start-over="emit('start-over')" />
   </section>
 </template>

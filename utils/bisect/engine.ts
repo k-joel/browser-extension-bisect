@@ -26,6 +26,13 @@ export interface SearchState {
 
 export const MAX_FINAL_CONFIRMATIONS = 1;
 
+/**
+ * The documented lifecycle (SPEC §Session lifecycle). "new session" is the one edge that
+ * leaves the log behind: every terminal state allows it, but the replacement log starts at
+ * `preparing`, so it only appears where the product can actually take it — a host-issue
+ * abort keeps the status `aborted` after its restore, which is why `aborted` lists
+ * `preparing` directly and `completed`/`inconclusive` reach it through `restored`.
+ */
 export const SESSION_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   preparing: ['baseline', 'aborted'],
   baseline: ['trial', 'aborted'],
@@ -36,7 +43,7 @@ export const SESSION_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
   paused: ['trial', 'awaiting-verdict', 'aborted'],
   completed: ['restored'],
   inconclusive: ['restored'],
-  aborted: ['restored'],
+  aborted: ['restored', 'preparing'],
   restored: ['preparing'],
 };
 

@@ -153,6 +153,7 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     manualBatch: null,
     pause: null,
     changes: [],
+    restorePending: false,
     createdAt: 1,
     updatedAt: 2,
     ...overrides,

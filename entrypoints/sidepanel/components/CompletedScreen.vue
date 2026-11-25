@@ -1,17 +1,21 @@
 <script setup lang="ts">
 import type { CandidateExtension } from '@/utils/bisect/domain';
+import type { NewSessionOffer } from '../presentation';
+import NewSessionAction from './NewSessionAction.vue';
 
 defineProps<{
   culprit: CandidateExtension | null;
   culpritId: string;
   busy: boolean;
   restoreSummaryHeadline: string | null;
+  offer: NewSessionOffer;
 }>();
 
 const emit = defineEmits<{
   (event: 'restore'): void;
   (event: 'history'): void;
   (event: 'replay'): void;
+  (event: 'start-over'): void;
 }>();
 </script>
 
@@ -42,5 +46,7 @@ const emit = defineEmits<{
     <p id="completed-replay-note" class="note" data-testid="completed-replay-note">
       Replay works on a copy of the log and never changes installed extensions.
     </p>
+
+    <NewSessionAction :offer="offer" :busy="busy" @start-over="emit('start-over')" />
   </section>
 </template>

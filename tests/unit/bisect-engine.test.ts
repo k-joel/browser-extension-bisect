@@ -359,7 +359,7 @@ describe('session transition table', () => {
       paused: ['trial', 'awaiting-verdict', 'aborted'],
       completed: ['restored'],
       inconclusive: ['restored'],
-      aborted: ['restored'],
+      aborted: ['restored', 'preparing'],
       restored: ['preparing'],
     };
 
@@ -372,5 +372,27 @@ describe('session transition table', () => {
     expect(canTransition('completed', 'trial')).toBe(false);
     expect(canTransition('inconclusive', 'trial')).toBe(false);
     expect(canTransition('restored', 'preparing')).toBe(true);
+  });
+
+  /**
+   * SPEC §Session lifecycle: `completed|inconclusive|aborted → restored, new session` and
+   * `restored → preparing`. A new session is a new log, so the only status it can land on
+   * is `preparing`; every terminal state has to reach it, directly or through `restored`.
+   */
+  it('lets every terminal state reach a fresh session', () => {
+    expect(canTransition('completed', 'restored')).toBe(true);
+    expect(canTransition('completed', 'preparing')).toBe(false);
+    expect(canTransition('inconclusive', 'restored')).toBe(true);
+    expect(canTransition('inconclusive', 'preparing')).toBe(false);
+    expect(canTransition('aborted', 'restored')).toBe(true);
+    expect(canTransition('aborted', 'preparing')).toBe(true);
+    expect(canTransition('restored', 'preparing')).toBe(true);
+  });
+
+  it('keeps a live session unreplaceable', () => {
+    const live = ['baseline', 'trial', 'applying', 'awaiting-verdict', 'awaiting-manual-toggle', 'paused'] as const;
+    for (const from of live) {
+      expect(canTransition(from, 'preparing')).toBe(false);
+    }
   });
 });

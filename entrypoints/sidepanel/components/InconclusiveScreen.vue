@@ -1,18 +1,26 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import type { SessionView } from '@/utils/bisect/domain';
-import { ambiguityNames, describeInconclusiveReason, inconclusiveReasonOf } from '../presentation';
+import {
+  ambiguityNames,
+  describeInconclusiveReason,
+  inconclusiveReasonOf,
+  type NewSessionOffer,
+} from '../presentation';
+import NewSessionAction from './NewSessionAction.vue';
 
 const props = defineProps<{
   session: SessionView;
   busy: boolean;
   restoreSummaryHeadline: string | null;
+  offer: NewSessionOffer;
 }>();
 
 const emit = defineEmits<{
   (event: 'restore'): void;
   (event: 'history'): void;
   (event: 'replay'): void;
+  (event: 'start-over'): void;
 }>();
 
 const ambiguity = computed(() => ambiguityNames(props.session));
@@ -66,5 +74,7 @@ const reason = computed(() => describeInconclusiveReason(inconclusiveReasonOf(pr
     <p id="inconclusive-replay-note" class="note" data-testid="inconclusive-replay-note">
       Replay works on a copy of the log and never changes installed extensions.
     </p>
+
+    <NewSessionAction :offer="offer" :busy="busy" @start-over="emit('start-over')" />
   </section>
 </template>

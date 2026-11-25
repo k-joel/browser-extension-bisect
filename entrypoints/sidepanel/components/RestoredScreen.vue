@@ -1,12 +1,14 @@
 <script setup lang="ts">
-import type { RestoreSummary } from '../presentation';
+import type { NewSessionOffer, RestoreSummary } from '../presentation';
+import NewSessionAction from './NewSessionAction.vue';
 
 defineProps<{
   summary: RestoreSummary | null;
+  offer: NewSessionOffer;
   busy: boolean;
 }>();
 
-const emit = defineEmits<(event: 'restore') => void>();
+const emit = defineEmits<(event: 'restore' | 'start-over') => void>();
 </script>
 
 <template>
@@ -28,5 +30,7 @@ const emit = defineEmits<(event: 'restore') => void>();
         Restore again
       </button>
     </div>
+
+    <NewSessionAction :offer="offer" :busy="busy" @start-over="emit('start-over')" />
   </section>
 </template>

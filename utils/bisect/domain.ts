@@ -313,6 +313,12 @@ export interface SessionView {
    * candidate order it started with and the panel can warn about the difference.
    */
   changes: SnapshotChange[];
+  /**
+   * True while no `session-reset` is recorded and the session touched something, so
+   * candidates may still be disabled. Starting a new session is refused until this is
+   * false: replacing the log would otherwise strand the browser in a reduced state.
+   */
+  restorePending: boolean;
   createdAt: number;
   updatedAt: number;
 }

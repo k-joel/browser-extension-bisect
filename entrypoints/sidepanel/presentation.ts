@@ -274,6 +274,41 @@ export function resolveScreen({
 }
 
 /**
+ * The screens the SPEC calls terminal: the search is over and the panel must not sit
+ * there. `completed`, `inconclusive`, `aborted` and `restored` are the four, which is
+ * also the set the reducer marks with no open question.
+ */
+const TERMINAL_STATUSES: readonly SessionStatus[] = ['completed', 'inconclusive', 'aborted', 'restored'];
+
+export function isTerminalStatus(status: SessionStatus): boolean {
+  return TERMINAL_STATUSES.includes(status);
+}
+
+export interface NewSessionOffer {
+  /** The action's label. "Start over" reads better while a restore is still owed. */
+  label: string;
+  /** Why the action is held back, or `null` when it is available. */
+  blockedReason: string | null;
+}
+
+/**
+ * The way out of a finished session. SPEC §Session lifecycle allows a new session from
+ * every terminal state, but only once nothing the session changed is left disabled: the
+ * replacement log starts from "every candidate is enabled" and re-enables nothing, so a
+ * pending restore has to be taken first.
+ */
+export function newSessionOffer(view: SessionView): NewSessionOffer {
+  if (view.restorePending) {
+    return {
+      label: 'Start over',
+      blockedReason:
+        'Restore all extensions first, so the new session starts from a browser where nothing is left off.',
+    };
+  }
+  return { label: 'Start a new session', blockedReason: null };
+}
+
+/**
  * A manual all-off batch still waiting on the user. Only the baseline is in scope
  * here; an assisted partition batch has its own screen, because it asks the user to
  * enable *and* disable and must not offer a verdict before the state is verified.

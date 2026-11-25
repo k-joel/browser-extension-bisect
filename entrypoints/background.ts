@@ -25,6 +25,7 @@ import {
   retryTrial,
   type SessionDependencies,
   SessionError,
+  startNewSession,
   startSession,
   submitVerdict,
   TEST_TAB_SETTLE_TIMEOUT_MS,
@@ -187,6 +188,7 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
     const session = await restartSession(sessionDependencies());
     return { session, restore: await readRestoreOutcome() };
   });
+  messenger.onMessage('startNewSession', () => startNewSession(sessionDependencies()));
   messenger.onMessage('confirmManualState', () => confirmManualState(sessionDependencies()));
   messenger.onMessage('recordExternalBaseline', () => recordExternalBaseline(sessionDependencies()));
   messenger.onMessage('verifyRestore', (): Promise<RestoreResult> => verifyRestore(sessionDependencies()));
