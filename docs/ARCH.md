@@ -477,6 +477,7 @@ popup button click
 3. `listCandidates` ──► `ManagementPort.listCandidates()` ──► `management.getAll()` + `getSelf()`, filtered by the shared `partitionCandidates` helper. Eligibility is intrinsic only; user exclusions live in the config ([ADR-016](DECISIONS.md)).
 4. The panel builds picker rows with `buildPickerRows(eligible, excludedIds)`, which marks excluded candidates as unchecked rows, then renders both lists plus the live-region count. The "Not eligible" section renders `ineligible` as-is — every entry there is an extension the user cannot act on.
 5. `getSession` ──► `reduceLog(await readBisectLog())`; `resolveScreen` then picks `baseline`, `host-issue`, `completed`, `restored`, `progress`, or the picker, so a panel reload or a restarted worker lands back on the same screen. Nothing is toggled by a read.
+6. `getStartupReconciliation` ──► `reconcileStartup(deps)`, which derives the view, compares it with `getAll()`, and reports the offer without writing anything. The panel renders it above the screen only when `restarted` is true and `offers` is non-empty, so a live session is never interrupted. See [4.1.3](#413-startup-reconciliation-and-multi-panel-convergence).
 
 ### 4.1.1 History and copy (read-only)
 
@@ -491,6 +492,14 @@ popup button click
 3. "Replay the corrected copy" builds a **fresh plain object** with `applyReplayEdits(source, { ...edits })` — an explicit unwrap so no Vue proxy ever crosses the messaging boundary ([lesson 17](NOTES.md)) — and sends `replayLog`. The handler in `background.ts` calls `replayLog(log)` from `utils/bisect/replay.ts` directly: no queue entry, no write.
 4. `replayLog` validates the session start and the candidate order, then recomputes the baseline and every partition from the verdict sequence alone, reusing `engine.ts` (`nextOutcome`, `narrowSuspects`, `clearedOf`) so a replayed search cannot partition or conclude differently from a live one. The recorded `trial-started` sets are only diffed into `batchDifferences`; they are never authoritative. The first structurally invalid event short-circuits into `validationError`.
 5. The result renders the culprit or the ambiguity set, the recomputed trials, every recorded batch that disagrees, and — for an invalid copy — the first invalid event. "Copy the replay report" renders `buildReplayReportModel` through the ISS-007 `renderBisectReport` renderer with a replay header naming the differing batches, then writes through the same `copyText` chain.
+
+### 4.1.3 Startup reconciliation and multi-panel convergence
+
+1. `runtime.onStartup` fires only for a real browser start (never for a service-worker revival), so `recordBrowserStart()` stores a small signal naming the session id and event count it saw. Reconciliation itself is derived on demand: `getStartupReconciliation` ──► `reconcileStartup(deps)`.
+2. `reconcileStartup` derives the view from the log, compares it with `getAll()`, and returns `{ restarted, offers, drift }` without writing anything. An in-flight session offers `['resume', 'restore']`; a session whose restore is still pending offers `['restore']`; a session with nothing outstanding offers `[]`. A signal that does not match the current log is stale and `restarted` is false, so a worker that merely woke up never interrupts the user.
+3. The panel shows the offer above the screen only when `restarted` is true and `offers` is non-empty. Dismissing hides it for that panel only, so the user cannot lose the only way back to a browser whose extensions are still disabled.
+4. **Multi-panel convergence needs no broadcast.** Every panel calls `getSession` on load and then `watchBisectLog`; each successful background mutation writes the log, the storage watch fires in every panel, and `convergeOnPersistedLog()` re-reads the derived view. Panels therefore converge through the log itself, which is the canonical state ([ADR-011](DECISIONS.md)). The panel that took the action already holds the returned view and only refreshes its log-backed screens.
+5. A rejected storage write propagates: no log write means no watch event, the command rejects, and the panel shows `sidepanel-error` with the previous log untouched.
 
 ### 4.2 Popup state load (legacy)
 
