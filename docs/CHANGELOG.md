@@ -175,6 +175,8 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Nine-document agent documentation set under `docs/` (architecture, decision records, glossary, issues, notes, runbook, tech-debt ledger, tools inventory, changelog), each with an embedded maintenance guide and registered in `AGENTS.md`.
 - The v1 bisect specification (`docs/SPEC.md`) and the twelve implementation tickets in `docs/ISSUES.md`.
 - GitHub Actions CI workflow (`.github/workflows/ci.yml`) running the full `npm run agent:verify` gate — lint, typecheck, unit tests, both test-mode builds, and Chrome/Firefox E2E — on every push, pull request, and manual dispatch, plus `.github/CODEOWNERS` ([ADR-020](DECISIONS.md)).
+- Rewritten user-facing `README.md` — install and load steps for both browsers, the quick-start walkthrough with the real screen labels, search mechanics with the verified question counts, the session log, and the privacy and platform facts — with a four-badge header (CI, platform, Node ≥ 22, license) checked against the repository.
+- New `CONTRIBUTING.md` routing to the runbook procedures (RUN-001…006) and the `AGENTS.md` conventions without restating them.
 
 ### Changed
 
