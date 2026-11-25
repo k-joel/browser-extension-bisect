@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import process from 'node:process';
 import { startFixtureServer } from './fixture-server.mjs';
-import { collectErrors, launchTestBrowser, POPUP_ROOT_SELECTOR } from './harness.mjs';
+import { collectErrors, launchTestBrowser, SIDEPANEL_ROOT_SELECTOR } from './harness.mjs';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -31,7 +31,7 @@ function parseArgs(argv) {
   if (!['chrome', 'firefox'].includes(options.browser)) {
     throw new Error(`Invalid --browser value: ${options.browser}`);
   }
-  if (options.action !== null && !['popup', 'none'].includes(options.action)) {
+  if (options.action !== null && !['sidepanel', 'none'].includes(options.action)) {
     throw new Error(`Invalid --action value: ${options.action}`);
   }
   return options;
@@ -112,9 +112,9 @@ async function main() {
     await sleep(options.settleMs);
 
     let inspected = page;
-    if (options.action === 'popup') {
-      inspected = await session.openPopup(page);
-      await inspected.waitForSelector(POPUP_ROOT_SELECTOR, { timeout: options.timeout });
+    if (options.action === 'sidepanel') {
+      inspected = await session.openSurface();
+      await inspected.waitForSelector(SIDEPANEL_ROOT_SELECTOR, { timeout: options.timeout });
       await sleep(options.settleMs);
     }
 

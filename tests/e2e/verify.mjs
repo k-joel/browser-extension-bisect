@@ -10,8 +10,7 @@ import {
   closePage,
   collectErrors,
   disableExtensionThroughSurface,
-  EXTENSION_TAB_ID_ATTRIBUTE,
-  focusPage,
+  focusTestTab,
   hasTestDriverGlobal,
   launchTestBrowser,
   markPageForReloadCheck,
@@ -36,7 +35,6 @@ import {
   setToggleError,
   simulateBrowserRestart,
   uninstallExtension,
-  waitForAttribute,
   waitForLog,
 } from './harness.mjs';
 
@@ -317,8 +315,7 @@ async function runSessionBaselineScenario({ surface, session, installed, testPag
 
   record('preflight-shows-no-session-screen', preflight.screen === 'preflight', { screen: preflight.screen });
 
-  await focusPage(testPage);
-  const testTabId = await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  const testTabId = await focusTestTab(surface, testPage);
   await clickTestId(surface, 'preflight-bind');
   const bound = await waitFor(
     async () => {
@@ -776,8 +773,7 @@ async function runPartitionLoopScenario({ surface, session, installed, testPage,
 
   await clickTestId(surface, 'picker-start');
   await waitForScreen(surface, 'preflight');
-  await focusPage(testPage);
-  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await focusTestTab(surface, testPage);
   await clickTestId(surface, 'preflight-bind');
   await waitFor(
     async () => {
@@ -975,8 +971,7 @@ async function runAssistedBaselineScenario({ surface, session, installed, testPa
     mode: preflight.preflight.mode,
   });
 
-  await focusPage(testPage);
-  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await focusTestTab(surface, testPage);
   await clickTestId(surface, 'preflight-bind');
   await waitFor(
     async () => {
@@ -1181,8 +1176,7 @@ async function runAssistedTrialsScenario({ surface, session, installed, testPage
 
   await clickTestId(surface, 'picker-start');
   await waitForScreen(surface, 'preflight');
-  await focusPage(testPage);
-  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await focusTestTab(surface, testPage);
   await clickTestId(surface, 'preflight-bind');
   await waitFor(
     async () => {
@@ -1415,8 +1409,7 @@ async function runDriftScenario({ surface, session, installed, testPage, fixture
   await waitForCandidateState(surface, (state) => state.state === 'ready');
   await clickTestId(surface, 'picker-start');
   await waitForScreen(surface, 'preflight');
-  await focusPage(testPage);
-  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await focusTestTab(surface, testPage);
   await clickTestId(surface, 'preflight-bind');
   await waitFor(
     async () => {
@@ -1629,8 +1622,7 @@ async function runToggleFailureScenario({ surface, session, installed, testPage,
   async function startSessionAndBind() {
     await clickTestId(surface, 'picker-start');
     await waitForScreen(surface, 'preflight');
-    await focusPage(testPage);
-    await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+    await focusTestTab(surface, testPage);
     await clickTestId(surface, 'preflight-bind');
     await waitFor(
       async () => {
@@ -1937,8 +1929,7 @@ async function runMidSessionChangesScenario({ surface, session, installed, testP
   async function startSessionAndBind() {
     await clickTestId(surface, 'picker-start');
     await waitForScreen(surface, 'preflight');
-    await focusPage(testPage);
-    await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+    await focusTestTab(surface, testPage);
     await clickTestId(surface, 'preflight-bind');
     await waitFor(
       async () => {
@@ -2127,8 +2118,7 @@ async function runStartupConvergenceScenario({ surface, second, installed, testP
 
   await clickTestId(surface, 'picker-start');
   await waitForScreen(surface, 'preflight');
-  await focusPage(testPage);
-  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await focusTestTab(surface, testPage);
   await clickTestId(surface, 'preflight-bind');
   await waitFor(
     async () => {

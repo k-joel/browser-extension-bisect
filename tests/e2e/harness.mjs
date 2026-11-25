@@ -2,9 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
 
-export const EXTENSION_MARKER_ATTRIBUTE = 'data-ext-bisect-state';
-export const EXTENSION_TAB_ID_ATTRIBUTE = 'data-ext-bisect-tab-id';
-export const POPUP_ROOT_SELECTOR = '[data-testid="popup-root"]';
 export const SIDEPANEL_ROOT_SELECTOR = '[data-testid="sidepanel-root"]';
 export const BACKGROUND_READY_LOG = '[EXT_BG_READY]';
 export const BACKGROUND_ERROR_PREFIX = '[EXT_BG_ERR]';
@@ -96,7 +93,7 @@ export async function waitForLog(recorder, predicate, timeout = 10000) {
  * `waitUntil: 'commit'` resolves immediately, so navigate with it and then wait
  * for the app root to exist.
  */
-export async function gotoExtensionPage(page, url, { selector = POPUP_ROOT_SELECTOR, timeout = 20000 } = {}) {
+export async function gotoExtensionPage(page, url, { selector = SIDEPANEL_ROOT_SELECTOR, timeout = 20000 } = {}) {
   const navigation = page.goto(url, { waitUntil: 'commit', timeout }).catch((error) => {
     if (error instanceof Error && error.message.includes('Unknown value for options.waitUntil')) {
       return page.goto(url, { waitUntil: 'domcontentloaded', timeout });
@@ -113,7 +110,7 @@ export async function gotoExtensionPage(page, url, { selector = POPUP_ROOT_SELEC
   throw new Error(`Timed out waiting for "${selector}" at ${url}`);
 }
 
-export async function reloadExtensionPage(page, { selector = POPUP_ROOT_SELECTOR, timeout = 20000 } = {}) {
+export async function reloadExtensionPage(page, { selector = SIDEPANEL_ROOT_SELECTOR, timeout = 20000 } = {}) {
   await page.reload({ waitUntil: 'commit', timeout }).catch((error) => {
     if (error instanceof Error && error.message.includes('Unknown value for options.waitUntil')) {
       return page.reload({ waitUntil: 'domcontentloaded', timeout }).catch(() => undefined);
@@ -129,13 +126,26 @@ export async function reloadExtensionPage(page, { selector = POPUP_ROOT_SELECTOR
   throw new Error(`Timed out waiting for "${selector}" after reload`);
 }
 
-export async function waitForAttribute(page, name, timeout = 15000) {
+/**
+ * Brings the test page to the front and reads the tab id the panel will bind. `tabs.query`
+ * needs no permission and only `url`/`title` are gated behind `tabs`, so the id is readable
+ * from the panel itself — the retired content script used to publish it through a DOM marker.
+ * The panel is a tab of its own, hence the wait for the active tab to stop being the panel.
+ */
+export async function focusTestTab(surface, testPage, timeout = 15000) {
+  await testPage.bringToFront();
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
-    const value = await page
-      .evaluate((attribute) => document.documentElement.getAttribute(attribute), name)
+    const activeId = await surface
+      .evaluate(async () => {
+        const api = globalThis.browser ?? globalThis.chrome;
+        const [active] = await api.tabs.query({ active: true, currentWindow: true });
+        if (active?.id === undefined) return null;
+        const own = await api.tabs.getCurrent().catch(() => null);
+        return own?.id === active.id ? null : active.id;
+      })
       .catch(() => null);
-    if (value !== null) return value;
+    if (activeId !== null) return activeId;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return null;
@@ -232,40 +242,6 @@ async function launchChrome({ headless, recorder, extPath }) {
     extensionId,
     extensionOrigin,
     backgroundWorker,
-    async openPopup(activePage) {
-      const extension = (await browser.extensions()).get(extensionId);
-      if (extension === undefined) throw new Error('Chrome extension handle unavailable');
-
-      const existingUrls = new Set((await extension.pages()).map((page) => page.url()));
-
-      try {
-        await activePage.triggerExtensionAction(extension);
-      } catch {
-        // Fall through to direct navigation below.
-      }
-
-      const deadline = Date.now() + 8000;
-      while (Date.now() < deadline) {
-        const pages = await extension.pages();
-        const opened = pages.find((page) => page.url().includes('/popup.html') && !existingUrls.has(page.url()));
-        if (opened !== undefined) {
-          attachPageListeners(opened, recorder, 'popup');
-          return opened;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-
-      const fallback = await browser.newPage();
-      attachPageListeners(fallback, recorder, 'popup');
-      await gotoExtensionPage(fallback, `${extensionOrigin}/popup.html`);
-      return fallback;
-    },
-    async openSurface() {
-      const page = await browser.newPage();
-      attachPageListeners(page, recorder, 'sidepanel');
-      await gotoExtensionPage(page, `${extensionOrigin}/sidepanel.html`, { selector: SIDEPANEL_ROOT_SELECTOR });
-      return page;
-    },
   };
 }
 
@@ -299,20 +275,6 @@ async function launchFirefox({ headless, recorder, extPath }) {
     extensionId,
     extensionOrigin,
     backgroundWorker: null,
-    async openPopup(activePage) {
-      const tabId = await waitForAttribute(activePage, EXTENSION_TAB_ID_ATTRIBUTE).catch(() => null);
-      const popup = await browser.newPage();
-      attachPageListeners(popup, recorder, 'popup');
-      const query = tabId === null ? '' : `?tabId=${tabId}`;
-      await gotoExtensionPage(popup, `${extensionOrigin}/popup.html${query}`);
-      return popup;
-    },
-    async openSurface() {
-      const page = await browser.newPage();
-      attachPageListeners(page, recorder, 'sidepanel');
-      await gotoExtensionPage(page, `${extensionOrigin}/sidepanel.html`, { selector: SIDEPANEL_ROOT_SELECTOR });
-      return page;
-    },
   };
 }
 
@@ -343,6 +305,14 @@ export async function launchTestBrowser({ browserName, headless = true }) {
       const page = await session.browser.newPage();
       attachPageListeners(page, recorder, 'page:test');
       if (url !== undefined) await page.goto(url, { waitUntil: 'domcontentloaded' });
+      return page;
+    },
+    async openSurface() {
+      const page = await session.browser.newPage();
+      attachPageListeners(page, recorder, 'sidepanel');
+      await gotoExtensionPage(page, `${session.extensionOrigin}/sidepanel.html`, {
+        selector: SIDEPANEL_ROOT_SELECTOR,
+      });
       return page;
     },
     async close() {
