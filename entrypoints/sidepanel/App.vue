@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import type {
   BisectConfig,
   BisectLog,
@@ -16,6 +16,7 @@ import type {
   Verdict,
 } from '@/utils/bisect/domain';
 import { undoEligibilityOf } from '@/utils/bisect/engine';
+import { watchBisectLog } from '@/utils/bisect/events';
 import { messenger, type SessionMutationResult } from '@/utils/messaging';
 import { type CopyStatus, copyText, MANUAL_COPY_MESSAGE } from './clipboard';
 import AssistedBaseline from './components/AssistedBaseline.vue';
@@ -727,9 +728,47 @@ async function copyReport(): Promise<void> {
   await publishCopy('The report', renderBisectReport(model));
 }
 
+/**
+ * Every panel converges on the same session through the persisted log, which is the
+ * mechanism the SPEC allows beside a `sessionChanged` broadcast and the only one that
+ * survives a panel that missed the notification: a mutation changes the stored item, the
+ * background is its only writer, and the browser delivers the change to every extension
+ * context. A panel that was busy, hidden, or opened late therefore converges on its next
+ * read instead of forking the search.
+ *
+ * The panel that took the action already applied the returned view, so it re-reads the
+ * log for its log-backed screens rather than replacing the view it has.
+ */
+let stopWatchingLog: (() => void) | null = null;
+
+function watchForSessionChanges(): void {
+  stopWatchingLog = watchBisectLog(() => {
+    void convergeOnPersistedLog();
+  });
+}
+
+async function convergeOnPersistedLog(): Promise<void> {
+  if (state.value !== 'ready') return;
+  const [current, offer] = await Promise.all([
+    messenger.sendMessage('getSession').catch(() => null),
+    messenger.sendMessage('getStartupReconciliation').catch(() => null),
+  ]);
+  if (current !== null) session.value = current;
+  const worthShowing = offer !== null && offer.offers.length > 0 && offer.restarted;
+  startupReconciliation.value = worthShowing ? offer : null;
+  if (historyOpen.value) await refreshHistoryIfOpen();
+}
+
 defineExpose({ load });
 
 onMounted(load);
+
+onMounted(watchForSessionChanges);
+
+onUnmounted(() => {
+  stopWatchingLog?.();
+  stopWatchingLog = null;
+});
 </script>
 
 <template>
