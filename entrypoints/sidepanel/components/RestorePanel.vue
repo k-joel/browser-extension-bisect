@@ -35,14 +35,26 @@ const emit = defineEmits<(event: 'restore') => void>();
         class="ext"
         data-testid="restore-failure"
         :data-extension-id="failure.id"
+        :data-code="failure.code"
       >
         <span class="ext-name">
           <span class="ext-name-text" data-testid="restore-failure-name">{{ failure.name }}</span>
           <span class="ext-version" data-testid="restore-failure-code">{{ failure.code }}</span>
         </span>
+        <span class="ext-reason" data-testid="restore-failure-guidance">{{ failure.guidance }}</span>
         <span class="ext-reason" data-testid="restore-failure-message">{{ failure.message }}</span>
       </li>
     </ul>
+
+    <p
+      v-if="summary !== null && summary.extensionManagerUrl !== null"
+      class="note"
+      data-testid="restore-manager-url"
+      role="status"
+    >
+      Re-enable the listed extensions yourself in {{ summary.extensionManagerUrl }}, then press Restore again to record
+      the result.
+    </p>
 
     <div class="actions">
       <button

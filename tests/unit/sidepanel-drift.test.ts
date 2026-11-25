@@ -375,7 +375,7 @@ describe('drift screen component contract', () => {
       testTab: null,
       progress: null,
       manualBatch: null,
-      pause: drift === null ? null : { reason: 'drift', drift },
+      pause: drift === null ? null : { reason: 'drift', drift, errors: [] },
       createdAt: 1,
       updatedAt: 2,
     };

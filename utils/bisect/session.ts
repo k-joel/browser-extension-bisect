@@ -15,17 +15,21 @@ import type {
   SessionView,
   TargetState,
   TestTabBinding,
+  ToggleError,
   ToggleResult,
   Verdict,
 } from './domain';
 import { type AnsweredTrial, buildTargetState, partitionSuspects, undoEligibilityOf } from './engine';
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
-import { isManualBatch, rollbackTarget } from './management-port';
+import { isManualBatch, mapToggleError, rollbackTarget } from './management-port';
 
 export const TEST_TAB_SETTLE_TIMEOUT_MS = 15_000;
 
 /** The `session-paused` reason an aborted batch records. */
 export const TOGGLE_FAILED_REASON = 'toggle-failed';
+
+/** The `session-paused` reason a side-panel escalation that failed records. */
+export const ESCALATION_FAILED_REASON = 'escalation-failed';
 
 export interface TestTabSurface {
   reload(tabId: number): Promise<void>;
@@ -207,6 +211,7 @@ async function rollbackAndPause(
   const errors = isManualBatch(rollback) ? [] : rollback.errors;
   return appendAndPersist(log, 'session-paused', dependencies.now(), {
     reason: TOGGLE_FAILED_REASON,
+    errors: result.errors,
     rollback: { restoredIds, errors },
   });
 }
@@ -654,6 +659,74 @@ export function retryTrial(
 
     await reloadAndSettle(dependencies, view.testTab);
     return viewOf(reapplied);
+  });
+}
+
+/**
+ * The recording half of the Chrome permissions escalation. User activation does not
+ * cross a runtime message, so the side panel has to make the `setEnabled` call itself;
+ * the background only records what happened. A success resumes the session from the
+ * pause the failed batch opened, and a failure re-pauses with the browser's code, so
+ * declining or failing always lands on a recovery screen instead of a stuck state.
+ */
+export function recordEscalationResult(
+  rawDependencies: SessionDependencies,
+  payload: { extensionId: string; ok: boolean; error?: string },
+): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+
+    if (view.pause === null) {
+      throw new SessionError('No pause is waiting for an escalation result.');
+    }
+    if (view.status !== 'paused') {
+      throw new SessionError(`Cannot record an escalation while the session is ${view.status}`);
+    }
+
+    if (payload.ok) {
+      return viewOf(await appendAndPersist(log, 'session-resumed', dependencies.now(), { reason: 'escalated' }));
+    }
+
+    const error: ToggleError = {
+      extensionId: payload.extensionId,
+      code: payload.error === undefined ? 'needs-user-gesture' : mapToggleError(new Error(payload.error)),
+      message: payload.error ?? 'The extension could not be enabled from the side panel.',
+    };
+    return viewOf(
+      await appendAndPersist(log, 'session-paused', dependencies.now(), {
+        reason: ESCALATION_FAILED_REASON,
+        errors: [error],
+        rollback: view.pause.rollback ?? null,
+      }),
+    );
+  });
+}
+
+/**
+ * Ends a session the user does not want to continue after an escalation they declined.
+ * The trial is aborted and the touched candidates are restored, so declining cannot
+ * leave extensions disabled with no outcome.
+ */
+export function declineEscalation(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+
+    if (view.status !== 'paused') {
+      throw new SessionError(`Cannot decline an escalation while the session is ${view.status}`);
+    }
+
+    const restored = await restoreTouched(dependencies, view);
+    return viewOf(
+      await appendAndPersist(log, 'session-reset', dependencies.now(), {
+        restored: restored.complete,
+        errors: restored.errors,
+        manualIds: restored.manualIds,
+      }),
+    );
   });
 }
 

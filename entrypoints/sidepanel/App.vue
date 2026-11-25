@@ -34,7 +34,9 @@ import ReplayScreen from './components/ReplayScreen.vue';
 import RestoredScreen from './components/RestoredScreen.vue';
 import RestorePanel from './components/RestorePanel.vue';
 import SessionProgress from './components/SessionProgress.vue';
+import ToggleFailurePanel from './components/ToggleFailurePanel.vue';
 import TrialScreen from './components/TrialScreen.vue';
+import { enableExtensionWithClick } from './escalation';
 import { buildHistory, type HistoryModel, renderBisectReport, serializeBisectLog } from './history';
 import {
   baselineModeFor,
@@ -50,6 +52,7 @@ import {
   resolveScreen,
   selectIncludedCandidates,
   summarizeRestore,
+  toggleFailureRows,
 } from './presentation';
 import {
   applyReplayEdits,
@@ -144,6 +147,15 @@ const restoreSummary = computed<RestoreSummary | null>(() =>
 
 const restoreAvailable = computed(() => session.value !== null && session.value.status !== 'restored');
 
+/** The pause a failed toggle or a failed escalation opened, if that is what is showing. */
+const togglePause = computed(() => {
+  const current = session.value;
+  if (current === null || current.status !== 'paused') return null;
+  const pause = current.pause;
+  if (pause === null) return null;
+  return toggleFailureRows(pause, culprits.value).length > 0 ? pause : null;
+});
+
 const undoEligibility = computed(() => (session.value === null ? null : undoEligibilityOf(session.value)));
 
 const undoBlockedReason = computed(() =>
@@ -190,6 +202,15 @@ const pausedAnnouncement = computed(() => {
   return `Paused on drift: ${parts.join(', ')}. Re-sync, Restore all, or undo the last verdict. ${undoNote}`;
 });
 
+const toggleFailureAnnouncement = computed(() => {
+  const pause = togglePause.value;
+  if (pause === null) return '';
+  const count = plural(pause.errors.length, 'extension');
+  const escalation = pause.errors.some((error) => error.code === 'needs-user-gesture');
+  if (escalation) return `A toggle failed for ${count}. Enable it with a click, or restore all extensions.`;
+  return `A toggle failed for ${count}. Restore all extensions, or re-enable them in the extension manager.`;
+});
+
 const announcement = computed(() => {
   if (state.value === 'loading') return 'Loading extensions…';
   if (state.value === 'error') return 'Extensions could not be loaded';
@@ -206,6 +227,8 @@ const announcement = computed(() => {
       return 'Baseline ready. Answer whether the problem persists.';
     case 'paused':
       return pausedAnnouncement.value;
+    case 'toggle-failure':
+      return toggleFailureAnnouncement.value;
     case 'trial':
       return session.value === null ? '' : describeProgress(session.value);
     case 'inconclusive':
@@ -474,6 +497,33 @@ async function reloadTestTab(): Promise<void> {
   reloadMessage.value = result.ok ? 'The test tab reloaded.' : (result.error ?? 'The test tab could not be reloaded.');
 }
 
+/**
+ * The gesture-bound retry. The `setEnabled` runs here, in the click handler's own task,
+ * because a background handler has no user activation; only the outcome crosses the
+ * message boundary, and the background records it.
+ */
+async function enableWithClick(extensionId: string): Promise<void> {
+  const outcome = await enableExtensionWithClick(extensionId);
+  const payload = outcome.ok
+    ? { extensionId: outcome.extensionId, ok: true }
+    : { extensionId: outcome.extensionId, ok: false, error: outcome.error ?? 'unknown reason' };
+  const result = await run(() => messenger.sendMessage('recordEscalationResult', payload));
+  if (result === null) return;
+  await applyMutation(result);
+  await refreshManualState();
+}
+
+/**
+ * Declining leaves the extensions exactly as they are and ends the session: `resetSession`
+ * restores what the session touched, so a refused escalation always has an outcome.
+ */
+async function declineEscalation(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('declineEscalation'));
+  if (result === null) return;
+  await applyMutation(result);
+  if (isAssisted(capability.value)) await verifyAssistedRestore();
+}
+
 async function openHistory(): Promise<void> {
   copyStatus.value = null;
   historyLog.value = await run(() => messenger.sendMessage('getLog'));
@@ -641,6 +691,15 @@ onMounted(load);
         @verdict="submitVerdict"
         @reload="reloadTestTab"
         @history="openHistory"
+      />
+
+      <ToggleFailurePanel
+        v-else-if="screen === 'toggle-failure' && session !== null && togglePause !== null"
+        :pause="togglePause"
+        :candidates="culprits"
+        :busy="busy"
+        @enable-with-click="enableWithClick"
+        @decline="declineEscalation"
       />
 
       <DriftScreen

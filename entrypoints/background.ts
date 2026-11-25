@@ -9,8 +9,10 @@ import {
   applyTrial,
   bindTestTab,
   confirmManualState,
+  declineEscalation,
   getLog,
   getSession,
+  recordEscalationResult,
   recordExternalBaseline,
   reloadTestTab,
   resetSession,
@@ -185,6 +187,14 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('reloadTestTab', () => reloadTestTab(sessionDependencies()));
 
   messenger.onMessage('getDrift', () => verifyManualState(sessionDependencies()));
+  messenger.onMessage('recordEscalationResult', async ({ data }): Promise<SessionMutationResult> => {
+    const session = await recordEscalationResult(sessionDependencies(), data);
+    return { session, restore: await readRestoreOutcome() };
+  });
+  messenger.onMessage('declineEscalation', async (): Promise<SessionMutationResult> => {
+    const session = await declineEscalation(sessionDependencies());
+    return { session, restore: await readRestoreOutcome() };
+  });
   messenger.onMessage('confirmManualState', () => confirmManualState(sessionDependencies()));
   messenger.onMessage('recordExternalBaseline', () => recordExternalBaseline(sessionDependencies()));
   messenger.onMessage('verifyRestore', (): Promise<RestoreResult> => verifyRestore(sessionDependencies()));

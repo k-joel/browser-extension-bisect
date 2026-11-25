@@ -92,6 +92,14 @@ export interface ProtocolMap {
   bindTestTab(payload: BindTestTabRequest): BisectConfig;
   reloadTestTab(): ReloadTestTabResult;
   getDrift(): DriftReport;
+  /**
+   * Records the outcome of the `setEnabled` the side panel made itself. User activation
+   * does not cross a runtime message, so the panel owns that call and the background only
+   * writes the result: success resumes the paused session, failure re-pauses it.
+   */
+  recordEscalationResult(payload: { extensionId: string; ok: boolean; error?: string }): SessionMutationResult;
+  /** Ends the session and restores the touched candidates after a declined escalation. */
+  declineEscalation(): SessionMutationResult;
   confirmManualState(): SessionView;
   recordExternalBaseline(): SessionView;
   verifyRestore(): RestoreResult;

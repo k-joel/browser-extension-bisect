@@ -120,6 +120,12 @@ export type DriftCategory = 'pending' | 'unexpected' | 'missing';
 export interface SessionPause {
   reason: string;
   drift: DriftReport | null;
+  /**
+   * The toggles that failed and could not be rolled back into place. Naming them on the
+   * pause itself is what lets the panel offer the recovery its code asks for, and it
+   * keeps the per-id code readable long after the batch's `trial-applied` was written.
+   */
+  errors: ToggleError[];
   /** Present when the pause aborted a batch that could not be applied. */
   rollback?: ToggleRollback | null;
 }
@@ -156,7 +162,7 @@ export interface BisectEventPayloads {
   'verdict-recorded': { round: number; verdict: Verdict };
   'trial-retried': { round: number; reason?: string };
   'verdict-undone': { round: number };
-  'session-paused': { reason: string; drift?: DriftReport; rollback?: ToggleRollback };
+  'session-paused': { reason: string; drift?: DriftReport; errors?: ToggleError[]; rollback?: ToggleRollback | null };
   'session-resumed': { reason: string };
   'session-completed': { culpritId: string };
   'session-inconclusive': { ambiguityIds: string[]; reason: string };

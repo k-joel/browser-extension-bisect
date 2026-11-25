@@ -8,9 +8,11 @@ import type {
   IneligibleReason,
   ManualBatch,
   RestoreError,
+  SessionPause,
   SessionStatus,
   SessionView,
   TestTabBinding,
+  ToggleErrorCode,
   Verdict,
 } from '@/utils/bisect/domain';
 
@@ -57,6 +59,7 @@ export type PanelScreen =
   | 'assisted-trial'
   | 'trial'
   | 'paused'
+  | 'toggle-failure'
   | 'history'
   | 'replay'
   | 'host-issue'
@@ -83,12 +86,15 @@ export interface RestoreFailure {
   name: string;
   code: string;
   message: string;
+  guidance: string;
 }
 
 export interface RestoreSummary {
   complete: boolean;
   headline: string;
   failures: RestoreFailure[];
+  /** The browser's extension manager, for the failures that can only be fixed there. */
+  extensionManagerUrl: string | null;
 }
 
 export function formatIneligibleReason(reason: IneligibleReason): string {
@@ -248,7 +254,7 @@ export function resolveScreen({
   if (replayOpen) return 'replay';
   if (historyOpen) return 'history';
   if (session.status === 'restored') return 'restored';
-  if (session.status === 'paused') return 'paused';
+  if (session.status === 'paused') return isToggleFailure(session) ? 'toggle-failure' : 'paused';
   if (session.status === 'aborted' && session.abortReason === 'host-issue') return 'host-issue';
   if (session.status === 'completed' && session.culpritId !== null) return 'completed';
   if (session.status === 'inconclusive') return 'inconclusive';
@@ -290,14 +296,17 @@ export function summarizeRestore(outcome: RestoreOutcome, candidates: CandidateE
     name: candidates.find((candidate) => candidate.id === error.extensionId)?.name ?? error.extensionId,
     code: error.code,
     message: error.message,
+    guidance: describeRecovery(error.code),
   }));
   const complete = outcome.restored && failures.length === 0;
+  const requiresManager = outcome.errors.some((error) => recoveryNeedsExtensionManager(error.code));
   return {
     complete,
     headline: complete
       ? 'All touched extensions are enabled again.'
       : `Restore incomplete: ${plural(failures.length, 'extension')} could not be re-enabled.`,
     failures,
+    extensionManagerUrl: requiresManager ? EXTENSION_MANAGER_URL : null,
   };
 }
 
@@ -514,4 +523,96 @@ export function formatSyncState(expected: 'On' | 'Off' | null, actual: 'On' | 'O
   if (expected === null) return `Expected: unknown · now ${actual}`;
   if (actual === null) return `Expected: ${expected} · no longer installed`;
   return `Expected: ${expected} · now ${actual}`;
+}
+
+export const EXTENSION_MANAGER_URL = 'chrome://extensions';
+
+/**
+ * Where the user has to finish the job by hand when the add-on cannot. The browser's
+ * extension manager is the only place a greylisted or policy-locked re-enable can be
+ * completed, so every manual-recovery surface names it instead of implying the add-on
+ * will retry.
+ */
+const RECOVERY_GUIDANCE: Record<ToggleErrorCode, string> = {
+  'needs-user-gesture': 'Chrome needs a click on this add-on’s own page before it will re-enable the extension.',
+  'manual-recovery-required': `The browser blocked the re-enable. Turn the extension back on yourself in ${EXTENSION_MANAGER_URL}.`,
+  'policy-blocked': `An administrator policy locks this extension. Only ${EXTENSION_MANAGER_URL} can tell you whether it can be enabled at all.`,
+  'extension-removed': 'The extension is no longer installed, so there is nothing left to restore.',
+  'unsupported-requirements': `The browser refused the change. Re-enable the extension yourself in ${EXTENSION_MANAGER_URL}.`,
+};
+
+export function describeRecovery(code: ToggleErrorCode): string {
+  return RECOVERY_GUIDANCE[code];
+}
+
+export function recoveryNeedsExtensionManager(code: ToggleErrorCode): boolean {
+  return code !== 'needs-user-gesture';
+}
+
+export interface ToggleFailureRow {
+  id: string;
+  name: string;
+  code: ToggleErrorCode;
+  message: string;
+  guidance: string;
+}
+
+/**
+ * The per-id failure list a pause renders. It is derived from the pause's own errors, so
+ * the screen shows exactly the ids and codes the batch recorded and nothing is inferred
+ * from the trial's position.
+ */
+export function toggleFailureRows(pause: SessionPause | null, candidates: CandidateExtension[]): ToggleFailureRow[] {
+  if (pause === null) return [];
+  return pause.errors.map((error) => ({
+    id: error.extensionId,
+    name: candidates.find((candidate) => candidate.id === error.extensionId)?.name ?? error.extensionId,
+    code: error.code,
+    message: error.message,
+    guidance: describeRecovery(error.code),
+  }));
+}
+
+export interface EscalationRequest {
+  id: string;
+  name: string;
+}
+
+/**
+ * The single gesture-bound retry the SPEC allows. Only a `needs-user-gesture` failure can
+ * be completed from the panel, and only one extension at a time, so the action stays a
+ * single named extension rather than a batch.
+ */
+export function escalationRequestOf(
+  pause: SessionPause | null,
+  candidates: CandidateExtension[],
+): EscalationRequest | null {
+  const row = toggleFailureRows(pause, candidates).find((entry) => entry.code === 'needs-user-gesture');
+  return row === undefined ? null : { id: row.id, name: row.name };
+}
+
+/**
+ * True when the pause needs manual recovery the add-on cannot automate. The panel then
+ * shows the extension-manager instructions and Restore instead of an escalation button.
+ */
+export function needsManualRecovery(pause: SessionPause | null): boolean {
+  if (pause === null) return false;
+  return pause.errors.some(
+    (error) =>
+      error.code === 'manual-recovery-required' ||
+      error.code === 'policy-blocked' ||
+      error.code === 'extension-removed',
+  );
+}
+
+/**
+ * A pause the add-on itself caused by refusing a toggle, as opposed to one it found in
+ * the browser. The two need different screens: drift is something the user changed and
+ * can re-sync, a toggle failure is something the browser refused and only restore or a
+ * gesture can finish.
+ */
+export function isToggleFailure(view: SessionView): boolean {
+  const pause = view.pause;
+  if (view.status !== 'paused' || pause === null) return false;
+  return pause.errors.length > 0;
 }

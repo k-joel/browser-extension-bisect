@@ -199,6 +199,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       acc.pause = {
         reason: event.payload.reason,
         drift: event.payload.drift ?? null,
+        errors: event.payload.errors ?? [],
         rollback: event.payload.rollback ?? null,
       };
       acc.status = 'paused';
