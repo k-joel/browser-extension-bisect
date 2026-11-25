@@ -26,6 +26,7 @@ import {
   resetManualExtensionState,
   restoreFixtureState,
   SIDEPANEL_ROOT_SELECTOR,
+  setExtensionEnabled,
   setManualExtensionState,
   waitForAttribute,
   waitForLog,
@@ -40,8 +41,9 @@ const SCENARIOS = [
   'assisted-external',
   'assisted-trials',
   'partition-loop',
+  'drift',
 ];
-const CHROME_SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop'];
+const CHROME_SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop', 'drift'];
 const FIREFOX_SCENARIOS = ['candidate-picker', 'assisted-baseline', 'assisted-external', 'assisted-trials'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1173,7 +1175,9 @@ async function runAssistedTrialsScenario({ surface, session, installed, testPage
   await clickTestId(surface, 'preflight-start');
   await waitForScreen(surface, 'assisted-baseline');
 
-  // The fastest route to the loop: attest the symptom is gone with everything off.
+  // Attestation records an external all-off baseline, so the browser must actually be
+  // all-off for the trial guard to see a consistent state.
+  for (const id of candidateIds) await setManualExtensionState(surface, id, false);
   await clickTestId(surface, 'assisted-attest');
   const plan = await waitFor(
     async () => {
@@ -1367,6 +1371,215 @@ async function runAssistedExternalAttestationScenario({ surface, session, instal
   return { steps, firefoxPath: 'test-mode-driver' };
 }
 
+/**
+ * Drift, Re-sync, and live undo. The harness acts as the meddling user: it
+ * toggles a candidate behind the panel's back, so the next command has to
+ * notice the mismatch before it acts. Restore is asserted to leave every
+ * touched candidate back in its pre-session state.
+ */
+async function runDriftScenario({ surface, session, installed, testPage, fixtureServer }) {
+  const steps = [];
+  const record = makeRecorder(steps);
+  const { candidates, theme, dormant } = extensionGroups(installed);
+
+  const culprit = candidates.find((entry) => entry.dir === FIXTURES.alpha.dir);
+  const innocent = candidates.find((entry) => entry.dir === FIXTURES.bravo.dir);
+  if (culprit === undefined || innocent === undefined) {
+    throw new Error('The drift scenario needs the alpha and bravo fixtures');
+  }
+
+  const untouchableIds = [theme?.id, dormant?.id].filter((id) => typeof id === 'string');
+  const candidateIds = candidates.map((entry) => entry.id);
+  const before = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+
+  await waitForCandidateState(surface, (state) => state.state === 'ready');
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  await focusPage(testPage);
+  await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+  await clickTestId(surface, 'preflight-bind');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.preflight.testTab !== 'No test tab bound' ? state : null;
+    },
+    { label: 'the bound test tab' },
+  );
+
+  await clickTestId(surface, 'preflight-start');
+  await waitForScreen(surface, 'baseline');
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-gone');
+
+  const _firstTrial = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan' },
+  );
+
+  const afterBaseline = await readExtensionEnabledStates(surface, candidateIds);
+  record(
+    'drift-scenario-starts-with-every-candidate-off',
+    candidateIds.every((id) => afterBaseline[id] === false),
+    {
+      afterBaseline,
+    },
+  );
+
+  await clickTestId(surface, 'trial-apply');
+  const asking = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.persistsLabel !== null ? state : null;
+    },
+    { label: 'the applied first trial' },
+  );
+  record('first-trial-applies-cleanly', asking.screen === 'trial', { screen: asking.screen });
+
+  const drifted = await readExtensionEnabledStates(surface, [innocent.id]);
+  const toggled = await setExtensionEnabled(surface, innocent.id, drifted[innocent.id] !== true);
+  record('drift-fixture-toggled-behind-the-panel', toggled.ok === true, {
+    toggled,
+    before: drifted[innocent.id],
+    after: toggled.enabled,
+  });
+  record('drift-toggle-actually-differs-from-the-batch', toggled.enabled !== drifted[innocent.id], {
+    before: drifted[innocent.id],
+    after: toggled.enabled,
+  });
+
+  await clickTestId(surface, 'verdict-persists');
+  const paused = await waitForScreen(surface, 'paused');
+  record('drift-pauses-the-session', paused.screen === 'paused', { screen: paused.screen });
+  record('drift-shows-expected-versus-actual', paused.paused.rows.length > 0, { rows: paused.paused.rows });
+  record(
+    'drift-reports-a-category-with-entries',
+    paused.paused.categories.some((category) => Number(category.count) > 0),
+    { categories: paused.paused.categories },
+  );
+  record(
+    'drift-offers-resync-undo-and-restore',
+    paused.paused.resyncLabel !== null && paused.paused.restoreLabel !== null,
+    {
+      resync: paused.paused.resyncLabel,
+      restore: paused.paused.restoreLabel,
+    },
+  );
+  record('drift-blocks-undo', paused.paused.undoBlocked !== null, { undoBlocked: paused.paused.undoBlocked });
+
+  await clickTestId(surface, 'paused-resync');
+  const resynced = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen !== 'paused' ? state : null;
+    },
+    { label: 'the pause clearing after the re-sync' },
+  );
+  const afterResync = await readExtensionEnabledStates(surface, candidateIds);
+  record('resync-clears-the-pause', resynced.screen !== 'paused', { screen: resynced.screen });
+  record(
+    'resync-puts-the-batch-back',
+    candidateIds.some((id) => afterResync[id] !== drifted[id]),
+    { afterResync, drifted },
+  );
+
+  const nextTrial = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' || state.screen === 'completed' || state.screen === 'inconclusive' ? state : null;
+    },
+    { label: 'the trial after the re-sync' },
+  );
+  record('search-continues-after-a-resync', nextTrial !== null, { screen: nextTrial?.screen });
+
+  const afterResyncState = await readSessionState(surface);
+  if (afterResyncState.trial.applyLabel !== null) {
+    await clickTestId(surface, 'trial-apply');
+  }
+  const answered = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      const settled = state.screen !== 'trial' || state.trial.persistsLabel !== null;
+      return settled ? state : null;
+    },
+    { label: 'the applied next trial' },
+  );
+  record('next-trial-applies-after-a-resync', answered !== null, { screen: answered?.screen });
+
+  if (answered?.screen === 'trial' && answered.trial.persistsLabel !== null) {
+    await clickTestId(surface, 'verdict-persists');
+    const afterVerdict = await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        const settled = state.screen !== 'trial' || state.trial.applyLabel !== null;
+        return settled ? state : null;
+      },
+      { label: 'the plan after the verdict' },
+    );
+    record('a-verdict-is-accepted-on-a-consistent-session', afterVerdict !== null, { screen: afterVerdict?.screen });
+
+    if (afterVerdict?.screen === 'trial') {
+      record('undo-is-offered-on-a-consistent-session', afterVerdict.trial.undoDisabled !== true, {
+        undoDisabled: afterVerdict.trial.undoDisabled,
+        undoBlocked: afterVerdict.trial.undoBlocked,
+      });
+
+      await clickTestId(surface, 'trial-undo-verdict');
+      const undone = await waitFor(
+        async () => {
+          const state = await readSessionState(surface);
+          return state.screen === 'trial' && state.trial.persistsLabel !== null ? state : null;
+        },
+        { label: 'the reopened trial after the undo' },
+      );
+      record('undo-reopens-the-answered-trial', undone.trial.persistsLabel !== null, { screen: undone.screen });
+    }
+  }
+
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.restore.buttonDisabled === false ? state : null;
+    },
+    { label: 'the restore button to become enabled' },
+  );
+  await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+  const reloaded = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' || state.screen === 'paused' || state.screen === 'completed' ? state : null;
+    },
+    { label: 'the session after a panel reload' },
+  );
+  record('session-survives-a-panel-reload', reloaded.screen !== 'picker', { screen: reloaded.screen });
+
+  await clickTestId(surface, 'restore-button');
+  const restored = await waitForScreen(surface, 'restored');
+  record('drift-scenario-restore-lands-on-the-restored-screen', restored.screen === 'restored', {
+    screen: restored.screen,
+    summary: restored.restore.summary,
+    complete: restored.restore.complete,
+    failures: restored.restore.failures,
+  });
+  const afterRestore = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  record(
+    'drift-scenario-restore-re-enables-only-touched-candidates',
+    candidateIds.every((id) => afterRestore[id] === before[id]) &&
+      untouchableIds.every((id) => afterRestore[id] === before[id]),
+    { before, afterRestore },
+  );
+
+  const errors = collectErrors(session.recorder);
+  record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
+  record('no-page-errors', errors.pageErrors.length === 0, { errors: errors.pageErrors });
+  record('no-console-errors', errors.consoleErrors.length === 0, { errors: errors.consoleErrors });
+  record('no-request-failures', errors.requestFailures.length === 0, { errors: errors.requestFailures });
+
+  return { steps };
+}
+
 async function captureFailure(surface, page, browserName, scenario) {
   const file = path.join(ARTIFACTS_DIR, `failure-${browserName}-${scenario}.png`);
   for (const target of [surface, page]) {
@@ -1432,6 +1645,16 @@ async function runScenarioForBrowser(browserName, scenario, session, context) {
 
   if (scenario === 'assisted-trials') {
     return runAssistedTrialsScenario({
+      surface: context.surface,
+      session,
+      installed: context.installed,
+      testPage: context.page,
+      fixtureServer: context.fixtureServer,
+    });
+  }
+
+  if (scenario === 'drift') {
+    return runDriftScenario({
       surface: context.surface,
       session,
       installed: context.installed,

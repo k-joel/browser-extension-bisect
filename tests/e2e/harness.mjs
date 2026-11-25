@@ -367,6 +367,26 @@ export async function disableExtensionThroughSurface(page, extensionId) {
   }, extensionId);
 }
 
+/**
+ * Toggles one extension behind the panel's back, which is how the drift
+ * scenarios simulate a user change the add-on did not make.
+ */
+export async function setExtensionEnabled(page, extensionId, enabled) {
+  return page.evaluate(
+    async ({ id, next }) => {
+      const api = globalThis.browser ?? globalThis.chrome;
+      try {
+        await api.management.setEnabled(id, next);
+        const target = (await api.management.getAll()).find((entry) => entry.id === id);
+        return { ok: true, enabled: target?.enabled ?? null };
+      } catch (error) {
+        return { ok: false, enabled: null, message: String(error?.message ?? error) };
+      }
+    },
+    { id: extensionId, next: enabled },
+  );
+}
+
 export async function readCandidateState(page) {
   return page.evaluate(() => ({
     state: document.querySelector('[data-testid="sidepanel-root"]')?.getAttribute('data-state') ?? 'missing',
@@ -440,6 +460,9 @@ export async function readSessionState(page) {
         goneLabel: text('verdict-gone'),
         applyLabel: document.querySelector('[data-testid="trial-apply"]')?.textContent?.trim() ?? null,
         retryLabel: document.querySelector('[data-testid="trial-retry"]')?.textContent?.trim() ?? null,
+        round: text('trial-heading'),
+        undoDisabled: document.querySelector('[data-testid="trial-undo-verdict"]')?.disabled ?? null,
+        undoBlocked: text('trial-undo-blocked'),
         history: Array.from(document.querySelectorAll('[data-testid="trial-history-row"]')).map((node) => ({
           round: node.getAttribute('data-round'),
           enabled: node.querySelector('[data-testid="trial-history-enabled"]')?.textContent?.trim() ?? '',
@@ -530,6 +553,29 @@ export async function readSessionState(page) {
           code: node.querySelector('[data-testid="restore-failure-code"]')?.textContent?.trim() ?? '',
           message: node.querySelector('[data-testid="restore-failure-message"]')?.textContent?.trim() ?? '',
         })),
+      },
+      paused: {
+        cause: text('paused-cause'),
+        trial: text('paused-trial'),
+        resyncLabel: document.querySelector('[data-testid="paused-resync"]')?.textContent?.trim() ?? null,
+        undoLabel: document.querySelector('[data-testid="paused-undo"]')?.textContent?.trim() ?? null,
+        undoDisabled: document.querySelector('[data-testid="paused-undo"]')?.disabled ?? null,
+        undoBlocked: text('paused-undo-blocked'),
+        restoreLabel: document.querySelector('[data-testid="paused-restore"]')?.textContent?.trim() ?? null,
+        rows: Array.from(document.querySelectorAll('[data-testid="drift-row"]')).map((node) => ({
+          name: node.querySelector('[data-testid="drift-row-name"]')?.textContent?.trim() ?? '',
+          state: node.querySelector('[data-testid="drift-row-state"]')?.textContent?.trim() ?? '',
+        })),
+        categories: Array.from(document.querySelectorAll('[data-testid^="drift-category-"]'))
+          .filter((node) => node.hasAttribute('data-category'))
+          .map((node) => ({
+            id: node.getAttribute('data-testid'),
+            category: node.getAttribute('data-category'),
+            count: node.getAttribute('data-count'),
+            entries: Array.from(node.querySelectorAll('[data-testid="drift-category-name"]')).map((entry) =>
+              entry.textContent?.trim(),
+            ),
+          })),
       },
       picker: {
         startLabel: document.querySelector('[data-testid="picker-start"]')?.textContent?.trim() ?? null,
