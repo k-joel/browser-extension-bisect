@@ -7,6 +7,7 @@ import {
   BACKGROUND_READY_LOG,
   captureClipboard,
   clickTestId,
+  closePage,
   collectErrors,
   disableExtensionThroughSurface,
   EXTENSION_TAB_ID_ATTRIBUTE,
@@ -14,6 +15,7 @@ import {
   hasTestDriverGlobal,
   launchTestBrowser,
   markPageForReloadCheck,
+  readBoundTestTab,
   readCandidateState,
   readClipboardCaptures,
   readExtensionEnabledStates,
@@ -21,6 +23,7 @@ import {
   readPageReloadMarker,
   readPersistedBisectLog,
   readSessionState,
+  readSnapshotCandidateIds,
   readToggleErrors,
   reloadExtensionPage,
   resetBisectState,
@@ -30,6 +33,7 @@ import {
   setExtensionEnabled,
   setManualExtensionState,
   setToggleError,
+  uninstallExtension,
   waitForAttribute,
   waitForLog,
 } from './harness.mjs';
@@ -45,8 +49,16 @@ const SCENARIOS = [
   'partition-loop',
   'drift',
   'toggle-failure',
+  'mid-session-changes',
 ];
-const CHROME_SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop', 'drift', 'toggle-failure'];
+const CHROME_SCENARIOS = [
+  'candidate-picker',
+  'session-baseline',
+  'partition-loop',
+  'drift',
+  'toggle-failure',
+  'mid-session-changes',
+];
 const FIREFOX_SCENARIOS = ['candidate-picker', 'assisted-baseline', 'assisted-external', 'assisted-trials'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1891,6 +1903,205 @@ async function runToggleFailureScenario({ surface, session, installed, testPage,
   return { steps };
 }
 
+/**
+ * A test tab closed and a candidate removed under a live session, on the automated rail.
+ *
+ * Both halves run in one session because the panel has to prove the two are independent:
+ * a closed tab must not block a verdict, and a removal must pause the session instead of
+ * quietly answering about an extension that is gone. The tab half therefore goes first,
+ * while both fixtures are still installed, and the removal comes after.
+ *
+ * The removal is a real `uninstallExtension`: that is the only way Chrome reports
+ * `onUninstalled` and drops the entry from `getAll()`, and a fake would test the harness
+ * instead of the product. The restart that follows is the recovery under test, so it also
+ * proves the fresh snapshot excludes the extension that vanished.
+ */
+async function runMidSessionChangesScenario({ surface, session, installed, testPage, fixtureServer }) {
+  const steps = [];
+  const record = makeRecorder(steps);
+  const { candidates } = extensionGroups(installed);
+
+  const alpha = candidates.find((entry) => entry.dir === FIXTURES.alpha.dir);
+  const bravo = candidates.find((entry) => entry.dir === FIXTURES.bravo.dir);
+  if (alpha === undefined || bravo === undefined) {
+    throw new Error('The mid-session-change scenario needs the alpha and bravo fixtures');
+  }
+
+  const candidateIds = candidates.map((entry) => entry.id);
+
+  async function startSessionAndBind() {
+    await clickTestId(surface, 'picker-start');
+    await waitForScreen(surface, 'preflight');
+    await focusPage(testPage);
+    await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+    await clickTestId(surface, 'preflight-bind');
+    await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        return state.preflight.testTab !== 'No test tab bound' ? state : null;
+      },
+      { label: 'the bound test tab' },
+    );
+    await clickTestId(surface, 'preflight-start');
+    await waitForScreen(surface, 'baseline');
+  }
+
+  await startSessionAndBind();
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-gone');
+
+  const plan = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan' },
+  );
+  record('mid-session-plan-arrives', plan.screen === 'trial', { planDisabled: plan.trial.planDisabled });
+
+  const snapshotBefore = await readSnapshotCandidateIds(surface);
+  record('mid-session-snapshot-holds-every-candidate', snapshotBefore.length === candidateIds.length, {
+    snapshotBefore,
+    candidateIds,
+  });
+
+  // ---- 1. A closed test tab prompts a rebind and never blocks the verdict -----------
+  const boundTab = await readBoundTestTab(surface);
+  record('the-test-tab-is-bound-before-it-is-closed', boundTab !== null, { boundTab });
+
+  await closePage(testPage);
+  await clickTestId(surface, 'trial-apply');
+
+  const closedTab = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.persistsLabel !== null ? state : null;
+    },
+    { label: 'the applied trial with a closed test tab' },
+  );
+  record('closed-test-tab-does-not-block-the-trial', closedTab.screen === 'trial', { screen: closedTab.screen });
+  record(
+    'closed-test-tab-prompts-a-rebind',
+    closedTab.testTabPrompt.visible === true && closedTab.testTabPrompt.kind === 'closed',
+    { prompt: closedTab.testTabPrompt, boundTab },
+  );
+  record(
+    'rebind-prompt-keeps-the-verdict-available',
+    closedTab.testTabPrompt.hasVerdictButtons === true &&
+      closedTab.testTabPrompt.verdictNote?.includes('answered with or without') === true,
+    { prompt: closedTab.testTabPrompt, persists: closedTab.trial.persistsLabel },
+  );
+
+  const closedLog = await readPersistedBisectLog(surface);
+  const closedApplication = (closedLog?.events ?? []).filter((event) => event.type === 'trial-applied').at(-1);
+  record('closed-tab-outcome-is-recorded-on-the-batch', closedApplication?.payload?.testTab?.status === 'closed', {
+    application: closedApplication?.payload,
+  });
+  record('closed-tab-does-not-pause-the-session', closedTab.screen !== 'snapshot-change', {
+    screen: closedTab.screen,
+  });
+
+  await clickTestId(surface, 'verdict-persists');
+  const answeredWithoutTab = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      const settled = state.screen !== 'trial' || state.trial.applyLabel !== null;
+      return settled ? state : null;
+    },
+    { label: 'the session after a verdict without a test tab' },
+  );
+  record('verdict-is-accepted-without-a-test-tab', answeredWithoutTab !== null, {
+    screen: answeredWithoutTab?.screen,
+  });
+  const closedVerdicts = ((await readPersistedBisectLog(surface))?.events ?? []).filter(
+    (event) => event.type === 'verdict-recorded',
+  );
+  record('closed-tab-verdict-reaches-the-log', closedVerdicts.length === 1, { verdicts: closedVerdicts.length });
+
+  // ---- 2. A removed candidate pauses the session and invalidates the trial ----------
+  const beforeRemoval = await readPersistedBisectLog(surface);
+  const verdictsBeforeRemoval = (beforeRemoval?.events ?? []).filter(
+    (event) => event.type === 'verdict-recorded',
+  ).length;
+
+  await uninstallExtension(session, bravo.id);
+  await clickTestId(surface, 'trial-apply');
+
+  const paused = await waitForScreen(surface, 'snapshot-change');
+  record('removed-candidate-pauses-the-session', paused.screen === 'snapshot-change', { screen: paused.screen });
+  record(
+    'removal-is-reported-with-its-own-row',
+    paused.snapshotChange.rows.length === 1 &&
+      paused.snapshotChange.rows[0]?.id === bravo.id &&
+      paused.snapshotChange.rows[0]?.kind === 'removed',
+    { rows: paused.snapshotChange.rows, removed: bravo.id },
+  );
+  record('removal-explains-itself', (paused.snapshotChange.cause ?? '').includes(bravo.name), {
+    cause: paused.snapshotChange.cause,
+    removedName: bravo.name,
+  });
+  record(
+    'removal-offers-restore-and-restart',
+    paused.snapshotChange.restoreLabel === 'Restore and stop' &&
+      paused.snapshotChange.restartLabel === 'Restart with a fresh snapshot',
+    {
+      restore: paused.snapshotChange.restoreLabel,
+      restart: paused.snapshotChange.restartLabel,
+      actionsPresent: paused.snapshotChange.actionsPresent,
+    },
+  );
+  record(
+    'removal-is-announced-through-the-live-region',
+    (paused.live ?? '').includes('browser changed under this session'),
+    { live: paused.live },
+  );
+
+  const snapshotAfterRemoval = await readSnapshotCandidateIds(surface);
+  record(
+    'removal-never-joins-or-leaves-the-snapshot',
+    JSON.stringify(snapshotAfterRemoval) === JSON.stringify(snapshotBefore),
+    { snapshotBefore, snapshotAfterRemoval },
+  );
+  const pausedLog = await readPersistedBisectLog(surface);
+  const verdictsAfterRemoval = (pausedLog?.events ?? []).filter((event) => event.type === 'verdict-recorded').length;
+  record('removal-records-no-verdict-for-the-dead-trial', verdictsAfterRemoval === verdictsBeforeRemoval, {
+    before: verdictsBeforeRemoval,
+    after: verdictsAfterRemoval,
+  });
+  const lastEvent = (pausedLog?.events ?? []).at(-1);
+  record(
+    'removal-pauses-through-the-existing-event',
+    lastEvent?.type === 'session-paused' && lastEvent?.payload?.reason === 'snapshot-changed',
+    { lastEventType: lastEvent?.type, reason: lastEvent?.payload?.reason },
+  );
+
+  // ---- 3. Restart takes a fresh snapshot without the removed candidate --------------
+  await clickTestId(surface, 'snapshot-change-restart');
+  const restarted = await waitForScreen(surface, 'baseline');
+  record('restart-lands-on-the-baseline-of-a-new-session', restarted.screen === 'baseline', {
+    screen: restarted.screen,
+  });
+
+  const restartedLog = await readPersistedBisectLog(surface);
+  const starts = (restartedLog?.events ?? []).filter((event) => event.type === 'session-started');
+  record('restart-writes-exactly-one-session-start', starts.length === 1, { starts: starts.length });
+  const restartedIds = (starts[0]?.payload?.candidateOrder ?? []).map((entry) => entry.id);
+  record(
+    'restart-snapshots-the-browser-without-the-removed-candidate',
+    restartedIds.length === 1 && restartedIds[0] === alpha.id,
+    { restartedIds, expected: alpha.id, removed: bravo.id },
+  );
+  record('restart-clears-the-warning', restarted.snapshotChange.visible === false, { screen: restarted.screen });
+
+  const errors = collectErrors(session.recorder);
+  record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
+  record('no-page-errors', errors.pageErrors.length === 0, { errors: errors.pageErrors });
+  record('no-console-errors', errors.consoleErrors.length === 0, { errors: errors.consoleErrors });
+  record('no-request-failures', errors.requestFailures.length === 0, { errors: errors.requestFailures });
+
+  return { steps };
+}
+
 async function captureFailure(surface, page, browserName, scenario) {
   const file = path.join(ARTIFACTS_DIR, `failure-${browserName}-${scenario}.png`);
   for (const target of [surface, page]) {
@@ -1956,6 +2167,16 @@ async function runScenarioForBrowser(browserName, scenario, session, context) {
 
   if (scenario === 'assisted-trials') {
     return runAssistedTrialsScenario({
+      surface: context.surface,
+      session,
+      installed: context.installed,
+      testPage: context.page,
+      fixtureServer: context.fixtureServer,
+    });
+  }
+
+  if (scenario === 'mid-session-changes') {
+    return runMidSessionChangesScenario({
       surface: context.surface,
       session,
       installed: context.installed,

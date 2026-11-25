@@ -621,6 +621,48 @@ export async function readSessionState(page) {
         },
         restoreLabel: document.querySelector('[data-testid="toggle-failure-restore"]')?.textContent?.trim() ?? null,
       },
+      snapshotChange: {
+        visible: document.querySelector('[data-testid="snapshot-change"]') !== null,
+        cause: text('snapshot-change-cause'),
+        note: text('snapshot-change-note'),
+        rows: Array.from(document.querySelectorAll('[data-testid="snapshot-change-row"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          kind: node.getAttribute('data-kind'),
+          name: node.querySelector('[data-testid="snapshot-change-name"]')?.textContent?.trim() ?? '',
+          kindLabel: node.querySelector('[data-testid="snapshot-change-kind"]')?.textContent?.trim() ?? '',
+          detail: node.querySelector('[data-testid="snapshot-change-detail"]')?.textContent?.trim() ?? '',
+        })),
+        restoreLabel: document.querySelector('[data-testid="snapshot-change-restore"]')?.textContent?.trim() ?? null,
+        restartLabel: document.querySelector('[data-testid="snapshot-change-restart"]')?.textContent?.trim() ?? null,
+        restartNote: text('snapshot-change-restart-note'),
+        actionsPresent: document.querySelector('[data-testid="snapshot-change-actions"]') !== null,
+      },
+      snapshotWarning: {
+        visible: document.querySelector('[data-testid="snapshot-warning"]') !== null,
+        count: document.querySelector('[data-testid="snapshot-warning"]')?.getAttribute('data-count') ?? null,
+        live: document.querySelector('[data-testid="snapshot-warning"]')?.getAttribute('aria-live') ?? null,
+        headline: text('snapshot-warning-headline'),
+        detail: text('snapshot-warning-detail'),
+        rows: Array.from(document.querySelectorAll('[data-testid="snapshot-warning-row"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          kind: node.getAttribute('data-kind'),
+          name: node.querySelector('[data-testid="snapshot-warning-name"]')?.textContent?.trim() ?? '',
+          kindLabel: node.querySelector('[data-testid="snapshot-warning-kind"]')?.textContent?.trim() ?? '',
+        })),
+        dismissLabel: document.querySelector('[data-testid="snapshot-warning-dismiss"]')?.textContent?.trim() ?? null,
+      },
+      testTabPrompt: {
+        visible: document.querySelector('[data-testid="test-tab-prompt"]') !== null,
+        kind: document.querySelector('[data-testid="test-tab-prompt"]')?.getAttribute('data-kind') ?? null,
+        tabId: document.querySelector('[data-testid="test-tab-prompt"]')?.getAttribute('data-tab-id') ?? null,
+        headline: text('test-tab-prompt-headline'),
+        detail: text('test-tab-prompt-detail'),
+        actionLabel: document.querySelector('[data-testid="test-tab-prompt-action"]')?.textContent?.trim() ?? null,
+        verdictNote: text('test-tab-prompt-verdict-note'),
+        hasVerdictButtons:
+          document.querySelector('[data-testid="verdict-persists"]') !== null ||
+          document.querySelector('[data-testid="verdict-gone"]') !== null,
+      },
       paused: {
         cause: text('paused-cause'),
         trial: text('paused-trial'),
@@ -839,4 +881,48 @@ export async function restoreFixtureState(page, { candidates, dormant }) {
  */
 export async function focusPage(page) {
   await page.bringToFront();
+}
+
+/**
+ * Reads the immutable snapshot out of the persisted `session-started` event. The
+ * mid-session-change scenario asserts on this directly: the point of the slice is that
+ * the snapshot does not move, which no rendered test id can prove on its own.
+ */
+export async function readSnapshotCandidateIds(page) {
+  return page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const stored = await api.storage.local.get('bisectLog');
+    const events = stored?.bisectLog?.events ?? [];
+    const start = events.find((event) => event.type === 'session-started');
+    return (start?.payload?.candidateOrder ?? []).map((entry) => ({ id: entry.id, version: entry.version }));
+  });
+}
+
+/**
+ * The bound test tab as the config records it. The panel renders it on the preflight
+ * screen only, so a scenario that closed the tab later still needs the setting itself.
+ */
+export async function readBoundTestTab(page) {
+  return page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const stored = await api.storage.local.get('bisectConfig');
+    return stored?.bisectConfig?.testTab ?? null;
+  });
+}
+
+/**
+ * Uninstalls a fixture extension for real. Puppeteer owns the install, so this is the
+ * only way to make the browser report `onUninstalled` and drop the entry from `getAll()`,
+ * which is exactly the change a removed candidate has to survive.
+ */
+export async function uninstallExtension(session, extensionId) {
+  await session.browser.uninstallExtension(extensionId);
+}
+
+/**
+ * Closes the bound test tab, so the next `tabs.reload` rejects the way a user-closed tab
+ * does. The panel keeps the stale id in its config; that is the state under test.
+ */
+export async function closePage(page) {
+  await page.close();
 }

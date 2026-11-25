@@ -464,6 +464,9 @@ export function restartSession(rawDependencies: SessionDependencies): Promise<Se
  * the partition was built from a snapshot the browser no longer matches, so the next
  * verdict would answer a question about an extension that is gone or different. An
  * install never reaches here — see `snapshotChanges`.
+ *
+ * The background's watcher usually pauses first, so an already-paused session is refused
+ * without a second event: the pause the user is looking at already says what changed.
  */
 async function guardAgainstSnapshotChanges(
   dependencies: ResolvedDependencies,
@@ -471,6 +474,10 @@ async function guardAgainstSnapshotChanges(
   view: SessionView,
 ): Promise<void> {
   if (view.candidateOrder.length === 0) return;
+  if (view.status === 'paused') {
+    if (view.pause === null || view.pause.changes.length === 0) return;
+    throw new SessionError(describeSnapshotChanges(view.pause.changes));
+  }
 
   const changes = await detectSnapshotChanges(dependencies, view);
   const pausing = pausingChanges(changes);
