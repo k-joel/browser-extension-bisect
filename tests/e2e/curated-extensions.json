@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "description": "Curated lightweight, highly rated extensions that exist on both the Chrome Web Store and addons.mozilla.org. Read by tools/download_good_extensions.py and tests/e2e/real-extensions.mjs. Exactly CURATED_COUNT entries are used per browser.",
+  "curatedCount": 20,
+  "entries": [
+    {
+      "slug": "ublock-origin-lite",
+      "name": "uBlock Origin Lite",
+      "chrome": {
+        "url": "https://chromewebstore.google.com/detail/ublock-origin-lite/ddkjiahejlhfcafbddmgiahcphecmpfh"
+      },
+      "firefox": { "amoSlug": "ublock-origin-lite" }
+    },
+    {
+      "slug": "dark-reader",
+      "name": "Dark Reader",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/dark-reader/eimadpbcbfnmbkopoojfekhnkhdbieeh" },
+      "firefox": { "amoSlug": "darkreader" }
+    },
+    {
+      "slug": "bitwarden",
+      "name": "Bitwarden",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/bitwarden/nngceckbapebfimnlniiiahkandclblb" },
+      "firefox": { "amoSlug": "bitwarden-password-manager" }
+    },
+    {
+      "slug": "tampermonkey",
+      "name": "Tampermonkey",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/tampermonkey/dhdgffkkebhmkfjojejmpbldmpobfkfo" },
+      "firefox": { "amoSlug": "tampermonkey" }
+    },
+    {
+      "slug": "wappalyzer",
+      "name": "Wappalyzer",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/wappalyzer/gppongmhjkpfnbhagpmjfkannfbllamg" },
+      "firefox": { "amoSlug": "wappalyzer" }
+    },
+    {
+      "slug": "single-file",
+      "name": "SingleFile",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/singlefile/mpiodijhokgodhhofbcjdecpffjipkle" },
+      "firefox": { "amoSlug": "single-file" }
+    },
+    {
+      "slug": "react-devtools",
+      "name": "React Developer Tools",
+      "chrome": {
+        "url": "https://chromewebstore.google.com/detail/react-developer-tools/fmkadmapgofadopljbjfkapdkoienihi"
+      },
+      "firefox": { "amoSlug": "react-devtools" }
+    },
+    {
+      "slug": "redux-devtools",
+      "name": "Redux DevTools",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/redux-devtools/lmhkpmbekcpmknklioeibfkpmmfibljd" },
+      "firefox": { "amoSlug": "reduxdevtools" }
+    },
+    {
+      "slug": "onetab",
+      "name": "OneTab",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/onetab/chphlpgkkbolifaimnlloiipkdnihall" },
+      "firefox": { "amoSlug": "onetab" }
+    },
+    {
+      "slug": "sponsorblock",
+      "name": "SponsorBlock",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/sponsorblock/mnjggcdmjocbbbhaepdhchncahnbgone" },
+      "firefox": { "amoSlug": "sponsorblock" }
+    },
+    {
+      "slug": "privacy-badger",
+      "name": "Privacy Badger",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/privacy-badger/pkehgijcmpdhfbdbbnkijodmdjhbjlgp" },
+      "firefox": { "amoSlug": "privacy-badger17" }
+    },
+    {
+      "slug": "ghostery",
+      "name": "Ghostery",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/ghostery/mlomiejdfkolichcflejclcbmpeaniij" },
+      "firefox": { "amoSlug": "ghostery" }
+    },
+    {
+      "slug": "web-developer",
+      "name": "Web Developer",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/web-developer/bfbameneiokkgbdmiekhjnmfkcnldhhm" },
+      "firefox": { "amoSlug": "web-developer" }
+    },
+    {
+      "slug": "jsonview",
+      "name": "JSONView",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/jsonview/chklaanhfefbnpoihckbnefhakgolnmc" },
+      "firefox": { "amoSlug": "jsonview" }
+    },
+    {
+      "slug": "lastpass",
+      "name": "LastPass",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/lastpass/hdokiejnpimakedhajhdlcegeplioahd" },
+      "firefox": { "amoSlug": "lastpass-password-manager" }
+    },
+    {
+      "slug": "adblock-plus",
+      "name": "Adblock Plus",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/adblock-plus/cfhdojbkjhnklbpkdaibdccddilifddb" },
+      "firefox": { "amoSlug": "adblock-plus" }
+    },
+    {
+      "slug": "adguard",
+      "name": "AdGuard AdBlocker",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/adguard/bgnkhhnnamicmpeenaelnjfhikgbkllg" },
+      "firefox": { "amoSlug": "adguard-adblocker" }
+    },
+    {
+      "slug": "reader-view",
+      "name": "Reader View",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/reader-view/ecabifbgmdmgdllomnfinbmaellmclnh" },
+      "firefox": { "amoSlug": "reader-view" }
+    },
+    {
+      "slug": "colorzilla",
+      "name": "ColorZilla",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/colorzilla/bhlhnicpbhignbdhedgjhgdocnmhomnp" },
+      "firefox": { "amoSlug": "colorzilla" }
+    },
+    {
+      "slug": "window-resizer",
+      "name": "Window Resizer",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/window-resizer/kkelicaakdanhinjdeammmilcgefonfh" },
+      "firefox": { "amoSlug": "window-resizer" }
+    },
+    {
+      "slug": "save-page-we",
+      "name": "Save Page WE",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/save-page-we/fdpohaocaechififmbbbbbknoalclacl" },
+      "firefox": { "amoSlug": "save-page-we" }
+    },
+    {
+      "slug": "video-speed-controller",
+      "name": "Video Speed Controller",
+      "chrome": {
+        "url": "https://chromewebstore.google.com/detail/video-speed-controller/nffaoalbilbmmfgbnbgppjihopabppdk"
+      },
+      "firefox": { "amoSlug": "videospeed" }
+    },
+    {
+      "slug": "vue-devtools",
+      "name": "Vue.js devtools",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd" },
+      "firefox": { "amoSlug": "vue-js-devtools" }
+    },
+    {
+      "slug": "json-formatter",
+      "name": "JSON Formatter",
+      "chrome": { "url": "https://chromewebstore.google.com/detail/json-formatter/bcjindcccaagfpapjjmafapmmgkkhgoa" },
+      "firefox": { "amoSlug": "json-formatter" }
+    }
+  ]
+}

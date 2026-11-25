@@ -77,5 +77,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## Inventory
 
-- **`manual-browser.mjs`** — Launches a visible Puppeteer browser with the built extension and its fixture extensions installed, pre-binds a fixture page as the test tab, and holds the window open for hands-on use; `--smoke` runs the same path headless as a self-check. Reuses `tests/e2e/harness.mjs`; requires `puppeteer` and a prior `npm run build:<browser>`.
+- **`bad-extension-probe.mjs`** — Loads a page in a headless browser with the single-purpose fault extension installed and reports whether its symptom marker is present, exiting non-zero when the result disagrees with `--expect=<active|inactive>`. Reuses `tests/e2e/harness.mjs`; requires `puppeteer` and a prior `npm run bad-extension:build`.
+- **`download_good_extensions.py`** — Downloads the curated marketplace extensions listed in `tests/e2e/curated-extensions.json`, keeps the original `.crx`/`.xpi` archives under `good_extensions/_archives/`, unpacks each into a directory Puppeteer can load, and writes `good_extensions/catalog.json` for the test runners. Python 3 standard library only (AMO API for Firefox, the Web Store update endpoint for Chrome).
+- **`manual-browser.mjs`** — Launches a visible Puppeteer browser with the built extension installed, pre-binds a fixture page as the test tab, and holds the window open for hands-on use; `--extensions=<fixtures|real|none>` selects the fixture set, the 20 curated extensions plus the fault extension, or nothing, and `--start` begins the bisect at the baseline question; `--smoke` runs the same path headless as a self-check. Reuses `tests/e2e/harness.mjs`; requires `puppeteer`, a prior `npm run build:<browser>`, and for `real` also the downloader and `npm run bad-extension:build`.
 

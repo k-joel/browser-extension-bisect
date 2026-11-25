@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Bad Extension",
+  "version": "1.0.0",
+  "description": "Reference faulty extension for the real-extension bisect workflow.",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

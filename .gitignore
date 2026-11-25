@@ -164,6 +164,10 @@ vite.config.ts.timestamp-*
 # Chrome-generated theme payloads inside E2E fixtures
 *.pak
 
+# Downloaded marketplace extensions and the built reference fault extension
+good_extensions/
+bad_extension/dist/
+
 # Agents
 .agents/
 .commandcode/

@@ -134,6 +134,23 @@ async function startSessionAndBind(surface, testPage, { baselineScreen = 'baseli
   );
   await clickTestId(surface, 'preflight-start');
   await waitForScreen(surface, baselineScreen);
+
+  /**
+   * The assisted baseline derives its checklist from an async `management.getAll()`, so the
+   * screen renders a frame before the rows exist and a click issued that early acts on an
+   * empty plan. Wait for the populated form whenever this helper stops on that screen.
+   */
+  if (baselineScreen === 'assisted-baseline') {
+    await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        if (state.screen !== 'assisted-baseline') return null;
+        return state.assisted.checklist.length > 0 ? state : null;
+      },
+      { label: 'the populated assisted baseline checklist' },
+    );
+  }
+
   return testTabId;
 }
 
@@ -1246,25 +1263,36 @@ async function runAssistedBaselineScenario({ surface, session, installed, testPa
   await clickTestId(surface, 'preflight-start');
   const assisted = await waitForScreen(surface, 'assisted-baseline');
 
+  // The checklist is derived from an async `management.getAll()`, so the screen can appear a
+  // frame before it is populated. Wait for the populated form rather than the first paint.
+  const populated = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      if (state.screen !== 'assisted-baseline') return null;
+      return state.assisted.checklist.length === candidateIds.length ? state : null;
+    },
+    { label: 'the populated assisted baseline checklist' },
+  ).catch(() => assisted);
+
   record(
     'assisted-baseline-offers-both-routes',
-    assisted.assisted.attestLabel !== null && assisted.assisted.openLabel !== null,
+    populated.assisted.attestLabel !== null && populated.assisted.openLabel !== null,
     {
-      attest: assisted.assisted.attestLabel,
-      open: assisted.assisted.openLabel,
+      attest: populated.assisted.attestLabel,
+      open: populated.assisted.openLabel,
     },
   );
-  record('assisted-baseline-lists-every-candidate', assisted.assisted.checklist.length === candidateIds.length, {
-    checklist: assisted.assisted.checklist,
+  record('assisted-baseline-lists-every-candidate', populated.assisted.checklist.length === candidateIds.length, {
+    checklist: populated.assisted.checklist,
     expected: candidateIds.length,
   });
   record(
     'assisted-baseline-asks-for-the-disabled-state',
-    assisted.assisted.checklist.every((row) => row.target === 'Off'),
-    { checklist: assisted.assisted.checklist },
+    populated.assisted.checklist.every((row) => row.target === 'Off'),
+    { checklist: populated.assisted.checklist },
   );
-  record('assisted-baseline-shows-progress', /\d+ of \d+ done/.test(assisted.assisted.progress ?? ''), {
-    progress: assisted.assisted.progress,
+  record('assisted-baseline-shows-progress', /\d+ of \d+ done/.test(populated.assisted.progress ?? ''), {
+    progress: populated.assisted.progress,
   });
   const afterStart = await readManualExtensionState(surface, candidateIds);
   record(
@@ -1627,6 +1655,17 @@ async function runAssistedExternalAttestationScenario({ surface, session, instal
   await waitForScreen(surface, 'preflight');
   await clickTestId(surface, 'preflight-start');
   await waitForScreen(surface, 'assisted-baseline');
+
+  // Attestation is gated on a populated checklist, so wait for it before clicking: the
+  // screen can render a frame before `management.getAll()` resolves.
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      if (state.screen !== 'assisted-baseline') return null;
+      return state.assisted.checklist.length === candidateIds.length ? state : null;
+    },
+    { label: 'the populated assisted baseline checklist' },
+  );
 
   await clickTestId(surface, 'assisted-attest');
   const attested = await waitFor(

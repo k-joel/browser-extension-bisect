@@ -121,6 +121,12 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ### Added
 
+- `npm run agent:verify-full` proves the add-on bisects a genuinely broken browser: it installs 20 curated marketplace extensions plus one deliberately faulty extension, answers every question from that extension's own symptom marker, and asserts the search names the injected fault and restores the other 20. Runs on Chrome and Firefox ([ADR-024](DECISIONS.md), [ADR-025](DECISIONS.md)); it is a local gate, not part of CI.
+- `npm run extensions:download` fetches the curated set from the Chrome Web Store and addons.mozilla.org, unpacking each archive into the directory layout Puppeteer loads and recording the result in `good_extensions/catalog.json` (RUN-008).
+- A reference fault extension in `bad_extension/` with two simultaneous error modes: a red `Bad extension enabled` banner for a human, and a `data-bad-extension` marker plus `[BAD_EXT_ACTIVE]` console line for a program. It answers whether a page is broken, never which extension broke it.
+- `npm run bad-extension:probe` reports, from a command line, whether the fault is currently visible on a page, so a person or an agent can confirm the symptom without reading the screen (RUN-010).
+- `npm run manual:chrome-full` and `npm run manual:firefox-full` launch a browser with the curated extensions and the fault extension installed and start the bisect at the baseline question, so the real-world flow can be worked by hand (RUN-009).
+- `tools/manual-browser.mjs --extensions=<fixtures|real|none>` selects what a manual session installs; `real` always includes the fault extension, so a manual session can never be accidentally symptom-free.
 - `npm run manual:chrome` and `npm run manual:firefox` launch a visible browser with the built add-on and its fixture extensions installed, a fixture page pre-bound as the test tab, and the panel open, so the product can be exercised by hand without installing anything into a personal browser profile; `--smoke` runs the same path headless as a self-check (RUN-007).
 - Cross-browser Browser Extension Bisect add-on built on WXT, producing Chrome (Manifest V3) and Firefox (Manifest V2) builds from one TypeScript codebase.
 - Side panel UI (`side panel` on Chrome, `sidebar_action` on Firefox) rendering the no-session screen, the capability report, and the candidate picker, replacing the popup as the product surface ([ADR-009](DECISIONS.md)).

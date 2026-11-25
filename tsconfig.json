@@ -1,3 +1,4 @@
 {
-  "extends": "./.wxt/tsconfig.json"
+  "extends": "./.wxt/tsconfig.json",
+  "exclude": ["node_modules", ".output", ".agent-artifacts", ".cache", "good_extensions", "bad_extension/dist"]
 }

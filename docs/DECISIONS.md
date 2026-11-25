@@ -148,6 +148,10 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [019](#adr-019-pin-the-js-beautify-transitive-chain-with-npm-overrides) | Pin the js-beautify transitive chain with npm overrides |
 | [020](#adr-020-run-the-verification-gate-in-github-actions) | Run the verification gate in GitHub Actions |
 | [021](#adr-021-reuse-the-e2e-harness-for-manual-browser-sessions) | Reuse the E2E harness for manual browser sessions |
+| [022](#adr-022-verify-against-real-marketplace-extensions) | Verify against real marketplace extensions |
+| [023](#adr-023-install-unpacked-directories-not-store-archives) | Install unpacked directories, not store archives |
+| [024](#adr-024-drive-the-full-bisect-from-the-fault-extensions-own-symptom) | Drive the full bisect from the fault extension's own symptom |
+| [025](#adr-025-policy-install-firefox-for-automatic-toggling) | Policy-install Firefox for automatic toggling |
 
 ---
 
@@ -652,4 +656,101 @@ Add `tools/manual-browser.mjs`, a headful consumer of `tests/e2e/harness.mjs`, e
 **Bad**: `tests/e2e/harness.mjs` is no longer E2E-private — its exports are now a contract that `tools/` depends on, so an incompatible harness change breaks a non-test consumer; the harness gained a `userDataDir` passthrough it did not need for tests; the panel opens as a tab rather than the real side panel, because a toolbar click is not scriptable over CDP or BiDi.
 
 **Mitigations**: The harness stays free of manual-only branches and the launcher owns its pre-bind, banner, and smoke checks; `npm run agent:verify` still exercises the harness on both browsers, so an incompatible change fails the gate; NOTES.md §manual-browser records the tab-vs-side-panel limitation for the next session.
+
+---
+
+## ADR-022: Verify against real marketplace extensions
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: Real-world verification request (LLM-driven, user-approved)
+
+### Context
+
+Every existing gate installed the same four hand-written fixtures (`fixture-alpha`, `-bravo`, `-dormant`, `-theme`). Those fixtures are ideal for pinning protocol details — they are tiny, deterministic, and can be made ineligible on demand — but they share none of the properties that make a real investigation hard: dozens of extensions, store-signed packages, content scripts that inject on every page, service workers that start and stop, and console noise a third party owns. Nothing in the suite proved the add-on could bisect a browser that was actually broken by something it did not build.
+
+### Decision
+
+Add a separate, opt-in gate (`npm run agent:verify-full`) that installs 20 curated marketplace extensions plus one deliberately faulty extension and runs the complete bisect. The curated set is pinned by URL in `tests/e2e/curated-extensions.json`, fetched by `tools/download_good_extensions.py` into a gitignored `good_extensions/`, and installed from unpacked directories. The fault is a purpose-built extension in `bad_extension/` whose only job is to be reliably detectable. The gate is not part of CI: it downloads tens of megabytes from two stores on every run, depends on third-party network availability, and would make a push-to-main pipeline fail for reasons the repository cannot control.
+
+### Consequences
+
+**Good**: The add-on is now proven against browsers that resemble a user's real one; the 20-extension run exercises the partition loop at its realistic depth (five questions instead of one or two); third-party faults, hangs, and console noise surface as real conditions rather than as hypotheticals; the existing fixture gate stays fast and deterministic.
+
+**Bad**: The full gate is slow and network-dependent, so nobody runs it by default; the curated list decays as extensions change owners, go MV2-only, or are delisted; downloading from the Chrome Web Store uses an unofficial endpoint; the repository now commits to owning that decay rather than a stable fixture.
+
+**Mitigations**: `good_extensions/catalog.json` records the resolved version of every extension so drift is visible; the downloader fails loudly per entry and names the slug; `docs/RUNBOOK.md` RUN-008 documents the refresh procedure; the fixture suite remains the completion gate, so a stale curated set degrades one opt-in command rather than the whole project.
+
+---
+
+## ADR-023: Install unpacked directories, not store archives
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: Real-world verification request (LLM-driven, user-approved)
+
+### Context
+
+`tools/download_good_extensions.py` naturally produces what the stores ship: a `.crx` from the Chrome Web Store and an `.xpi` from addons.mozilla.org. Puppeteer accepts neither. Chrome's `Browser.installExtension` sends the CDP command `Extensions.loadUnpacked`; Firefox's WebDriver BiDi path sends `webExtension.install` with `extensionData: { type: 'path' }`. Both want a directory on disk.
+
+### Decision
+
+The downloader keeps each original archive under `good_extensions/_archives/<browser>/` and additionally unpacks it beside that archive, so the runners always point at a directory. CRX containers are unwrapped by parsing the `Cr24` header (CRX2 and CRX3 have different fixed fields) and extracting the trailing ZIP. Firefox XPIs are ZIPs already. Every extracted extension is validated before it is moved into place: `manifest.json` must exist, `manifest_version` must be 3 for Chrome and 2 or 3 for Firefox, and the Firefox gecko id is read from `browser_specific_settings` **or** the legacy `applications` key.
+
+### Consequences
+
+**Good**: One extraction step satisfies both engines without a Puppeteer fork or a patched launcher; the archives stay on disk, so the Firefox policy rail can install the signed XPI rather than the directory (ADR-025); validation turns a corrupt download into one named failure instead of a browser that mysteriously lacks an extension.
+
+**Bad**: `good_extensions/` stores each extension roughly twice (archive plus unpacked tree); the CRX parsing is a small amount of binary-format code that must track any future CRX4; MV3-only enforcement means a curated entry can be rejected after it was accepted by the catalog.
+
+**Mitigations**: The duplicated bytes live in a gitignored directory and are re-derivable; the CRX version check fails explicitly on an unknown version rather than guessing; the MV3 rejection message names the slug and suggests an MV3 alternative.
+
+---
+
+## ADR-024: Drive the full bisect from the fault extension's own symptom
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: Real-world verification request (LLM-driven, user-approved)
+
+### Context
+
+The existing E2E answers bisect questions by checking whether the known culprit's *name* appears in the trial's enabled list. That is fine when the harness owns both the fixtures and the answer key, but it is not a bisect: it reads the outcome from the add-on's own bookkeeping rather than from the browser's observable state. A real-world gate that did the same would prove only that the panel can echo a list it was given.
+
+### Decision
+
+`verify-full.mjs` derives every verdict from the fault extension's machine-readable symptom, and nothing else. `bad_extension/src/content.js` sets `data-bad-extension="active"` on `<html>`, adds a `<meta name="bad-extension-state">` tag, logs `[BAD_EXT_ACTIVE]`, and renders a red `Bad extension enabled` banner for a human. The runner reads the attribute after each applied batch and answers `persists` when it is present. It never inspects `culpritName` to decide an answer; that field is only asserted at the end. The same marker gives the extension its second audience: `tools/bad-extension-probe.mjs` exposes it as a CLI verdict for diagnosing a page without a browser window.
+
+### Consequences
+
+**Good**: The verdict depends only on what the browser actually rendered, so the run exercises the real decision path end to end; the same contract serves a human, an automated runner, and a command-line probe, so they cannot disagree about whether a page is broken; the marker answers *whether* a fault is present and deliberately refuses to answer *which* extension caused it, keeping identification the bisect's job.
+
+**Bad**: The runner now depends on a fixed DOM contract (`data-bad-extension`, the banner id, the meta name) that any change to `content.js` can silently break; a page whose own CSP blocks the injected banner could still show the attribute, so the two signals are not perfectly equivalent; the desktop-only `matches` patterns mean the fault never appears on `file://` or extension pages.
+
+**Mitigations**: `tests/e2e/harness.mjs` exports the marker constant and the unit test asserts `content.js` still emits all three signals; the attribute is set synchronously at `document_start`, before any CSP-restricted subresource loads, so the machine verdict survives a blocked banner; `docs/NOTES.md` records that the contract is a cross-file constant.
+
+---
+
+## ADR-025: Policy-install Firefox for automatic toggling
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: Real-world verification request (LLM-driven, user-approved)
+
+### Context
+
+On Firefox, `management.setEnabled` refuses to touch a normal extension: it answers *"setEnabled can only be used for themes or by addons installed by enterprise policy"*. Every add-on `Browser.installExtension` installs is *temporary* (`installType: 'development'`), and a temporary add-on is permanently enabled — so the existing Firefox E2E answers every question through the assisted/manual rail and a test-mode driver, never through a real toggle. A zero-human real-world bisect is therefore impossible on Firefox without changing how the add-on itself is installed. MDN's compatibility data records the escape hatch: from Firefox 140, an add-on installed *by policy* may enable and disable any extension.
+
+### Decision
+
+`tests/e2e/firefox-policy.mjs` runs the automated Firefox gate on a **private copy** of the Puppeteer Firefox, into which it writes `<install>/distribution/policies.json`. That file `force_installed`s this add-on from a locally built XPI (so `getSelf().installType === 'admin'`) and `normal_installed`s the 20 curated extensions and the fault extension from their signed archives. `normal_installed` keeps the candidates user-disableable, so they stay eligible instead of landing in the `policy-locked` bucket. `launchTestBrowser({ policyInstalledSelf: true })` skips `installExtension`, because installing again over BiDi would downgrade the add-on back to temporary. Before any assertion the runner proves `installType === 'admin'` and fails with an actionable message otherwise.
+
+### Consequences
+
+**Good**: Firefox now runs the same automatic toggle path Chrome always had, so the real-world gate means the same thing on both browsers; the private copy keeps a shared Puppeteer cache untouched, so other projects on the machine never inherit this policy; the fault extension is policy-installed too, which is the only way the all-off baseline can hold on Firefox.
+
+**Bad**: The rail depends on an unsigned build being installable, which only Nightly honours, so the Firefox half of the gate requires `npx puppeteer browsers install firefox@nightly`; it copies roughly 360 MB of browser once into `.cache/firefox-policy/`; it writes a file into a browser installation directory, which is inherently fragile across Firefox releases; it only proves the *policy* path, so the ordinary temporary-add-on path still has no automatic coverage.
+
+**Mitigations**: The copy is created once and reused, and its `.source` marker invalidates it when the Puppeteer build changes; `policies.json` is backed up and restored in `finally`; the preflight probe converts a policy regression into one diagnostic paragraph instead of a confusing mid-search failure; the fixture suite continues to cover the assisted rail, so both paths stay exercised.
+
 

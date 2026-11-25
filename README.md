@@ -138,8 +138,32 @@ npm run test:unit      # Vitest
 npm run agent:verify   # full gate: lint, typecheck, unit tests, both builds, E2E in both browsers
 ```
 
+### Testing against real extensions
+
+The fixture suite above is fast and deterministic. To check the search against a browser that is
+actually broken, `agent:verify-full` installs 20 curated marketplace extensions plus one deliberately
+faulty extension and bisects them with no human answering anything:
+
+```bash
+npm run extensions:download          # 20 extensions from both stores → good_extensions/
+npx puppeteer browsers install firefox@nightly
+npm run agent:verify-full            # the real-world gate, both browsers
+npm run manual:chrome-full           # the same set, driven by hand
+```
+
+The fault extension lives in [bad_extension/](bad_extension/README.md). It signals the fault twice —
+a red banner for a human and a `data-bad-extension` marker plus `[BAD_EXT_ACTIVE]` console line for a
+program — so the automated gate can answer the bisect from the page instead of from its own
+bookkeeping. To check a page by hand or from a script:
+
+```bash
+npm run bad-extension:probe -- --url=https://example.com --expect=active
+```
+
+This gate is not in CI: it downloads from two stores and needs a Nightly Firefox, so it is opt-in.
+
 Setup and step-by-step procedures live in [docs/RUNBOOK.md](docs/RUNBOOK.md) (RUN-001 to
-RUN-006); conventions and the contribution path in [CONTRIBUTING.md](CONTRIBUTING.md).
+RUN-011); conventions and the contribution path in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Documentation
 

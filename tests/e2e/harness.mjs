@@ -11,6 +11,20 @@ export const TEST_DRIVER_GLOBAL = '__extBisectTestDriver';
 export const TEST_DRIVER_STORAGE_KEY = 'bisectTestDriver';
 export const CLIPBOARD_CAPTURE_GLOBAL = '__bisectClipboardCapture';
 
+/**
+ * Mirrors `bad_extension/src/content.js`. The E2E reads the marker the extension
+ * writes instead of re-deriving "is it broken" from a name or an id, so a runner
+ * that never learns which extension is faulty can still answer the bisect.
+ */
+export const BAD_EXTENSION_MARKER = Object.freeze({
+  attribute: 'data-bad-extension',
+  value: 'active',
+  bannerId: 'bad-extension-banner',
+  bannerText: 'Bad extension enabled',
+  metaName: 'bad-extension-state',
+  consoleMarker: '[BAD_EXT_ACTIVE]',
+});
+
 const BENIGN_MESSAGE_PATTERNS = [/favicon\.ico/i];
 const MAX_RECORDED_ENTRIES = 200;
 
@@ -250,7 +264,51 @@ async function launchChrome({ headless, recorder, extPath, userDataDir }) {
   };
 }
 
-async function launchFirefox({ headless, recorder, extPath, userDataDir }) {
+/**
+ * A policy install happens during startup rather than on a BiDi call, so this add-on's
+ * own pages only exist once Firefox has finished reading
+ * `<install>/distribution/policies.json`. Opening the panel is the readiness probe: if
+ * the policy did not take, there is no extension page to open at all.
+ */
+async function waitForPolicyExtension(browser, geckoId, timeout = 30000) {
+  const origin = `moz-extension://${FIXED_FIREFOX_UUID}`;
+  const deadline = Date.now() + timeout;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    let page = null;
+    try {
+      page = await browser.newPage();
+      await page.goto(`${origin}/sidepanel.html`, { waitUntil: 'commit', timeout: 5000 });
+      const ready = await page
+        .evaluate(() => document.querySelector('[data-testid="sidepanel-root"]') !== null)
+        .catch(() => false);
+      if (ready) {
+        await page.close().catch(() => undefined);
+        return true;
+      }
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+    if (page !== null) await page.close().catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  throw new Error(
+    `The policy-installed add-on "${geckoId}" never served its panel. ` +
+      'Check <firefox>/distribution/policies.json and that the XPI is a valid archive.' +
+      (lastError === null ? '' : ` Last error: ${lastError}`),
+  );
+}
+
+async function launchFirefox({
+  headless,
+  recorder,
+  extPath,
+  userDataDir,
+  executablePath,
+  policyInstalledSelf = false,
+}) {
   const geckoId = readFirefoxGeckoId(extPath);
 
   const browser = await puppeteer.launch({
@@ -270,12 +328,20 @@ async function launchFirefox({ headless, recorder, extPath, userDataDir }) {
       'extensions.webextensions.uuids': JSON.stringify({ [geckoId]: FIXED_FIREFOX_UUID }),
     },
     ...(userDataDir === undefined ? {} : { userDataDir }),
+    ...(executablePath === undefined ? {} : { executablePath }),
   });
 
-  const extensionId = await browser.installExtension(extPath);
+  /**
+   * `Browser.installExtension` always installs a *temporary* add-on, which reports
+   * `installType: 'development'` and can never toggle anything. When a policy already
+   * force-installs this add-on, installing it again would downgrade it, so wait for the
+   * policy install instead of racing it.
+   */
+  const extensionId = policyInstalledSelf ? geckoId : await browser.installExtension(extPath);
   if (extensionId !== geckoId) {
     throw new Error(`Firefox installed extension id "${extensionId}" does not match manifest gecko id "${geckoId}"`);
   }
+  if (policyInstalledSelf) await waitForPolicyExtension(browser, geckoId);
 
   browser.on('targetcreated', async (target) => {
     if (target.type() !== 'page') return;
@@ -293,7 +359,13 @@ async function launchFirefox({ headless, recorder, extPath, userDataDir }) {
   };
 }
 
-export async function launchTestBrowser({ browserName, headless = true, userDataDir }) {
+export async function launchTestBrowser({
+  browserName,
+  headless = true,
+  userDataDir,
+  executablePath,
+  policyInstalledSelf,
+}) {
   if (browserName !== 'chrome' && browserName !== 'firefox') {
     throw new Error(`Unsupported browser "${browserName}"`);
   }
@@ -301,7 +373,7 @@ export async function launchTestBrowser({ browserName, headless = true, userData
   const extPath = resolveOutputDir(browserName);
   const recorder = createRecorder();
   const launcher = browserName === 'chrome' ? launchChrome : launchFirefox;
-  const session = await launcher({ headless, recorder, extPath, userDataDir });
+  const session = await launcher({ headless, recorder, extPath, userDataDir, executablePath, policyInstalledSelf });
 
   return {
     ...session,
@@ -313,6 +385,20 @@ export async function launchTestBrowser({ browserName, headless = true, userData
       for (const fixture of fixtures) {
         const id = await session.browser.installExtension(path.join(FIXTURE_EXTENSIONS_DIR, browserName, fixture.dir));
         installed.push({ ...fixture, id });
+      }
+      return installed;
+    },
+    /**
+     * Installs already-unpacked extensions from arbitrary directories. Puppeteer
+     * needs a directory on disk for both browsers (`Extensions.loadUnpacked` over
+     * CDP, `webExtension.install {type:'path'}` over BiDi), so the real-extension
+     * runner hands over the directories the downloader unpacked.
+     */
+    async installExtensionPaths(extensionPaths) {
+      const installed = [];
+      for (const extensionPath of extensionPaths) {
+        const id = await session.browser.installExtension(extensionPath);
+        installed.push({ path: extensionPath, id });
       }
       return installed;
     },
@@ -1037,4 +1123,85 @@ export async function uninstallExtension(session, extensionId) {
  */
 export async function closePage(page) {
   await page.close();
+}
+
+/**
+ * Reads the bad extension's symptom from a live page. This is the only signal the
+ * full runner is allowed to use when answering a bisect question: it says whether
+ * the injected fault is present, never which extension produced it.
+ */
+export async function readBadExtensionMarker(page) {
+  return page.evaluate((marker) => {
+    const banner = document.getElementById(marker.bannerId);
+    const attribute = document.documentElement.getAttribute(marker.attribute);
+    const meta = document.querySelector(`meta[name="${marker.metaName}"]`);
+    return {
+      attribute,
+      bannerText: banner?.textContent?.trim() ?? null,
+      meta: meta?.getAttribute('content') ?? null,
+    };
+  }, BAD_EXTENSION_MARKER);
+}
+
+/**
+ * The marker alone, folded into a single boolean. A page can be mid-navigation, so
+ * the attribute is the authoritative signal: it is set synchronously at
+ * `document_start`, before the banner exists.
+ */
+export async function isBadExtensionActive(page) {
+  const marker = await readBadExtensionMarker(page).catch(() => null);
+  if (marker === null) return null;
+  return marker.attribute === BAD_EXTENSION_MARKER.value;
+}
+
+export function hasConsoleMarker(recorder) {
+  return recorder.console.some((entry) => entry.text.includes(BAD_EXTENSION_MARKER.consoleMarker));
+}
+
+/**
+ * Waits until the panel renders a named screen. The screen name comes from the root's
+ * `data-screen` attribute, which the panel derives from session state, so this covers
+ * baseline, trial, completed, and every recovery screen with one helper.
+ */
+export async function waitForScreen(surface, screen, { timeout = 30000 } = {}) {
+  const deadline = Date.now() + timeout;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await readSessionState(surface).catch(() => null);
+    if (last !== null && last.screen === screen) return last;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(`Timed out waiting for the "${screen}" screen (last: ${JSON.stringify(last?.screen ?? null)})`);
+}
+
+/**
+ * Waits until the panel lists every expected candidate id. Real extensions appear
+ * asynchronously because the picker reads `management.getAll()` on mount.
+ */
+export async function waitForCandidates(surface, expectedIds, { timeout = 60000 } = {}) {
+  const deadline = Date.now() + timeout;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await readCandidateState(surface).catch(() => null);
+    if (last !== null && last.state === 'ready') {
+      const listed = new Set(last.eligible.map((entry) => entry.id));
+      if (expectedIds.every((id) => listed.has(id))) return last;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return last;
+}
+
+/**
+ * Waits for the symptom to reach an expected presence, which is how the full runner
+ * distinguishes "the page has not finished loading" from "the fault is gone".
+ */
+export async function waitForBadExtensionMarker(page, expectedActive, { timeout = 15000 } = {}) {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    const active = await isBadExtensionActive(page).catch(() => null);
+    if (active === expectedActive) return active;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return null;
 }

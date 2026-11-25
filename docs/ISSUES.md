@@ -93,6 +93,13 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## Open
 
+### ISS-020: Assisted-baseline E2E steps race the checklist render
+
+- **Where**: `tests/e2e/verify.mjs` — `runAssistedBaselineScenario`, `runAssistedExternalAttestationScenario`, and `startSessionAndBind`.
+- **What**: the assisted-baseline screen renders as soon as the session reaches that status, but its checklist is derived from an async `management.getAll()`. Each step waited only for the screen name and then read `assisted.checklist` or clicked `assisted-attest`/`assisted-open-addons`, so on a loaded machine it observed `checklist: []` and recorded `assisted-baseline-lists-every-candidate` as a failure, or attested against an empty plan.
+- **Observed**: flaky, not deterministic — the same three Firefox scenarios failed on some runs and passed on others with an identical harness, and reproduced on a pristine checkout, so it predates the real-extension work.
+- **Suggested fix**: already applied — `startSessionAndBind` and both scenarios now wait for a populated checklist before acting. Kept here until a CI run confirms it stays green.
+
 ---
 
 ## Tickets

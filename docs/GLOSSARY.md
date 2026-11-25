@@ -226,3 +226,23 @@ _Avoid_: mock extension, test plugin
 **Replay test**:
 A deterministic unit test that feeds a valid, corrected, or invalid log copy to the replay function and asserts the recomputed culprit or validation error.
 _Avoid_: log test, history test
+
+**Curated extension**:
+One of the 20 real marketplace extensions listed in `tests/e2e/curated-extensions.json`, downloaded into `good_extensions/<browser>/`, and installed as a candidate by the full bisect. Distinct from a fixture extension, which this repository writes.
+_Avoid_: good extension (in prose), real extension, test extension
+
+**Fault extension**:
+The purpose-built extension in `bad_extension/` that is installed alongside the curated set so a session has a known, reproducible symptom. It is the only extension in the suite that is *supposed* to be faulty.
+_Avoid_: bad extension (in prose), culprit extension, broken extension
+
+**Symptom marker**:
+The machine-readable half of the fault extension's contract — `data-bad-extension="active"` on `<html>`, a `<meta name="bad-extension-state">` tag, and a `[BAD_EXT_ACTIVE]` console line. It answers *whether* the fault is present, never *which* extension produced it.
+_Avoid_: detection signal, error flag
+
+**Full bisect**:
+The automated run in `tests/e2e/verify-full.mjs` (`npm run test:e2e-full`, part of `npm run agent:verify-full`) that installs the curated set plus the fault extension and answers every question from the symptom marker with no human in the loop.
+_Avoid_: real E2E, full gate (in prose), integration test
+
+**Policy rail**:
+The Firefox-only path in `tests/e2e/firefox-policy.mjs` that writes `<install>/distribution/policies.json` so this add-on reports `installType: 'admin'` and may toggle other extensions; the only supported way to automate Firefox, and Nightly-only.
+_Avoid_: enterprise hack, firefox workaround
