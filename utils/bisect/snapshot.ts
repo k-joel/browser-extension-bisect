@@ -67,10 +67,6 @@ export function pausingChanges(changes: readonly SnapshotChange[]): SnapshotChan
   return changes.filter(isPausingChange);
 }
 
-export function changesOfKind(changes: readonly SnapshotChange[], kind: SnapshotChangeKind): SnapshotChange[] {
-  return changes.filter((change) => change.kind === kind);
-}
-
 export function describeSnapshotChanges(changes: readonly SnapshotChange[]): string {
   const parts = changes.map((change) => {
     if (change.kind === 'removed') return `${change.name} is no longer installed`;

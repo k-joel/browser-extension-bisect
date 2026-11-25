@@ -635,9 +635,9 @@ export function isSnapshotPause(view: SessionView): boolean {
 }
 
 /**
- * True when the browser reported a change that is only a warning. An install is recorded
- * nowhere in the log, so this reads the pause: a pause for an install alone never exists,
- * and the warning the panel renders comes from `SessionView.changes` in that case.
+ * True when the browser reported a change that is only a warning. An install never pauses,
+ * so it is derived from the view's `changes` rather than from a pause: the pause field is
+ * empty in exactly that case, and the warning is the only thing the panel has to show.
  */
 export function isSnapshotWarningOnly(view: SessionView): boolean {
   const changes = view.changes;
@@ -710,8 +710,6 @@ const SNAPSHOT_KIND_TEXT: Record<SnapshotChangeKind, { label: string; detail: st
     detail: 'It is no longer installed, so the trial that included it cannot be answered.',
   },
 };
-
-export const SNAPSHOT_KIND_ORDER: readonly SnapshotChangeKind[] = ['removed', 'updated', 'installed'];
 
 export function summarizeSnapshotChanges(changes: readonly SnapshotChange[]): SnapshotWarningRow[] {
   return changes.map((change) => ({

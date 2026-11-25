@@ -154,6 +154,9 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Completed and inconclusive screens link to the session history and to replay.
 - Replay after a corrected verdict: the replay screen lists every recorded verdict with the copy's verdict beside it, and one action per trial flips it. Replay recomputes the baseline and every partition from the verdict sequence alone and shows the culprit or the ambiguity set, the recomputed trials, and every recorded batch that disagrees with the verdicts, or the first invalid event when the edited copy is structurally broken. Replay is diagnostic: the live log stays append-only and unchanged, nothing is toggled, and the screen says so ([ADR-011](DECISIONS.md)).
 - "Copy the replay report" writes the recomputed trials and the differing batches as the same human-readable report the history produces, headed with the diagnostic notice.
+- Mid-session change handling: an extension installed during a session produces a warning and never joins the candidate snapshot, an updated candidate pauses the session when its version changed, and a removed candidate pauses it, invalidates the open trial, and offers Restore or Restart with a fresh snapshot. The warning is a live region with a dismiss action and the pause says which extension changed and how.
+- A closed test tab prompts a rebind and a tab that never settles falls back to a manual reload; neither withholds the verdict, because the batch is already applied. The outcome is recorded on the batch, so a reopened panel still shows the prompt.
+- `utils/bisect/snapshot.ts`: the pure snapshot comparison, which reports `installed`, `updated` and `removed` changes against the immutable session start and can never write back to it.
 - `utils/bisect/replay.ts`: the pure `replayLog(log)` function, which reuses the engine's partition, suspect-set and outcome decisions so a replayed search cannot diverge from a live one.
 - `replayLog` on the typed messaging protocol; the background computes the result and writes nothing.
 - Popup with an enable/disable switch, an interaction counter, and a persisted batch-size setting, all backed by typed local storage.
@@ -169,6 +172,8 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - `management.verifyState` and `management.watchEvents` are implemented by both adapters: the automated rail compares the expected map against `getAll()`, and the assisted rail splits a mismatch into pending manual toggles and unexpected ones and debounces its event signal.
 - `resolveScreen` accepts an optional `historyOpen` flag, so the session history is a screen derived from panel state rather than a modal, and stays unreachable while no session exists.
 - The replay affordances on the history, completed and inconclusive screens are now functional actions that open the replay screen instead of disabled placeholders.
+- `ManagementPort` gains `listInstalled`, the unfiltered `getAll()` mirror the snapshot comparison needs: `listCandidates` reports the session's own toggles as `disabled-at-start` and omits a mid-session install entirely.
+- `session-paused` carries the mid-session changes it detected and `trial-applied` carries the test-tab outcome, so both survive a worker restart without new event types.
 
 ### Fixed
 

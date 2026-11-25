@@ -306,6 +306,9 @@ The panel is a single document whose screen is derived by `resolveScreen(session
 | `history` | Any live session with the history open (from the trial, completed, or inconclusive screen) | "Copy the bisect log" / "Copy the report" |
 | `replay` | Any live session with replay open (from the history, completed, or inconclusive screen) | "Correct trial N", then "Replay the corrected copy" |
 | `restored` | Session `restored` | Restore again |
+| `snapshot-change` | Session `paused` with a `removed` or `updated` change | "Restore and stop" / "Restart with a fresh snapshot" |
+| `toggle-failure` | Session `paused` with a per-extension toggle error | "Enable with click" (gesture failures), "Restore all extensions" |
+| `paused` | Session `paused` on drift | Re-sync / Undo last verdict / Restore all |
 | `progress` | Any other transient live state (`trial`/`applying`/`paused`) | — |
 | `loading` / `error` | Panel load in flight or failed | — |
 
@@ -416,6 +419,30 @@ panel "Retry this trial"
 3. The engine (`utils/bisect/engine.ts`) is the single decision point for the suspect-set update and
    the completion/inconclusive outcome; the reducer only feeds it the recorded events.
 
+**Mid-session changes.** The snapshot in `session-started` is the seed both the live search and
+every replay partition from, so no browser change may rewrite it:
+
+```text
+management onInstalled / onUninstalled
+   ──► background watcher ──► snapshotChanges(session-started.candidateOrder, port.listInstalled())
+         installed  ──► warning beside the unchanged snapshot, no pause, nothing written
+         updated    ──► recordSnapshotPause: 'session-paused' { reason: 'snapshot-changed', changes }
+         removed    ──► recordSnapshotPause (same event, the change kind is the difference)
+   ──► the next applyTrial / submitVerdict / retryTrial re-derives the same comparison, writes the
+       pause if the watcher has not, and refuses the command so the stale trial is not answered
+
+panel "Restart with a fresh snapshot"
+   ──► messenger.sendMessage('restartSession')
+         restore the touched candidates ──► read the browser fresh ──► new session-started
+```
+
+The comparison is a report, never a merge: `snapshot.ts` reads the snapshot and the browser and
+returns changes, and there is no code path from a change back into `candidateOrder`. An install is
+therefore visible to the user and invisible to the search, and a removal keeps the id in
+`originalEnabledIds` so restore still knows it existed. `readSessionView` decorates the reduced view
+with the live comparison on every read, because the install warning must not grow the append-only
+log.
+
 ### 3.2.2 Baseline session state
 
 1. The log is the only session state; `reduceLog` derives every view, so a panel reload or a
@@ -476,7 +503,7 @@ popup button click
 
 ### 4.4 E2E read path
 
-The harness navigates directly to `sidepanel.html` and reads `data-testid` nodes via `readCandidateState`; it never uses extension-internal messaging.
+The harness navigates directly to `sidepanel.html` and reads `data-testid` nodes via `readCandidateState`; it never uses extension-internal messaging. Two reads bypass the DOM deliberately, because no rendered node can prove the claim: `readSnapshotCandidateIds` reads the persisted `session-started` candidate order (the snapshot must not move), and `readBoundTestTab` reads `local:bisectConfig.testTab` after the preflight screen that displayed it is gone.
 
 ---
 
@@ -562,6 +589,9 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `restored-screen`, `restored-explanation`, `restored-summary`, `restored-restore` | restored audit state |
 | `session-progress`, `progress-status`, `progress-count`, `progress-trial`, `progress-enabled`, `progress-disabled`, `progress-note` | interim in-session screen |
 | `restore-panel`, `restore-policy`, `restore-summary` (`data-complete`), `restore-button`, `restore-failures`, `restore-failure` (`data-extension-id`), `restore-failure-name`, `restore-failure-code`, `restore-failure-message` | Restore, present on every screen |
+| `snapshot-change`, `snapshot-change-cause`, `snapshot-change-note`, `snapshot-change-rows`, `snapshot-change-row` (`data-extension-id`, `data-kind`), `snapshot-change-name`, `snapshot-change-kind`, `snapshot-change-detail`, `snapshot-change-actions`, `snapshot-change-restore`, `snapshot-change-restart`, `snapshot-change-restart-note`, `snapshot-change-no-decision` | the mid-session change pause and its restore-or-restart choice |
+| `snapshot-warning` (`data-count`, `aria-live="polite"`), `snapshot-warning-headline`, `snapshot-warning-row` (`data-extension-id`, `data-kind`), `snapshot-warning-name`, `snapshot-warning-kind`, `snapshot-warning-detail`, `snapshot-warning-dismiss` | the install-only warning banner, rendered above whatever screen shows |
+| `test-tab-prompt` (`data-kind` = `closed` \| `unsettled`, `data-tab-id`), `test-tab-prompt-headline`, `test-tab-prompt-detail`, `test-tab-prompt-action`, `test-tab-prompt-verdict-note` | the rebind / manual-reload hint inside the trial screen |
 
 ### 6.4 Build and artifact layout
 
@@ -587,7 +617,10 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `entrypoints/sidepanel/components/NoSession.vue` | No-session screen and the culprit-left-disabled note. |
 | `entrypoints/sidepanel/components/PreflightConsent.vue` | Consent screen: the exact candidates the baseline will disable, the culprit/restore policy, the test-tab binding and rebind, and the explicit "Start baseline" action. |
 | `entrypoints/sidepanel/components/BaselineScreen.vue` | The baseline question with the labels "Problem persists"/"Problem is gone" plus a manual test-tab reload. |
-| `entrypoints/sidepanel/components/TrialScreen.vue` | The partition trial in both of its states: plan the next partition ("Apply trial N"), or answer the applied batch with the exact verdict labels, Retry, and a test-tab reload. |
+| `entrypoints/sidepanel/components/TrialScreen.vue` | The partition trial in both of its states: plan the next partition ("Apply trial N"), or answer the applied batch with the exact verdict labels, Retry, and a test-tab reload. The applied state also renders the rebind prompt or the manual-reload hint the recorded `test-tab` outcome asks for, beside the verdict buttons and never in place of them. |
+| `entrypoints/sidepanel/components/TestTabPrompt.vue` | The closed-tab rebind and the unsettled-tab manual-reload hint: headline, detail, one action, and the note that the verdict can still be answered. |
+| `entrypoints/sidepanel/components/SnapshotChangeScreen.vue` | The mid-session change pause: one row per change with its kind and detail, and the Restore-or-Restart choice. An install-only pause renders no choice, because nothing about the search changed. |
+| `entrypoints/sidepanel/components/SnapshotWarning.vue` | The install-only warning banner, rendered above whatever screen is showing: an `aria-live` region listing each change and a dismiss action, so a warning is visible without being written down. |
 | `entrypoints/sidepanel/components/AssistedTrial.vue` | The assisted partition batch: separate "keep on" and "turn off" checklists, an Open Add-ons Manager action with a copyable fallback, "n of m matched" progress, and Verify. It renders no verdict button: the panel reaches `awaiting-verdict` only after the background proved the batch. |
 | `entrypoints/sidepanel/components/AssistedBaseline.vue` | The assisted all-off baseline: Troubleshoot-Mode attestation, the manual disable-all checklist with Add-ons Manager and Verify, "n of m done" progress, and a test-tab reload. |
 | `entrypoints/sidepanel/components/AssistedRestore.vue` | The assisted restore checklist: every touched candidate with its original state, Verify, and an explicit "Accept the remaining differences" that is only offered while something remains. |
@@ -613,7 +646,8 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `utils/bisect/config.ts` | `local:bisectConfig` item, normalization, serialized `updateBisectConfig`, watcher, legacy-key deletion. |
 | `utils/bisect/events.ts` | `local:bisectLog` item, normalization, `appendEvent` with the 500-event cap, and the pure `reduceLog` reducer that derives `SessionView` (it delegates the suspect-set update and the outcome decision to `engine.ts`). |
 | `utils/bisect/replay.ts` | The pure replay function: `replayLog(log)` validates the session start and candidate order, recomputes the baseline and every partition from the verdict sequence through `engine.ts`, diffs the recomputed batches against the recorded ones into `batchDifferences`, and returns the culprit or ambiguity set plus the first `validationError`. It never toggles and never mutates its input. No browser APIs, so it is unit-tested directly. |
-| `utils/bisect/session.ts` | Session orchestration: `startSession`, `getSession`, `applyTrial`, `retryTrial`, `submitVerdict`, `resetSession`, `bindTestTab`, `reloadTestTab`, `verifyManualState`, `confirmManualState`, `recordExternalBaseline`, `verifyRestore`, `acceptRestore`, `createManualStateWatcher`, all serialized on one promise queue over the log. `nextTrialTarget` derives the batch from the reducer's suspect pool; `settleOutcome` appends the terminal audit event. `SessionDependencies` injects the port, the `TestTabSurface`, the clock and the session-id factory. |
+| `utils/bisect/session.ts` | Session orchestration: `startSession`, `getSession`, `readSessionView`, `applyTrial`, `retryTrial`, `submitVerdict`, `resetSession`, `resyncSession`, `undoLastVerdict`, `recordEscalationResult`, `declineEscalation`, `restartSession`, `bindTestTab`, `reloadTestTab`, `verifyManualState`, `confirmManualState`, `recordExternalBaseline`, `verifyRestore`, `acceptRestore`, `createManualStateWatcher`, `createSnapshotWatcher`, `recordSnapshotPause`, all serialized on one promise queue over the log. `nextTrialTarget` derives the batch from the reducer's suspect pool; `settleOutcome` appends the terminal audit event; `reloadAfterApply` records only the actionable test-tab outcomes. `SessionDependencies` injects the port, the `TestTabSurface`, the clock and the session-id factory. |
+| `utils/bisect/snapshot.ts` | The pure snapshot comparison: `snapshotChanges(snapshot, installed)` reports `installed`/`updated`/`removed` against the immutable `session-started` order, `isPausingChange`/`pausingChanges` split the warning case from the invalidating ones, and `describeSnapshotChanges` renders the wording. Nothing here can write to the snapshot. |
 | `utils/bisect/management-port.ts` | Injectable `ManagementSurface`, the shared eligibility filter (intrinsic reasons only) and ordering helper, the shared apply/verify/restore implementations, and `isManualBatch`. |
 | `utils/bisect/chrome-port.ts` | Automated adapter: `canAutoToggle: true`, `sideSurface: 'side-panel'`. |
 | `utils/bisect/firefox-port.ts` | Assisted adapter: `canAutoToggle` only for `installType === 'admin'`, `sideSurface: 'sidebar'`. Below that threshold `applyTargetState` returns a `ManualBatch` residual diff, `verifyState` splits a mismatch into pending vs unexpected, `restore` returns a manual checklist, and `watchEvents` debounces `onEnabled`/`onDisabled` into one re-verify signal. |
@@ -652,6 +686,11 @@ All extension IPC goes through `defineExtensionMessaging<ProtocolMap>` (`utils/m
 | `submitVerdict` | `{ verdict }` | `SessionMutationResult` | side panel ──► background |
 | `retryTrial` | `{ reason? }` | `SessionMutationResult` | side panel ──► background |
 | `resetSession` | `{ restore: boolean }` | `SessionMutationResult` | side panel ──► background |
+| `resyncSession` | — | `SessionMutationResult` | side panel ──► background |
+| `undoLastVerdict` | — | `SessionMutationResult` | side panel ──► background |
+| `recordEscalationResult` | `{ extensionId, ok, error? }` | `SessionMutationResult` | side panel ──► background |
+| `declineEscalation` | — | `SessionMutationResult` | side panel ──► background |
+| `restartSession` | — | `SessionMutationResult` | side panel ──► background |
 | `bindTestTab` | `{ tabId? }` | `BisectConfig` | side panel ──► background |
 | `reloadTestTab` | — | `{ ok, error? }` | side panel ──► background |
 | `getDrift` | — | `DriftReport` | side panel ──► background |
@@ -702,7 +741,9 @@ Troubleshoot-Mode attestation. `verifyRestore` and `acceptRestore` split "check 
 
 ### 9.1 Error handling
 
-The side panel catches every message rejection into `errorMessage` (`role="alert"`, `data-testid="sidepanel-error"`), so a failing `management.getAll` shows a readable message instead of an empty picker; on a load failure it also flips `data-state` to `error`. A rejected command after load keeps the last good screen and shows the alert, so a failed Restore never silently reverts the UI. The legacy popup does the same. `readContentStatus` fails soft: a messaging failure yields `{active: false, marker: null}`. `reloadTestTab` returns `{ ok: false, error }` rather than throwing, and a baseline that never settles still asks for the verdict. A baseline that `persists` aborts as a host issue rather than blaming an extension. A contradiction in the search — an empty suspect set or a final confirmation that still shows the symptom — ends `inconclusive` with the ambiguity set and a reason, never a silent blame ([ADR-015](DECISIONS.md)). `applyTrial` rejects a terminal session with `SessionError`, and `retryTrial` rejects a session with no open partition trial. `ManagementPort.verifyState` and `watchEvents` still throw `new Error('not implemented')` (ISS-009). No retries anywhere.
+The side panel catches every message rejection into `errorMessage` (`role="alert"`, `data-testid="sidepanel-error"`), so a failing `management.getAll` shows a readable message instead of an empty picker; on a load failure it also flips `data-state` to `error`. A rejected command after load keeps the last good screen and shows the alert, so a failed Restore never silently reverts the UI. The legacy popup does the same. `readContentStatus` fails soft: a messaging failure yields `{active: false, marker: null}`. `reloadTestTab` returns `{ ok: false, error }` rather than throwing, and a baseline that never settles still asks for the verdict. A baseline that `persists` aborts as a host issue rather than blaming an extension. A contradiction in the search — an empty suspect set or a final confirmation that still shows the symptom — ends `inconclusive` with the ambiguity set and a reason, never a silent blame ([ADR-015](DECISIONS.md)). `applyTrial` rejects a terminal session with `SessionError`, and `retryTrial` rejects a session with no open partition trial. A candidate removed or re-versioned under the session pauses it and refuses the command that would have answered the stale trial; the pause is written before the throw, so the refusal rehydrates into the `snapshot-change` screen rather than a bare error string (same pattern as the drift pause, see 9.2). No retries anywhere.
+
+**Test tab.** The reload is best-effort by construction: `tabs.reload` needs no permission, so a tab the user closed rejects and the session treats that as a hint, not a failure. `reloadAndSettle` classifies the attempt into `reloaded` / `unsettled` / `closed` / `unbound`, `reloadAfterApply` writes the two actionable outcomes onto the batch's own `trial-applied` as `testTab`, and the panel turns them into a rebind prompt or a manual-reload hint beside the verdict buttons. The verdict path never consults the test tab, which is what guarantees neither case can block an answer.
 
 ### 9.2 Concurrency and consistency
 
@@ -776,7 +817,7 @@ Unit tests call `fakeBrowser.reset()` per test; component and messaging tests re
 
 | Layer | Files | What it covers |
 |---|---|---|
-| Unit (domain surface) | `tests/unit/bisect-domain.test.ts` | the owned type surface: 12 event types, 11 session statuses, 5 reasons, 5 error codes, nullable `testTab.url`, 6-method port |
+| Unit (domain surface) | `tests/unit/bisect-domain.test.ts` | the owned type surface: 12 event types, 11 session statuses, 5 reasons, 5 error codes, nullable `testTab.url`, 7-method port |
 | Unit (config) | `tests/unit/bisect-config.test.ts` | fallback, normalization, serialized persistence, watcher, legacy-key deletion |
 | Unit (eligibility) | `tests/unit/candidate-eligibility.test.ts` | every exclusion reason, reason precedence, deterministic name-then-id ordering |
 | Unit (adapters) | `tests/unit/management-adapters.test.ts` | both adapters against the fake surface: listing, capability report, the `watchEvents` subscription; plus the enterprise-policy contract that makes Chrome and an `admin` Firefox install behave identically (automated diff, per-id errors, automated restore) |
@@ -795,7 +836,10 @@ Unit tests call `fakeBrowser.reset()` per test; component and messaging tests re
 | Component (history and copy) | `tests/unit/sidepanel-history-screen.test.ts` | the clipboard fallback chain, history ordering/content/retry markers, the outcome block, copy log against the persisted log, copy report against the rendered summary, the `aria-live` confirmation, the error state with the selectable textarea, and the links from the completed and inconclusive screens |
 | Component (assisted screens) | `tests/unit/sidepanel-assisted.test.ts` | assisted mode detection, the manual baseline checklist with a gated verify, the assisted trial screen (two checklists, "n of m matched", Open Add-ons Manager and its failure fallback, verdict buttons absent before verification and present after), the whole assisted loop, and restore-pending with the explicit accept |
 | Unit (legacy scaffold) | `tests/unit/storage.test.ts`, `messaging.test.ts`, `popup.test.ts` | the popup scaffold — retired in ISS-013 |
-| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | `candidate-picker` on both browsers (candidate list, search, exclusion persistence); `session-baseline` on Chrome (pre-flight, all-off baseline, non-candidates untouched, test-tab reload, `gone` advance to the first trial, `persists` host-issue abort, Restore of only touched ids); `partition-loop` on Chrome (the harness is the human oracle: full search to the known fixture culprit, including the final confirmation trial, culprit left disabled, cleared candidate enabled, non-candidates untouched, the session history with the ordered baseline and trials, both copy actions, diagnostic replay of one corrected verdict with the new culprit and the differing recorded batch, the persisted log and the extension states unchanged across the replay, Restore re-enabling the culprit); `assisted-baseline` and `assisted-external` on Firefox (both reporting `firefoxPath: "test-mode-driver"`); and `assisted-trials` on Firefox, which runs the assisted loop to the known culprit through the driver, asserting the verdict buttons are absent before each Verify and present after, and that the culprit is left disabled |
+| Unit (mid-session changes) | `tests/unit/bisect-snapshot.test.ts` | the pure snapshot diff for install/update/removal; an install warning that leaves the suspects, cleared pool and candidate order untouched and never pauses; an update and a removal that pause through `session-paused` with `snapshot-changed`; a removal that records no verdict for the dead trial and keeps the snapshot for restore; the watcher reporting only the pausing kinds; `recordSnapshotPause` refusing a second pause; and `restartSession` restoring first and re-reading the browser |
+| Unit (test tab) | `tests/unit/bisect-test-tab.test.ts` | a closed tab and an unsettled tab recorded on the trial, a verdict accepted in both cases, the hint surviving a remount, the search continuing and completing afterwards, retry re-recording the hint, and an ordinary reload recording nothing |
+| Component (mid-session change and test tab) | `tests/unit/sidepanel-snapshot-change.test.ts` | the rebind prompt and the manual-reload hint beside live verdict buttons, the snapshot-change screen with restore/restart and its install-only no-decision state, the warning banner as a dismissable live region, the removal routing through the real background handlers, the restart writing a new session, and the install warning appearing without a pause |
+| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | `candidate-picker` on both browsers (candidate list, search, exclusion persistence); `session-baseline` on Chrome (pre-flight, all-off baseline, non-candidates untouched, test-tab reload, `gone` advance to the first trial, `persists` host-issue abort, Restore of only touched ids); `partition-loop` on Chrome (the harness is the human oracle: full search to the known fixture culprit, including the final confirmation trial, culprit left disabled, cleared candidate enabled, non-candidates untouched, the session history with the ordered baseline and trials, both copy actions, diagnostic replay of one corrected verdict with the new culprit and the differing recorded batch, the persisted log and the extension states unchanged across the replay, Restore re-enabling the culprit); `mid-session-changes` on Chrome (the bound tab is closed, the applied trial records `testTab: { status: "closed" }`, the trial screen shows the rebind prompt with the verdict buttons live, the verdict reaches the log with no tab, a real `uninstallExtension` then pauses the session through `snapshot-changed` with one `removed` row, records no verdict for the dead trial, leaves the persisted snapshot identical, and a restart writes one `session-started` whose order is the surviving candidate alone); `assisted-baseline` and `assisted-external` on Firefox (both reporting `firefoxPath: "test-mode-driver"`); and `assisted-trials` on Firefox, which runs the assisted loop to the known culprit through the driver, asserting the verdict buttons are absent before each Verify and present after, and that the culprit is left disabled |
 
 ### 12.3 Quality gates
 

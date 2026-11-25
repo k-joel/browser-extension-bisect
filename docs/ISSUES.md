@@ -251,14 +251,14 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Keep the candidate snapshot honest when the browser changes under the session. Warn when an extension is installed or updated; never add it to the snapshot. Pause and invalidate the current trial when a candidate is removed. Offer restore or restart with a fresh snapshot. Handle a closed test tab and a page that never settles without blocking the verdict.
 - **Blocked by**: ISS-009.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, fe17575). The Chrome `mid-session-changes` scenario covers the closed tab and the removed candidate; the updated-candidate pause and the install warning are covered by the fake-port tests, because Chrome cannot be asked to re-version or install an extension on demand.
 
-- [ ] An extension installed mid-session produces a warning and never joins the snapshot.
-- [ ] An updated candidate produces a warning and pauses when the version change could alter behaviour; restart is offered.
-- [ ] A removed candidate pauses the session, invalidates the current trial, and offers restore or restart.
-- [ ] A closed test tab prompts rebind or allows a verdict without reload; a tab that never settles falls back to manual reload and does not block the verdict.
-- [ ] Tests cover each path.
-- [ ] The quality gates pass.
+- [x] An extension installed mid-session produces a warning and never joins the snapshot.
+- [x] An updated candidate produces a warning and pauses when the version change could alter behaviour; restart is offered.
+- [x] A removed candidate pauses the session, invalidates the current trial, and offers restore or restart.
+- [x] A closed test tab prompts rebind or allows a verdict without reload; a tab that never settles falls back to manual reload and does not block the verdict.
+- [x] Tests cover each path.
+- [x] The quality gates pass.
 
 ### ISS-012: Startup reconciliation, multi-panel convergence, storage failures
 
