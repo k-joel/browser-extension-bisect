@@ -10,7 +10,14 @@ export default defineConfig({
     description: 'Binary-search faulty browser extensions across Chrome and Firefox.',
     permissions: ['storage', 'management'],
     ...(browser === 'firefox'
-      ? { browser_specific_settings: { gecko: { id: GECKO_ID } } }
+      ? {
+          browser_specific_settings: {
+            gecko: {
+              id: GECKO_ID,
+              data_collection_permissions: { required: ['none'] },
+            },
+          },
+        }
       : { action: { default_title: 'Extension Bisect' } }),
   }),
   vite: () => ({

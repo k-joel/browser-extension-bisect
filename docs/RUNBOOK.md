@@ -102,6 +102,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [003](#run-003-safe-run-the-full-cross-browser-verification-gate) | Run the full cross-browser verification gate |
 | [004](#run-004-safe-iterate-verification-on-a-single-browser) | Iterate verification on a single browser |
 | [005](#run-005-safe-capture-ad-hoc-debug-state-with-the-inspect-cli) | Capture ad-hoc debug state with the inspect CLI |
+| [006](#run-006-safe-watch-the-github-actions-verification-run) | Watch the GitHub Actions verification run |
 
 ---
 
@@ -158,7 +159,7 @@ Runs Biome, the Vue/TS typecheck, and the Vitest suite — the check to run afte
 
 ## RUN-003 (SAFE): Run the full cross-browser verification gate
 
-Runs the complete gate: lint, typecheck, unit tests, both test-mode builds, and E2E on Chrome and Firefox. This is the completion gate for every change. Does not exercise production (`build:prod:*`) bundles. Rollback: none; regenerates `.output/` and `.agent-artifacts/` only.
+Runs the complete gate: lint, typecheck, unit tests, both test-mode builds, and E2E on Chrome and Firefox. This is the completion gate for every change, and CI runs the same command (RUN-006). Does not exercise production (`build:prod:*`) bundles. Rollback: none; regenerates `.output/` and `.agent-artifacts/` only.
 
 1. Run the gate:
 
@@ -220,3 +221,36 @@ Launches one browser with the extension, opens a fixture (or absolute) URL, opti
    ```
 
    Expected: JSON as above with `"browser": "firefox"`; `--url` accepts `/`, `/form`, `/dynamic` or an absolute URL; `--action` accepts `sidepanel` or `none`.
+
+---
+
+## RUN-006 (SAFE): Watch the GitHub Actions verification run
+
+Reports the status of the CI gate (`.github/workflows/ci.yml`, the same `npm run agent:verify` as RUN-003) for a pushed commit and prints the failed step's log when it fails. Does not re-run or repair the workflow. Rollback: none; read-only.
+
+1. Find the run for the current branch:
+
+   ```
+   gh run list --branch <branch> --limit 5
+   ```
+
+   Expected: one row per push/PR run, newest first, naming the `CI` workflow, with status and conclusion.
+2. Watch it to completion (blocks until the run finishes):
+
+   ```
+   gh run watch <run-id> --exit-status
+   ```
+
+   Expected: live step progress, then exit code 0 when the `verify` job succeeds.
+3. Inspect a failure:
+
+   ```
+   gh run view <run-id> --log-failed
+   ```
+
+   Expected: the log of the failed step (a Vitest failure, an E2E step name, or the browser-install step). Reproduce locally with RUN-002/RUN-004, fix, and push again.
+
+**Troubleshooting**
+
+- **`Installing system dependencies requires root privileges` in the browser-install step**: `--install-deps` ran without `sudo`. Fix: use the workflow's `sudo env "HOME=$HOME" "PATH=$PATH" npx puppeteer browsers install ...` form (NOTES.md §ci).
+- **Every Firefox step times out on `sidepanel-root` in CI**: the runner lacks a Firefox runtime library or the BiDi env flag. Check the browser-install step first; `launchFirefox` already sets `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` (NOTES.md §e2e-harness).

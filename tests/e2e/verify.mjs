@@ -120,6 +120,23 @@ async function waitForScreen(surface, screen, timeout = 20000) {
   );
 }
 
+async function startSessionAndBind(surface, testPage, { baselineScreen = 'baseline' } = {}) {
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  const testTabId = await focusTestTab(surface, testPage);
+  await clickTestId(surface, 'preflight-bind');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.preflight.testTab !== 'No test tab bound' ? state : null;
+    },
+    { label: 'the bound test tab' },
+  );
+  await clickTestId(surface, 'preflight-start');
+  await waitForScreen(surface, baselineScreen);
+  return testTabId;
+}
+
 async function setSearch(surface, value) {
   await surface.$eval(
     SEARCH_SELECTOR,
@@ -896,20 +913,7 @@ async function runPartitionLoopScenario({ surface, session, installed, testPage,
   const initial = await waitForCandidateState(surface, (state) => state.state === 'ready');
   record('partition-starts-from-the-picker', initial.screen === 'picker', { screen: initial.screen });
 
-  await clickTestId(surface, 'picker-start');
-  await waitForScreen(surface, 'preflight');
-  await focusTestTab(surface, testPage);
-  await clickTestId(surface, 'preflight-bind');
-  await waitFor(
-    async () => {
-      const state = await readSessionState(surface);
-      return state.preflight.testTab !== 'No test tab bound' ? state : null;
-    },
-    { label: 'the bound test tab' },
-  );
-
-  await clickTestId(surface, 'preflight-start');
-  await waitForScreen(surface, 'baseline');
+  await startSessionAndBind(surface, testPage);
 
   const afterBaseline = await readExtensionEnabledStates(surface, candidateIds);
   record(
@@ -1459,20 +1463,7 @@ async function runAssistedTrialsScenario({ surface, session, installed, testPage
     firefoxPath: 'test-mode-driver',
   });
 
-  await clickTestId(surface, 'picker-start');
-  await waitForScreen(surface, 'preflight');
-  await focusTestTab(surface, testPage);
-  await clickTestId(surface, 'preflight-bind');
-  await waitFor(
-    async () => {
-      const state = await readSessionState(surface);
-      return state.preflight.testTab !== 'No test tab bound' ? state : null;
-    },
-    { label: 'the bound test tab' },
-  );
-
-  await clickTestId(surface, 'preflight-start');
-  await waitForScreen(surface, 'assisted-baseline');
+  await startSessionAndBind(surface, testPage, { baselineScreen: 'assisted-baseline' });
 
   // Attestation records an external all-off baseline, so the browser must actually be
   // all-off for the trial guard to see a consistent state.
@@ -1692,20 +1683,7 @@ async function runDriftScenario({ surface, session, installed, testPage, fixture
   const before = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
 
   await waitForCandidateState(surface, (state) => state.state === 'ready');
-  await clickTestId(surface, 'picker-start');
-  await waitForScreen(surface, 'preflight');
-  await focusTestTab(surface, testPage);
-  await clickTestId(surface, 'preflight-bind');
-  await waitFor(
-    async () => {
-      const state = await readSessionState(surface);
-      return state.preflight.testTab !== 'No test tab bound' ? state : null;
-    },
-    { label: 'the bound test tab' },
-  );
-
-  await clickTestId(surface, 'preflight-start');
-  await waitForScreen(surface, 'baseline');
+  await startSessionAndBind(surface, testPage);
   await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await clickTestId(surface, 'verdict-gone');
 
@@ -1904,22 +1882,6 @@ async function runToggleFailureScenario({ surface, session, installed, testPage,
   const candidateIds = candidates.map((entry) => entry.id);
   const before = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
 
-  async function startSessionAndBind() {
-    await clickTestId(surface, 'picker-start');
-    await waitForScreen(surface, 'preflight');
-    await focusTestTab(surface, testPage);
-    await clickTestId(surface, 'preflight-bind');
-    await waitFor(
-      async () => {
-        const state = await readSessionState(surface);
-        return state.preflight.testTab !== 'No test tab bound' ? state : null;
-      },
-      { label: 'the bound test tab' },
-    );
-    await clickTestId(surface, 'preflight-start');
-    await waitForScreen(surface, 'baseline');
-  }
-
   /**
    * `reloadExtensionPage` resolves as soon as the app root exists, which is the loading
    * skeleton — the picker's own nodes come a message round-trip later. Waiting on the
@@ -1947,7 +1909,7 @@ async function runToggleFailureScenario({ surface, session, installed, testPage,
   }
 
   // ---- 1. A failed toggle aborts the trial and rolls the batch back ----------------
-  await startSessionAndBind();
+  await startSessionAndBind(surface, testPage);
   await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await clickTestId(surface, 'verdict-gone');
   const plan = await waitFor(
@@ -2012,7 +1974,7 @@ async function runToggleFailureScenario({ surface, session, installed, testPage,
 
   // ---- 2. An escalation is offered and succeeds after the click -------------------
   await resetAndOpenPicker();
-  await startSessionAndBind();
+  await startSessionAndBind(surface, testPage);
   await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await clickTestId(surface, 'verdict-gone');
   await waitFor(
@@ -2082,7 +2044,7 @@ async function runToggleFailureScenario({ surface, session, installed, testPage,
 
   // ---- 3. Declining an escalation reaches an outcome, never a stuck pause ---------
   await resetAndOpenPicker();
-  await startSessionAndBind();
+  await startSessionAndBind(surface, testPage);
   await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await clickTestId(surface, 'verdict-gone');
   await waitFor(
@@ -2118,7 +2080,7 @@ async function runToggleFailureScenario({ surface, session, installed, testPage,
 
   // ---- 4. A greylist failure leaves restore reporting incomplete -----------------
   await resetAndOpenPicker();
-  await startSessionAndBind();
+  await startSessionAndBind(surface, testPage);
   await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await clickTestId(surface, 'verdict-gone');
   await waitFor(
@@ -2211,23 +2173,7 @@ async function runMidSessionChangesScenario({ surface, session, installed, testP
 
   const candidateIds = candidates.map((entry) => entry.id);
 
-  async function startSessionAndBind() {
-    await clickTestId(surface, 'picker-start');
-    await waitForScreen(surface, 'preflight');
-    await focusTestTab(surface, testPage);
-    await clickTestId(surface, 'preflight-bind');
-    await waitFor(
-      async () => {
-        const state = await readSessionState(surface);
-        return state.preflight.testTab !== 'No test tab bound' ? state : null;
-      },
-      { label: 'the bound test tab' },
-    );
-    await clickTestId(surface, 'preflight-start');
-    await waitForScreen(surface, 'baseline');
-  }
-
-  await startSessionAndBind();
+  await startSessionAndBind(surface, testPage);
   await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
   await clickTestId(surface, 'verdict-gone');
 
@@ -2401,19 +2347,7 @@ async function runStartupConvergenceScenario({ surface, second, installed, testP
   const initial = await waitForCandidateState(surface, (state) => state.state === 'ready');
   record('startup-scenario-starts-with-the-picker', initial.screen === 'picker', { screen: initial.screen });
 
-  await clickTestId(surface, 'picker-start');
-  await waitForScreen(surface, 'preflight');
-  await focusTestTab(surface, testPage);
-  await clickTestId(surface, 'preflight-bind');
-  await waitFor(
-    async () => {
-      const state = await readSessionState(surface);
-      return state.preflight.testTab !== 'No test tab bound' ? state : null;
-    },
-    { label: 'the bound test tab' },
-  );
-  await clickTestId(surface, 'preflight-start');
-  await waitForScreen(surface, 'baseline');
+  await startSessionAndBind(surface, testPage);
 
   await clickTestId(surface, 'verdict-gone');
   const planned = await waitForScreen(surface, 'trial');

@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install browsers
+        run: |
+          sudo apt-get update
+          sudo env "HOME=$HOME" "PATH=$PATH" npx puppeteer browsers install chrome --install-deps
+          sudo env "HOME=$HOME" "PATH=$PATH" npx puppeteer browsers install firefox --install-deps
+      - name: Run the full verification gate
+        run: npm run agent:verify

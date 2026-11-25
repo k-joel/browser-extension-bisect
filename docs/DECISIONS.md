@@ -146,6 +146,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [017](#adr-017-store-the-test-tab-url-as-nullable) | Store the test tab URL as nullable |
 | [018](#adr-018-take-the-disabled-half-of-a-partition-from-the-tail-of-the-pool) | Take the disabled half of a partition from the tail of the pool |
 | [019](#adr-019-pin-the-js-beautify-transitive-chain-with-npm-overrides) | Pin the js-beautify transitive chain with npm overrides |
+| [020](#adr-020-run-the-verification-gate-in-github-actions) | Run the verification gate in GitHub Actions |
 
 ---
 
@@ -602,4 +603,28 @@ Pin the two transitive packages with npm `overrides` in `package.json`: `editorc
 **Bad**: The overrides defeat the semver ranges `js-beautify` declares, so a future `js-beautify` release that widens them needs the block re-checked rather than trusted; `npm` does not warn when an override becomes stale. `glob` 14 and `editorconfig` 4 are major bumps taken on API compatibility reasoning, not on upstream testing.
 
 **Mitigations**: `npm run test:unit` exercises the snapshot printer on every run, and `npm run agent:verify` is the completion gate; delete the block once `js-beautify` declares `glob` ≥14 and `editorconfig` ≥4. `docs/RUNBOOK.md` RUN-001 installs from the pinned lockfile.
+
+---
+
+## ADR-020: Run the verification gate in GitHub Actions
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: DEBT-2026-003 remediation session (LLM-driven, user-approved)
+
+### Context
+
+The completion gate (`npm run agent:verify`: Biome, `vue-tsc`, Vitest, both test-mode builds, and Puppeteer E2E on Chrome and Firefox) only ran on a developer machine. Nothing validated a push from another machine, and the repository had no `.github/`, no CI configuration, and no `CODEOWNERS` (`DEBT-2026-003`). The gate needs two real browsers, which the installed Puppeteer version downloads and pins (`chrome` and `firefox`, RUN-001).
+
+### Decision
+
+Run the existing gate unchanged in GitHub Actions (`.github/workflows/ci.yml`) on `ubuntu-latest` with Node 22: `npm ci`, install the puppeteer-pinned browsers with `npx puppeteer browsers install chrome --install-deps` and `firefox --install-deps` under `sudo` while preserving the runner's `HOME`, then `npm run agent:verify` on every push and pull request. Add a minimal `.github/CODEOWNERS` naming `@k-joel`. Do not split the gate into parallel jobs or cache browser downloads in v1.
+
+### Consequences
+
+**Good**: Every push and pull request runs exactly the gate a developer runs locally; the `--install-deps` invocations cover the Linux system libraries the browsers need; CODEOWNERS routes review to the maintainer; no CI-only script can drift from RUN-003.
+
+**Bad**: A run is Linux-only and repeats the browser install and the whole E2E suite, so it is slower than the fast inner loop; the workflow is coupled to Puppeteer's pinned browser builds and to `apt-get satisfy` on the runner image; browser automation remains the most likely flake source.
+
+**Mitigations**: The CI command is byte-identical to RUN-003; `timeout-minutes: 30` bounds a hung run; `npm run agent:verify:chrome|firefox` (RUN-004) stays the single-browser iteration path; the browser-install quirks are recorded in NOTES.md §ci.
 

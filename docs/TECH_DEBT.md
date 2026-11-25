@@ -181,72 +181,29 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - **Last Updated:** 2026-11-25
 - **Last Full Audit:** 2026-11-23 | **Stacks:** Node/TypeScript | **Audit Checks:** 4 PASS / 3 FAIL / 5 N/A
-- **Open Debt:** 5 total (P0: 0, P1: 0, P2: 0, P3: 5)
-- **Trend:** Improving (Resolved since last audit: 3)
-- **Open by Category:** code: 2, infrastructure: 2, documentation: 1
-- **Top 3 to Pay Down First:**
-  1. `DEBT-2026-007` — two hand-rolled `startSessionAndBind` copies in `verify.mjs`; a shared helper removes the drift (XS).
-  2. `DEBT-2026-005` — Firefox build warns about missing `data_collection_permissions`; one manifest key closes it (XS).
-  3. `DEBT-2026-008` — 75 emitted `data-testid`s are absent from ARCH's selector contract; one table update closes it (XS).
+- **Open Debt:** 0 total (P0: 0, P1: 0, P2: 0, P3: 0)
+- **Trend:** Improving (Resolved since last audit: 8)
+- **Open by Category:** None
+- **Top 3 to Pay Down First:** None
 
-Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit suite 17/17, zero `TODO`/`FIXME`/`HACK` in code. FAIL — `npm audit --quiet` (16 vulnerabilities, resolved 2026-11-25 by `DEBT-2026-004`), CI-config scan (none exist), `build:firefox` emits a `data_collection_permissions` warning. N/A — `npm outdated`, unused-dependency scan, coverage, secret scan, circular-dependency scan (not run).
+Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit suite 17/17, zero `TODO`/`FIXME`/`HACK` in code. FAIL — `npm audit --quiet` (16 vulnerabilities, resolved 2026-11-25 by `DEBT-2026-004`), CI-config scan (none exist, resolved 2026-11-25 by `DEBT-2026-003`), `build:firefox` emits a `data_collection_permissions` warning (resolved 2026-11-25 by `DEBT-2026-005`). N/A — `npm outdated`, unused-dependency scan, coverage, secret scan, circular-dependency scan (not run).
 
 ## Active Debt Ledger
 
-| ID | Priority | Status | Category | Subcategory | Item | Location | Effort | Impact | Updated |
-| :- | :- | :- | :- | :- | :- | :- | :- | :- | :- |
-| DEBT-2026-007 | P3 | Identified | code | duplicate_code | Two hand-rolled `startSessionAndBind` copies in the E2E scenarios | `tests/e2e/verify.mjs:1622-1636`, `tests/e2e/verify.mjs:1929-1943` | XS | LOW | 2026-11-26 |
-| DEBT-2026-005 | P3 | Identified | infrastructure | build_warnings | Firefox build warns about missing `data_collection_permissions` | `wxt.config.ts` (Firefox manifest branch) | XS | LOW | 2026-11-23 |
-| DEBT-2026-003 | P3 | Identified | infrastructure | missing_pipeline | No CI pipeline or CODEOWNERS; the gate runs only locally | repo root (no `.github/`, no `CODEOWNERS`) | S | LOW | 2026-11-23 |
-| DEBT-2026-008 | P3 | Identified | documentation | outdated_api_docs | 75 emitted `data-testid`s are absent from ARCH's selector contract | `docs/ARCH.md:541-590` vs `entrypoints/sidepanel/components/*.vue` | XS | LOW | 2026-11-26 |
+_None._
 
 ## Debt Details
 
-### DEBT-2026-007: Two hand-rolled `startSessionAndBind` copies in the E2E scenarios
-
-- **Category / Subcategory:** code / duplicate_code
-- **Status / Priority:** Identified / P3 (Impact: LOW, Effort: XS)
-- **Location:** `tests/e2e/verify.mjs:1622-1636` (`toggle-failure`), `tests/e2e/verify.mjs:1929-1943` (`mid-session-changes`)
-- **Dates:** Created 2026-11-26 | Updated 2026-11-26
-- **Evidence:** Both scenarios declare a local `startSessionAndBind()` that presses `picker-start`, waits for `preflight`, calls `focusTestTab`, binds, and starts. The two bodies are identical apart from whitespace, and four other scenarios repeat those six steps inline.
-- **Impact Rationale:** A change to the bind flow has to be made in six places, and the copies already differ from the inline versions in whether they read the bound tab id back — LOW (2/10).
-- **Remediation Target:** Extract one `startSessionAndBind(surface, testPage)` helper beside `waitForScreen`, returning the tab id from `focusTestTab`, and call it from all six scenarios; re-run `npm run agent:verify`.
-
-### DEBT-2026-005: Firefox build warns about missing `data_collection_permissions`
-
-- **Category / Subcategory:** infrastructure / build_warnings
-- **Status / Priority:** Identified / P3 (Impact: LOW, Effort: XS)
-- **Location:** `wxt.config.ts` (Firefox manifest branch has no `data_collection_permissions` key)
-- **Dates:** Created 2026-11-23 | Updated 2026-11-23
-- **Evidence:** `npm run build:firefox` (2026-11-23, WXT 0.21.5) emits `WARN Firefox requires data_collection_permissions for new extensions from November 3, 2025`; existing extensions are exempt for now.
-- **Impact Rationale:** Non-zero build warning and a future AMO publishing blocker for new extensions; no runtime effect today — LOW (2/10).
-- **Remediation Target:** Declare `data_collection_permissions` in the Firefox manifest branch, or set `suppressWarnings.firefoxDataCollection` in `wxt.config.ts` if none apply; verify the Firefox build emits no warning and `npm run agent:verify` stays green.
-
-### DEBT-2026-003: No CI pipeline or CODEOWNERS; the gate runs only locally
-
-- **Category / Subcategory:** infrastructure / missing_pipeline
-- **Status / Priority:** Identified / P3 (Impact: LOW, Effort: S)
-- **Location:** repo root — no `.github/`, `.gitlab-ci*`, `Jenkinsfile`, or `CODEOWNERS`
-- **Dates:** Created 2026-11-23 | Updated 2026-11-23
-- **Evidence:** Glob for CI configurations (2026-11-23) found none; `package.json` defines no CI scripts; verification relies entirely on local `npm run agent:verify` runs.
-- **Impact Rationale:** Nothing validates commits from other machines and the completion gate depends on a local browser install — LOW (2/10) for a private 0.0.0 project.
-- **Remediation Target:** Add a minimal CI workflow running `npm run agent:verify` after `npx puppeteer browsers install chrome --install-deps` and `firefox --install-deps`; add `CODEOWNERS`.
-
-### DEBT-2026-008: 75 emitted `data-testid`s are absent from ARCH's selector contract
-
-- **Category / Subcategory:** documentation / outdated_api_docs
-- **Status / Priority:** Identified / P3 (Impact: LOW, Effort: XS)
-- **Location:** `docs/ARCH.md:542-587` (the §6.3 selector contract) against `entrypoints/sidepanel/components/*.vue`
-- **Dates:** Created 2026-11-26 | Updated 2026-11-26
-- **Evidence:** A scan of every `data-testid` in `entrypoints/` and `utils/` found 316 distinct ids at `HEAD`, 107 of which no line of `docs/ARCH.md` mentions. 75 of those fall under four prefixes the contract never grew rows for: `drift-*` (10), `paused-*` (10), `toggle-failure-*` (9) and `assisted-*` (46, covering the assisted baseline, trial, restore and the live-progress reporter).
-- **Impact Rationale:** §6.3 is the reference a test author reads before adding an assertion, and an unlisted selector reads as unstable — the assisted rail in particular looks undocumented even though it is fully tested; no runtime effect, LOW (2/10).
-- **Remediation Target:** Add the four missing prefix groups to the §6.3 table with their `data-*` attributes, then re-run the scan above and confirm the unlisted count for those prefixes is zero.
-- **Dependencies / Ref:** Found during the 2026-11-26 residual audit; the `drift-*`/`paused-*`/`toggle-failure-*` rows depend on `DriftScreen.vue` and `ToggleFailurePanel.vue` staying as they are.
+_None._
 
 ## Resolved & Retired Log
 
 | ID | Category | Item | Final Status | Resolution & Verification Evidence | Closed |
 | :- | :- | :- | :- | :- | :- |
+| DEBT-2026-008 | documentation | 75 emitted `data-testid`s absent from ARCH's selector contract | Done | Added the paused/drift, toggle-failure/escalation/manual-recovery, assisted baseline/trial/restore and startup groups to the §6.3 selector table, plus the remaining unlisted `restored-*`, `trial-undo-*`, `ineligible-*`, `picker-mode-note` and `restore-*` selectors. A fresh `data-testid` scan over `entrypoints/` and `utils/` reports only the two template literals that map to documented patterns (`drift-category-<…>`, `replay-correct-N`), i.e. zero unlisted ids. | 2026-11-25 |
+| DEBT-2026-007 | code | Two hand-rolled `startSessionAndBind` copies in the E2E scenarios | Done | Extracted `startSessionAndBind(surface, testPage, { baselineScreen })` beside `waitForScreen` and called it from `partition-loop`, `assisted-trials`, `drift`, `toggle-failure`, `mid-session-changes` and `startup-convergence`; both local copies are gone. `npm run test:e2e` exits 0 on 7 Chrome and 4 Firefox scenarios with zero `pageErrors`/`backgroundErrors`; `npm run test:unit` stays at 728 passing. | 2026-11-25 |
+| DEBT-2026-005 | infrastructure | Firefox build warns about missing `data_collection_permissions` | Done | The Firefox manifest branch now declares `browser_specific_settings.gecko.data_collection_permissions = { required: ["none"] }`. `npm run build:firefox` emits no `data_collection_permissions` warning and `.output/firefox-mv2/manifest.json` carries the key. | 2026-11-25 |
+| DEBT-2026-003 | infrastructure | No CI pipeline or CODEOWNERS; the gate runs only locally | Done | Added `.github/workflows/ci.yml` (Ubuntu, Node 22, pinned Chrome/Firefox installed with `--install-deps`, then `npm run agent:verify` on every push and pull request) and `.github/CODEOWNERS`. First `origin/main` run: green (see CI run history). | 2026-11-25 |
 | DEBT-2026-004 | dependency | 16 dev-toolchain CVEs (5 moderate, 11 high) from `npm audit` | Done | `puppeteer` 24.43.1→25.18.1, `happy-dom` 20.14.6→21.0.4, `@vue/test-utils` 2.4.11→2.6.0 (js-beautify 1.15.4→2.0.3); the residual `js-beautify` chain was pinned with `overrides: { editorconfig: ^4.0.1, glob: ^14.0.6 }` because upstream caps `glob` at 13.0.7. `npm audit` reports `found 0 vulnerabilities`; `npm run agent:verify` exits 0 on both browsers. | 2026-11-25 |
 | DEBT-2026-001 | code | E2E harness re-declares the content-marker attribute constants | Done | Component deleted: `utils/content-marker.ts` and the `EXTENSION_MARKER_ATTRIBUTE`/`EXTENSION_TAB_ID_ATTRIBUTE` constants in `tests/e2e/harness.mjs` went with the content script (ISS-013); no duplicated attribute name remains, `npm run agent:verify` green on both browsers | 2026-11-26 |
 | DEBT-2026-002 | code | `getContentStatus` message surface has no sender (dead code) | Done | Component deleted: `getContentStatus`, `getContentMarker`, `getTabId`, `ContentStatus`, `readContentStatus`/`resolveContentStatus` and the popup/content script that could have sent them are gone (ISS-013); `ProtocolMap` carries only bisect messages | 2026-11-26 |

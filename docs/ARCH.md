@@ -283,10 +283,10 @@ Browser Extension Bisect is a WXT-built browser extension whose product goal is 
 | The Firefox assisted rail: the manual all-off baseline, the assisted trial batch with its two checklists, event-driven verification, and a restore that stays pending until it matches or the user accepts | Injected host-page panels (no `createShadowRootUi` UI — there is no content script) |
 | The automated Chrome partition loop to a culprit or an inconclusive result, with retry and an inline trial summary | A correction that rewrites the live log (replay edits a copy only — [ADR-011](DECISIONS.md)) |
 | The session history screen with the baseline, every trial, retries and the outcome, plus copyable log JSON and a human-readable report | Applying a replayed result to installed extensions (replay never toggles) |
-| Diagnostic replay of an edited log copy: the culprit or ambiguity set, the recomputed trials, and the recorded batches that disagree | CI pipelines (none configured — `DEBT-2026-003`) |
+| Diagnostic replay of an edited log copy: the culprit or ambiguity set, the recomputed trials, and the recorded batches that disagree | — |
 | Drift pause with re-sync, live undo, toggle-failure and escalation handling, mid-session snapshot changes, and startup reconciliation | CSS frameworks and UI component libraries |
 | `ManagementPort` enumeration with one shared eligibility filter and ordering helper, plus the automated apply/restore path and the assisted manual batch/verify/restore path | Delta debugging (`ddmin`) — out of v1 ([ADR-015](DECISIONS.md)) |
-| Local automated verification (Vitest unit + Puppeteer E2E on both browsers) | Telemetry, analytics, remote code |
+| Automated verification (Vitest unit + Puppeteer E2E on both browsers), locally and in CI | Telemetry, analytics, remote code |
 | Plain hand-written CSS over a token layer ([ADR-005](DECISIONS.md)) | — |
 
 ### 1.1 Screens
@@ -551,16 +551,17 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `sidepanel-loading`, `sidepanel-error` | loading status and `role="alert"` error |
 | `no-session`, `culprit-warning` | no-session screen and the culprit-stays-disabled note |
 | `capability-report`, `capability-browser`, `capability-toggle-mode`, `capability-surface`, `capability-install-type` | capability report |
-| `candidate-picker`, `candidate-search`, `picker-start`, `picker-blocked` | picker section, search input, entry to pre-flight, block reason |
+| `candidate-picker`, `candidate-search`, `picker-start`, `picker-blocked`, `picker-mode-note` | picker section, search input, entry to pre-flight, block reason, and the mode note |
 | `candidate-list`, `candidate-row` (`data-extension-id`, `data-selected`), `candidate-checkbox`, `candidate-name`, `candidate-version`, `candidate-initials`, `candidate-reason` | selectable rows (one per `eligible` candidate; `candidate-reason` reads "Excluded by you" when the id is in the config) |
 | `eligible-empty`, `search-empty` | empty states |
-| `ineligible-section`, `ineligible-list`, `ineligible-row` (`data-reason`), `ineligible-name`, `ineligible-reason` | intrinsically ineligible extensions only |
+| `ineligible-section`, `ineligible-list`, `ineligible-row` (`data-reason`), `ineligible-initials`, `ineligible-name`, `ineligible-version`, `ineligible-reason` | intrinsically ineligible extensions only |
 | `preflight`, `preflight-count`, `preflight-candidates`, `preflight-candidate` (`data-extension-id`), `preflight-candidate-name`, `preflight-candidate-version`, `preflight-mode`, `preflight-culprit-note` | consent screen: exactly the candidates the baseline will disable, and the policy copy |
 | `preflight-test-tab`, `preflight-test-tab-label`, `preflight-test-tab-warning`, `preflight-bind`, `preflight-blocked`, `preflight-start`, `preflight-cancel` | test-tab binding and the explicit start |
 | `baseline-screen`, `baseline-question`, `baseline-detail`, `verdict-persists`, `verdict-gone`, `baseline-reload`, `baseline-reload-status` | baseline question with the exact verdict labels |
 | `trial-screen`, `trial-progress`, `trial-question`, `trial-plan`, `trial-plan-enabled`, `trial-plan-disabled`, `trial-apply` | the planned next partition |
 | `trial-applied-state`, `trial-enabled`, `trial-disabled`, `trial-retry`, `trial-retry-note`, `trial-reload`, `trial-reload-status`, `trial-ambiguity` | the applied batch and its verdict actions (`verdict-persists` / `verdict-gone` are shared with the baseline screen) |
 | `trial-history`, `trial-history-list`, `trial-history-row` (`data-round`), `trial-history-round`, `trial-history-enabled`, `trial-history-disabled`, `trial-history-verdict` | inline trial summary |
+| `trial-undo-verdict` (`data-eligible`), `trial-undo-blocked`, `trial-undo-note` | the undo action on the plan screen, its disabled reason, and its note |
 | `trial-history-open` | entry to the session history from the trial screen |
 | `history-screen`, `history-session-id`, `history-candidates`, `history-baseline-mode`, `history-list` | session history header |
 | `history-entry` (`data-round`, `data-kind` = `baseline` \| `trial`), `history-entry-round`, `history-entry-enabled`, `history-entry-disabled`, `history-entry-verdict`, `history-entry-retry` (`data-retries`), `history-entry-note`, `history-entry-baseline` | one history row per baseline check and per trial, in round order |
@@ -578,11 +579,19 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `abort-panel`, `abort-session`, `abort-note`, `abort-question`, `abort-detail`, `abort-restore` (`data-default="true"`), `abort-leave`, `abort-cancel` | the abort action on every live session screen and, once pressed, its "Restore all extensions?" question |
 | `new-session` (`data-blocked`), `new-session-policy`, `new-session-note`, `new-session-start` | the way out of a finished session, rendered by the completed, inconclusive, host-issue, aborted and restored screens |
 | `completed-screen`, `culprit-name`, `culprit-detail`, `completed-restore`, `completed-restore-summary` | completed state, including the `N = 1` resolution |
-| `restored-screen`, `restored-explanation`, `restored-summary`, `restored-restore` | restored audit state |
+| `restored-screen` (`data-complete`), `restored-explanation`, `restored-summary` (`data-complete`), `restored-detail`, `restored-leftovers`, `restored-leftover` (`data-extension-id`, `data-kind`), `restored-leftover-name`, `restored-leftover-kind`, `restored-leftover-state`, `restored-next-step`, `restored-restore` | restored audit state and the extensions still left over |
 | `session-progress`, `progress-status`, `progress-count`, `progress-trial`, `progress-enabled`, `progress-disabled`, `progress-note` | interim in-session screen |
-| `restore-panel`, `restore-policy`, `restore-summary` (`data-complete`), `restore-button`, `restore-failures`, `restore-failure` (`data-extension-id`), `restore-failure-name`, `restore-failure-code`, `restore-failure-message` | Restore, present on every screen |
+| `restore-panel`, `restore-policy`, `restore-summary` (`data-complete`), `restore-button`, `restore-failures`, `restore-failure` (`data-extension-id`, `data-code`), `restore-failure-name`, `restore-failure-code`, `restore-failure-guidance`, `restore-failure-message`, `restore-manager-url` | Restore, present on every screen |
 | `snapshot-change`, `snapshot-change-cause`, `snapshot-change-note`, `snapshot-change-rows`, `snapshot-change-row` (`data-extension-id`, `data-kind`), `snapshot-change-name`, `snapshot-change-kind`, `snapshot-change-detail`, `snapshot-change-actions`, `snapshot-change-restore`, `snapshot-change-restart`, `snapshot-change-restart-note`, `snapshot-change-no-decision` | the mid-session change pause and its restore-or-restart choice |
 | `snapshot-warning` (`data-count`, `aria-live="polite"`), `snapshot-warning-headline`, `snapshot-warning-row` (`data-extension-id`, `data-kind`), `snapshot-warning-name`, `snapshot-warning-kind`, `snapshot-warning-detail`, `snapshot-warning-dismiss` | the install-only warning banner, rendered above whatever screen shows |
+| `startup-reconciliation` (`data-restarted`, `data-status`, `aria-live="polite"`), `startup-reconciliation-headline`, `startup-reconciliation-detail`, `startup-reconciliation-difference` (`data-differs`), `startup-reconciliation-actions`, `startup-resume`, `startup-restore`, `startup-dismiss` | the restart offer shown above whatever screen is open |
+| `paused-screen`, `paused-cause`, `paused-trial`, `paused-no-comparison`, `paused-actions`, `paused-resync`, `paused-undo` (`data-eligible`), `paused-undo-blocked`, `paused-undo-note`, `paused-restore` | the paused-on-drift screen and its recovery actions |
+| `drift-comparison`, `drift-row` (`data-extension-id`, `data-differs`), `drift-row-name`, `drift-row-state`, `drift-categories`, `drift-category-<pending\|unexpected\|missing>` (`data-category`, `data-count`), `drift-category-label`, `drift-category-detail`, `drift-category-entry` (`data-extension-id`), `drift-category-name`, `drift-category-none` | the expected-versus-actual comparison and the per-category drift groups |
+| `toggle-failure`, `toggle-failure-explanation`, `toggle-failure-rows`, `toggle-failure-row` (`data-extension-id`, `data-code`), `toggle-failure-name`, `toggle-failure-code`, `toggle-failure-guidance`, `toggle-failure-message`, `toggle-failure-manager` (`data-manager-url`), `toggle-failure-restore` | the toggle-failure pause and its per-extension errors |
+| `escalation-actions` (`data-extension-id`), `escalation-enable`, `escalation-note`, `escalation-decline`, `manual-recovery-note`, `manual-recovery-url` | the gesture-bound escalation and the manual-recovery guidance |
+| `assisted-baseline`, `assisted-explanation`, `assisted-external`, `assisted-external-instruction`, `assisted-attest`, `assisted-manual`, `assisted-manual-instruction`, `assisted-open-addons`, `assisted-verify`, `assisted-addons-message`, `assisted-progress` (`aria-live="polite"`), `assisted-checklist`, `assisted-checklist-row` (`data-extension-id`, `data-state`), `assisted-checklist-name`, `assisted-checklist-target`, `assisted-checklist-done` (`data-done`), `assisted-copy`, `assisted-reload`, `assisted-restore-note` | the assisted all-off baseline: attestation, manual checklist and progress |
+| `assisted-trial`, `assisted-trial-explanation`, `assisted-trial-instruction`, `assisted-trial-open-addons`, `assisted-trial-verify`, `assisted-trial-addons-message`, `assisted-trial-progress` (`data-matched`, `aria-live="polite"`), `assisted-trial-enable-list`, `assisted-trial-enable-row` (`data-extension-id`), `assisted-trial-enable-name`, `assisted-trial-enable-state` (`data-done`), `assisted-trial-disable-list`, `assisted-trial-disable-row` (`data-extension-id`), `assisted-trial-disable-name`, `assisted-trial-disable-state` (`data-done`), `assisted-trial-copy`, `assisted-trial-reload`, `assisted-trial-verdict-note` | the assisted trial batch: the two checklists, the matched progress and the gated verdict note |
+| `assisted-restore`, `assisted-restore-policy`, `assisted-restore-summary` (`data-complete`), `assisted-restore-errors`, `assisted-restore-checklist`, `assisted-restore-row` (`data-extension-id`, `data-done`), `assisted-restore-name`, `assisted-restore-state`, `assisted-restore-open-addons`, `assisted-restore-verify`, `assisted-restore-accept`, `assisted-restore-accepted` | the assisted restore checklist and the explicit accept |
 | `test-tab-prompt` (`data-kind` = `closed` \| `unsettled`, `data-tab-id`), `test-tab-prompt-headline`, `test-tab-prompt-detail`, `test-tab-prompt-action`, `test-tab-prompt-verdict-note` | the rebind / manual-reload hint inside the trial screen |
 
 ### 6.4 Build and artifact layout
@@ -657,7 +666,7 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 
 | Config | Source | Default / notes |
 |---|---|---|
-| Manifest | `wxt.config.ts` manifest callback | `permissions: ['storage', 'management']` (WXT adds Chrome's `sidePanel` from the sidepanel entrypoint, so the effective Chrome list is exactly `storage`, `management`, `sidePanel`); no `host_permissions`, no `tabs`; `browser_specific_settings.gecko.id` on Firefox builds only; `action.default_title` on Chrome only |
+| Manifest | `wxt.config.ts` manifest callback | `permissions: ['storage', 'management']` (WXT adds Chrome's `sidePanel` from the sidepanel entrypoint, so the effective Chrome list is exactly `storage`, `management`, `sidePanel`); no `host_permissions`, no `tabs`; `browser_specific_settings.gecko.{id, data_collection_permissions}` on Firefox builds only (`required: ['none']` — the add-on transmits no data); `action.default_title` on Chrome only |
 | Side panel manifest slot | `entrypoints/sidepanel/index.html` `<meta name="manifest.type" content="sidepanel">` | WXT emits `side_panel.default_path` + the `sidePanel` permission on Chrome MV3 and `sidebar_action.default_panel` on Firefox |
 | Panel metadata | `<meta name="manifest.default_title">`, `<meta name="manifest.default_icon">` | `Extension Bisect` and `public/icon/{16,32,48,128}.png` |
 | Toolbar action | `background.ts` `openPanelOnActionClick()` | Chrome only: `sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`, so the action opens the panel now that no popup exists |
@@ -803,7 +812,7 @@ Chrome MV3 service worker vs Firefox MV2 background, and Puppeteer CDP vs WebDri
 wxt build (npm run build:chrome | build:firefox | build:prod:*)
     ├──► .output/chrome-mv3   (MV3: background service worker, side_panel, action that opens the panel)
     │      permissions: storage, management, sidePanel; no host_permissions
-    └──► .output/firefox-mv2  (MV2: background script + gecko id + sidebar_action)
+    └──► .output/firefox-mv2  (MV2: background script + gecko id + data_collection_permissions + sidebar_action)
            permissions: storage, management
 
 E2E install (tests/e2e/harness.mjs):
@@ -888,7 +897,7 @@ npm run lint && npm run typecheck && npm run test:unit   # fast inner loop
 npm run agent:verify                                     # full gate: lint, typecheck, unit, build:all, E2E both browsers
 ```
 
-The completion gate is `npm run agent:verify` exiting 0 with zero `pageErrors` and zero `[EXT_BG_ERR]` entries across both browsers.
+The completion gate is `npm run agent:verify` exiting 0 with zero `pageErrors` and zero `[EXT_BG_ERR]` entries across both browsers. CI (`.github/workflows/ci.yml`) runs that same gate on Ubuntu for every push and pull request, after installing the puppeteer-pinned Chrome and Firefox with `npx puppeteer browsers install chrome --install-deps` / `firefox --install-deps`.
 
 ---
 

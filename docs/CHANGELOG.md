@@ -174,6 +174,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Chrome E2E scenarios `drift`, `toggle-failure`, `startup-convergence`, and `mid-session-changes`, and the earlier `session-baseline` and `partition-loop`, so the full automated flow is covered end to end.
 - Nine-document agent documentation set under `docs/` (architecture, decision records, glossary, issues, notes, runbook, tech-debt ledger, tools inventory, changelog), each with an embedded maintenance guide and registered in `AGENTS.md`.
 - The v1 bisect specification (`docs/SPEC.md`) and the twelve implementation tickets in `docs/ISSUES.md`.
+- GitHub Actions CI workflow (`.github/workflows/ci.yml`) running the full `npm run agent:verify` gate — lint, typecheck, unit tests, both test-mode builds, and Chrome/Firefox E2E — on every push and pull request, plus `.github/CODEOWNERS` ([ADR-020](DECISIONS.md)).
 
 ### Changed
 
@@ -200,4 +201,5 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 ### Fixed
 
 - Candidate eligibility no longer treats a user exclusion as an eligibility failure, so `listCandidates().eligible` is the single source for pickable candidates and the picker renders excluded rows from it instead of re-merging them out of the ineligible list ([ADR-016](DECISIONS.md), ISS-016).
+- Firefox builds no longer warn about the missing `data_collection_permissions` declaration: the manifest now states that the add-on collects no data (`required: ["none"]`), which new AMO submissions require.
 
