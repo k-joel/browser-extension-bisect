@@ -59,12 +59,20 @@ export function partitionSuspects(suspects: readonly string[]): TrialPartition {
   };
 }
 
+/**
+ * `outsideTrialIds` names the cleared candidates: they are enabled by this target but
+ * are not part of the partition, so a drift there is an unexpected toggle rather than
+ * a pending manual one. It stays absent when nothing has been cleared yet, so a plain
+ * first partition keeps its documented shape.
+ */
 export function buildTargetState(partition: TrialPartition, cleared: readonly string[]): TargetState {
-  return {
+  const target: TargetState = {
     enabled: [...cleared, ...partition.enabled],
     disabled: [...partition.disabled],
     allOutsideSuspectsEnabled: true,
   };
+  if (cleared.length > 0) target.outsideTrialIds = [...cleared];
+  return target;
 }
 
 export function narrowSuspects(suspects: readonly string[], partition: TrialPartition, verdict: Verdict): string[] {

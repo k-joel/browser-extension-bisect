@@ -193,6 +193,74 @@ export function targetEnabledMap(target: TargetState): EnabledStateMap {
   return map;
 }
 
+export interface ScopedTarget {
+  expected: EnabledStateMap;
+  outsideTrialIds: string[];
+}
+
+/**
+ * The full map the trial expects: its own batch, plus every candidate the trial left
+ * outside the partition. Those must stay enabled for the search to stay valid, and
+ * naming them is what lets the comparison report a toggle *outside* the trial.
+ */
+export function targetExpectedMap(target: TargetState): ScopedTarget {
+  const expected = targetEnabledMap(target);
+  const outsideTrialIds = [...(target.outsideTrialIds ?? [])];
+  for (const id of outsideTrialIds) {
+    if (expected[id] === undefined) expected[id] = true;
+  }
+  return { expected, outsideTrialIds };
+}
+
+export interface VerifyStateOptions {
+  /**
+   * Decides whether a target mismatch is a toggle the trial actually asked for. The
+   * automated adapters asked for every target change, so they omit it; the assisted
+   * adapter reports a mismatch it never requested as an unexpected toggle.
+   */
+  wasRequested?: (extensionId: string, enabled: boolean) => boolean;
+}
+
+/**
+ * The one drift comparison both adapters report. Every category the panel renders is
+ * derived here, so Chrome and Firefox cannot disagree about what drifted.
+ */
+export function summarizeDrift(
+  infos: ManagementExtensionInfo[],
+  target: TargetState,
+  options: VerifyStateOptions = {},
+): DriftReport {
+  const { expected, outsideTrialIds } = targetExpectedMap(target);
+  const outside = new Set(outsideTrialIds);
+  const actual: EnabledStateMap = {};
+  const missingIds: string[] = [];
+  const pendingManualToggles: string[] = [];
+  const unexpectedToggles: string[] = [];
+
+  for (const [extensionId, wanted] of Object.entries(expected)) {
+    const info = infos.find((entry) => entry.id === extensionId);
+    if (info === undefined) {
+      missingIds.push(extensionId);
+      continue;
+    }
+    actual[extensionId] = info.enabled;
+    if (info.enabled === wanted) continue;
+
+    const requested = options.wasRequested?.(extensionId, wanted) ?? true;
+    if (outside.has(extensionId) || !requested) unexpectedToggles.push(extensionId);
+    else pendingManualToggles.push(extensionId);
+  }
+
+  return {
+    expected,
+    actual,
+    pendingManualToggles,
+    unexpectedToggles,
+    missingIds,
+    inSync: pendingManualToggles.length === 0 && unexpectedToggles.length === 0 && missingIds.length === 0,
+  };
+}
+
 /**
  * The ids whose current state differs from the target, split by the direction the
  * user (or the adapter) still has to move them. A disappeared id is skipped: no
@@ -239,36 +307,12 @@ export async function applySharedTargetState(
   return { applied, errors, ok: errors.length === 0 };
 }
 
-export async function verifySharedState(management: ManagementSurface, expected: TargetState): Promise<DriftReport> {
-  const actualInfos = await management.getAll();
-  const expectedMap = targetEnabledMap(expected);
-  const actual: EnabledStateMap = {};
-  const missingIds: string[] = [];
-
-  for (const id of Object.keys(expectedMap)) {
-    const info = actualInfos.find((entry) => entry.id === id);
-    if (info === undefined) {
-      missingIds.push(id);
-      continue;
-    }
-    actual[id] = info.enabled;
-  }
-
-  const pendingManualToggles = Object.keys(expectedMap).filter(
-    (id) => actual[id] !== undefined && actual[id] !== expectedMap[id],
-  );
-
-  // The port only knows the ids in `expected`; distinguishing a toggle
-  // "outside the trial" needs the session's candidate snapshot, so that
-  // category is derived in the session layer (ISS-009) and is empty here.
-  return {
-    expected: expectedMap,
-    actual,
-    pendingManualToggles,
-    unexpectedToggles: [],
-    missingIds,
-    inSync: pendingManualToggles.length === 0 && missingIds.length === 0,
-  };
+export async function verifySharedState(
+  management: ManagementSurface,
+  expected: TargetState,
+  options: VerifyStateOptions = {},
+): Promise<DriftReport> {
+  return summarizeDrift(await management.getAll(), expected, options);
 }
 
 export async function restoreSharedState(

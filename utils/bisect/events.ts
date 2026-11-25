@@ -4,8 +4,10 @@ import type {
   BisectLog,
   CapabilityReport,
   ManualBatch,
+  SessionPause,
   SessionStatus,
   SessionView,
+  TargetState,
   Trial,
   Verdict,
 } from './domain';
@@ -92,6 +94,7 @@ interface SessionAccumulator {
   abortReason: SessionView['abortReason'];
   testTab: SessionView['testTab'];
   manualBatch: ManualBatch | null;
+  pause: SessionPause | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -113,6 +116,17 @@ function toAnsweredTrial(trial: Trial | undefined): AnsweredTrial | null {
 function resetOutcome(acc: SessionAccumulator): void {
   acc.culpritId = null;
   acc.ambiguityIds = [];
+}
+
+/**
+ * The trial's target as the log records it, plus the candidates the trial left out of
+ * its partition. Verification needs the second list: a toggle there is drift *outside*
+ * the trial, which the trial's own two id lists cannot express.
+ */
+function targetStateOf(enabledIds: string[], disabledIds: string[], clearedIds: readonly string[]): TargetState {
+  const target: TargetState = { enabled: enabledIds, disabled: disabledIds, allOutsideSuspectsEnabled: true };
+  if (clearedIds.length > 0) target.outsideTrialIds = [...clearedIds];
+  return target;
 }
 
 function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
@@ -137,11 +151,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
         round: event.payload.round,
         enabledIds: event.payload.enabledIds,
         disabledIds: event.payload.disabledIds,
-        targetState: {
-          enabled: event.payload.enabledIds,
-          disabled: event.payload.disabledIds,
-          allOutsideSuspectsEnabled: true,
-        },
+        targetState: targetStateOf(event.payload.enabledIds, event.payload.disabledIds, acc.cleared),
         verdict: null,
         appliedAt: null,
         errors: [],
@@ -186,12 +196,18 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       return;
     }
     case 'session-paused':
+      acc.pause = { reason: event.payload.reason, drift: event.payload.drift ?? null };
       acc.status = 'paused';
       return;
     case 'session-resumed': {
+      acc.pause = null;
       if (event.payload.reason === 'manual-verified') {
         acc.manualBatch = null;
         acc.status = 'awaiting-verdict';
+        return;
+      }
+      if (acc.manualBatch !== null) {
+        acc.status = 'awaiting-manual-toggle';
         return;
       }
       acc.status = acc.trials.some((trial) => trial.appliedAt !== null) ? 'awaiting-verdict' : 'baseline';
@@ -199,15 +215,18 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
     }
     case 'session-completed':
       acc.culpritId = event.payload.culpritId;
+      acc.pause = null;
       acc.status = 'completed';
       return;
     case 'session-inconclusive':
       acc.ambiguityIds = event.payload.ambiguityIds;
       acc.culpritId = null;
+      acc.pause = null;
       acc.status = 'inconclusive';
       return;
     case 'session-reset':
       acc.manualBatch = null;
+      acc.pause = null;
       acc.status = acc.abortReason === null ? 'restored' : 'aborted';
       return;
   }
@@ -276,6 +295,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     abortReason: null,
     testTab: null,
     manualBatch: null,
+    pause: null,
     createdAt: 0,
     updatedAt: 0,
   };
@@ -299,6 +319,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     abortReason: acc.abortReason,
     testTab: acc.testTab,
     manualBatch: acc.manualBatch,
+    pause: acc.pause,
     progress:
       acc.originalEnabledIds.length === 0
         ? null

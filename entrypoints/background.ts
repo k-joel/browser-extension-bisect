@@ -14,6 +14,7 @@ import {
   recordExternalBaseline,
   reloadTestTab,
   resetSession,
+  resyncSession,
   retryTrial,
   type SessionDependencies,
   SessionError,
@@ -21,6 +22,7 @@ import {
   submitVerdict,
   TEST_TAB_SETTLE_TIMEOUT_MS,
   type TestTabSurface,
+  undoLastVerdict,
   verifyManualState,
   verifyRestore,
 } from '@/utils/bisect/session';
@@ -167,6 +169,14 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('resetSession', async ({ data }): Promise<SessionMutationResult> => {
     const session = await resetSession(sessionDependencies(), data);
     return { session, restore: data.restore ? await readRestoreOutcome() : null };
+  });
+  messenger.onMessage('resyncSession', async (): Promise<SessionMutationResult> => {
+    const session = await resyncSession(sessionDependencies());
+    return { session, restore: null };
+  });
+  messenger.onMessage('undoLastVerdict', async (): Promise<SessionMutationResult> => {
+    const session = await undoLastVerdict(sessionDependencies());
+    return { session, restore: null };
   });
   messenger.onMessage('bindTestTab', async ({ data }): Promise<BisectConfig> => {
     const binding = await resolveTestTab(data?.tabId);

@@ -78,6 +78,16 @@ export interface ProtocolMap {
   applyTrial(): SessionView;
   submitVerdict(payload: { verdict: Verdict }): SessionMutationResult;
   retryTrial(payload: { reason?: string }): SessionMutationResult;
+  /**
+   * Re-applies the paused trial's expected state and closes the pause; the log gains
+   * `session-resumed`.
+   */
+  resyncSession(): SessionMutationResult;
+  /**
+   * Reopens the most recent trial. Refused when the state drifted or the verdict is no
+   * longer the last step; `session-paused` is appended in the drift case.
+   */
+  undoLastVerdict(): SessionMutationResult;
   resetSession(payload: { restore: boolean }): SessionMutationResult;
   bindTestTab(payload: BindTestTabRequest): BisectConfig;
   reloadTestTab(): ReloadTestTabResult;

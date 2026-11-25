@@ -180,6 +180,7 @@ describe('bisect domain surface', () => {
       testTab: null,
       progress: { trialNumber: 1, estimatedTrials: 3, suspectCount: 1 },
       manualBatch: null,
+      pause: null,
       createdAt: 1,
       updatedAt: 2,
     };

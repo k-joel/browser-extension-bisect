@@ -60,6 +60,11 @@ export interface TargetState {
   enabled: string[];
   disabled: string[];
   allOutsideSuspectsEnabled: boolean;
+  /**
+   * Candidates that are not part of this trial's partition but must stay enabled:
+   * the cleared ones. Verification needs them to name a toggle *outside* the trial.
+   */
+  outsideTrialIds?: string[];
 }
 
 export type EnabledStateMap = Record<string, boolean>;
@@ -89,12 +94,22 @@ export interface ManualBatch {
 }
 
 export interface DriftReport {
+  /** One entry per candidate in the session scope: the trial's target, or `true` outside it. */
   expected: EnabledStateMap;
   actual: EnabledStateMap;
+  /** Candidates the trial asked for that are not in the target state yet. */
   pendingManualToggles: string[];
+  /** Candidates outside the current trial that left their expected enabled state. */
   unexpectedToggles: string[];
   missingIds: string[];
   inSync: boolean;
+}
+
+export type DriftCategory = 'pending' | 'unexpected' | 'missing';
+
+export interface SessionPause {
+  reason: string;
+  drift: DriftReport | null;
 }
 
 export interface RestoreError {
@@ -214,6 +229,11 @@ export interface SessionView {
    * closed and reopened panel shows the same checklist.
    */
   manualBatch: ManualBatch | null;
+  /**
+   * The pause the session is sitting in, with the drift it saw. Derived from the
+   * `session-paused` event, so a reopened panel can still show expected vs actual.
+   */
+  pause: SessionPause | null;
   createdAt: number;
   updatedAt: number;
 }

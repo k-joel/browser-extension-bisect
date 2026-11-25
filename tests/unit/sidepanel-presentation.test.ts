@@ -151,6 +151,7 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     testTab: null,
     progress: null,
     manualBatch: null,
+    pause: null,
     createdAt: 1,
     updatedAt: 2,
     ...overrides,

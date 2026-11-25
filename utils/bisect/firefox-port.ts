@@ -15,13 +15,11 @@ import {
   describeError,
   diffAgainstTarget,
   listSharedCandidates,
-  type ManagementExtensionInfo,
   type ManagementSurface,
   mapToggleError,
   type PortDependencies,
   restoreSharedState,
   subscribeToManagementEvents,
-  targetEnabledMap,
   verifySharedState,
 } from './management-port';
 
@@ -77,44 +75,9 @@ function createRequestedStates(management: ManagementSurface) {
       requested = next;
       return batch;
     },
-    split(expected: EnabledStateMap, actual: EnabledStateMap): { pending: string[]; unexpected: string[] } {
-      const pending: string[] = [];
-      const unexpected: string[] = [];
-      for (const [id, enabled] of Object.entries(expected)) {
-        if (actual[id] === undefined || actual[id] === enabled) continue;
-        if (requested[id] === enabled) pending.push(id);
-        else unexpected.push(id);
-      }
-      return { pending, unexpected };
+    wasRequested(extensionId: string, enabled: boolean): boolean {
+      return requested[extensionId] === enabled;
     },
-  };
-}
-
-function verifySplitState(
-  infos: ManagementExtensionInfo[],
-  expected: EnabledStateMap,
-  requested: ReturnType<typeof createRequestedStates>,
-): DriftReport {
-  const actual: EnabledStateMap = {};
-  const missingIds: string[] = [];
-
-  for (const id of Object.keys(expected)) {
-    const info = infos.find((entry) => entry.id === id);
-    if (info === undefined) {
-      missingIds.push(id);
-      continue;
-    }
-    actual[id] = info.enabled;
-  }
-
-  const split = requested.split(expected, actual);
-  return {
-    expected,
-    actual,
-    pendingManualToggles: split.pending,
-    unexpectedToggles: split.unexpected,
-    missingIds,
-    inSync: split.pending.length === 0 && split.unexpected.length === 0 && missingIds.length === 0,
   };
 }
 
@@ -174,7 +137,9 @@ export function createFirefoxPort({
     },
     async verifyState(expected: TargetState): Promise<DriftReport> {
       if (await isPolicyInstalled()) return verifySharedState(management, expected);
-      return verifySplitState(await management.getAll(), targetEnabledMap(expected), requested);
+      return verifySharedState(management, expected, {
+        wasRequested: (extensionId, enabled) => requested.wasRequested(extensionId, enabled),
+      });
     },
     async restore(original: EnabledStateMap): Promise<RestoreResult> {
       if (await isPolicyInstalled()) return restoreSharedState(management, original);

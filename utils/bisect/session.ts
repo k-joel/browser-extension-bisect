@@ -202,6 +202,73 @@ function isBaselineQuestion(view: SessionView): boolean {
   return view.status === 'awaiting-verdict' && view.currentTrial?.round === 0 && view.currentTrial.verdict === null;
 }
 
+const UNDO_REFUSED_STATUSES: readonly SessionView['status'][] = [
+  'paused',
+  'completed',
+  'inconclusive',
+  'aborted',
+  'restored',
+];
+
+export interface UndoEligibility {
+  eligible: boolean;
+  reason: string | null;
+}
+
+/**
+ * Live undo is a correction of the most recent verdict, so it is only offered while
+ * that verdict is the last thing the search learned. A newer trial, a terminal
+ * outcome, or an unfinished manual batch all mean the batch to return to is no longer
+ * the one on screen; the caller then has to re-sync or restore instead.
+ */
+export function undoEligibilityOf(view: SessionView): UndoEligibility {
+  const trial = view.currentTrial;
+  if (UNDO_REFUSED_STATUSES.includes(view.status)) {
+    return { eligible: false, reason: `The session is ${view.status}, so there is no verdict to undo.` };
+  }
+  if (trial === null || trial.verdict === null) {
+    return { eligible: false, reason: 'No verdict has been recorded yet.' };
+  }
+  if (view.status !== 'awaiting-verdict') {
+    return { eligible: false, reason: `The session is ${view.status}, so the verdict is not the last step.` };
+  }
+  if (trial.round === 0) {
+    return { eligible: false, reason: 'The baseline check is not a partition trial, so its verdict cannot be undone.' };
+  }
+  if (view.trials.at(-1)?.round !== trial.round) {
+    return { eligible: false, reason: 'A newer trial has already started.' };
+  }
+  return { eligible: true, reason: null };
+}
+
+/**
+ * Both writers pause through here, so the reason vocabulary and the rule that a pause
+ * always carries the drift it saw stay in one place.
+ */
+export async function pauseForDrift(
+  dependencies: ResolvedDependencies,
+  log: BisectLog,
+  drift: DriftReport,
+): Promise<BisectLog> {
+  return appendAndPersist(log, 'session-paused', dependencies.now(), { reason: 'drift', drift });
+}
+
+/**
+ * `verifyState` proves the browser state the session is about to build on. Without this
+ * the trial would partition a state that no longer exists, and the verdict would answer
+ * a question nobody asked.
+ */
+async function guardAgainstDrift(dependencies: ResolvedDependencies, log: BisectLog, view: SessionView): Promise<void> {
+  const trial = view.currentTrial;
+  if (trial === null) return;
+
+  const drift = await dependencies.port.verifyState(trial.targetState);
+  if (drift.inSync) return;
+
+  await pauseForDrift(dependencies, log, drift);
+  throw new SessionError(describeDrift(drift));
+}
+
 /**
  * Assisted mode parks the session in `awaiting-manual-toggle` until the user's own
  * toggles match the batch. The reducer cannot know when that happened, so accepting
@@ -438,10 +505,89 @@ export function applyTrial(rawDependencies: SessionDependencies): Promise<Sessio
     const log = await requireLog();
     const view = viewOf(log);
     assertTrialAppliable(view.status);
+    await guardAgainstDrift(dependencies, log, view);
 
     const applied = await applyAndRecord(dependencies, log, nextTrialTarget(view), nextRoundFor(view));
     const next = viewOf(applied);
     if (next.status !== 'awaiting-manual-toggle') await reloadAndSettle(dependencies, next.testTab);
+    return next;
+  });
+}
+
+/**
+ * Re-sync puts the expected state back and closes the pause. An assisted batch cannot
+ * be applied by the add-on, so the re-applied target is recorded as a fresh
+ * `trial-applied` for the same round and the session parks on the checklist again.
+ */
+export function resyncSession(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+    const trial = view.currentTrial;
+
+    if (view.status !== 'paused') {
+      throw new SessionError(`Cannot re-sync while the session is ${view.status}`);
+    }
+    if (trial === null) throw new SessionError('No trial is open to re-sync');
+
+    const result = await dependencies.port.applyTargetState(trial.targetState);
+    const resumed = await appendAndPersist(log, 'session-resumed', dependencies.now(), { reason: 're-synced' });
+    if (isManualBatch(result)) {
+      return viewOf(
+        await appendAndPersist(resumed, 'trial-applied', dependencies.now(), {
+          round: trial.round,
+          errors: [],
+          manual: true,
+          manualBatch: targetBatchOf(trial.targetState),
+        }),
+      );
+    }
+
+    const next = viewOf(resumed);
+    await reloadAndSettle(dependencies, next.testTab);
+    return next;
+  });
+}
+
+/**
+ * Live undo reopens the most recent trial. The batch on screen is that trial's own
+ * target, so re-applying it is the unambiguous way back; a drifted browser would make
+ * the reopened round answer a different question, hence the verify first.
+ */
+export function undoLastVerdict(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+    const eligibility = undoEligibilityOf(view);
+    const trial = view.currentTrial;
+
+    if (!eligibility.eligible || trial === null) {
+      throw new SessionError(eligibility.reason ?? 'The last verdict cannot be undone.');
+    }
+
+    const drift = await dependencies.port.verifyState(trial.targetState);
+    if (!drift.inSync) {
+      await pauseForDrift(dependencies, log, drift);
+      throw new SessionError(describeDrift(drift));
+    }
+
+    const undone = await appendAndPersist(log, 'verdict-undone', dependencies.now(), { round: trial.round });
+    const result = await dependencies.port.applyTargetState(trial.targetState);
+    if (isManualBatch(result)) {
+      return viewOf(
+        await appendAndPersist(undone, 'trial-applied', dependencies.now(), {
+          round: trial.round,
+          errors: [],
+          manual: true,
+          manualBatch: targetBatchOf(trial.targetState),
+        }),
+      );
+    }
+
+    const next = viewOf(undone);
+    await reloadAndSettle(dependencies, next.testTab);
     return next;
   });
 }
@@ -534,6 +680,7 @@ export function submitVerdict(
     const view = viewOf(log);
 
     if (isBaselineQuestion(view)) {
+      await guardAgainstDrift(dependencies, log, view);
       const recorded = await appendAndPersist(log, 'baseline-recorded', dependencies.now(), {
         mode: view.baselineMode,
         verdict: payload.verdict,
@@ -554,6 +701,8 @@ export function submitVerdict(
     if (view.status !== 'awaiting-verdict' || pending === null || pending.verdict !== null) {
       throw new SessionError('No verdict is pending');
     }
+
+    await guardAgainstDrift(dependencies, log, view);
 
     const recorded = await appendAndPersist(log, 'verdict-recorded', dependencies.now(), {
       round: pending.round,
