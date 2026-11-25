@@ -303,6 +303,7 @@ The panel is a single document whose screen is derived by `resolveScreen(session
 | `completed` | Session `completed` with a culprit (includes `N = 1`) | Restore |
 | `inconclusive` | Session `inconclusive` | Restore all extensions |
 | `host-issue` | Session `aborted` with `abortReason: host-issue` | "Restore all extensions" |
+| `aborted` | Session `aborted` without a host-issue reason: a declined abort | "Restore all extensions" |
 | `history` | Any live session with the history open (from the trial, completed, or inconclusive screen) | "Copy the bisect log" / "Copy the report" |
 | `replay` | Any live session with replay open (from the history, completed, or inconclusive screen) | "Correct trial N", then "Replay the corrected copy" |
 | `restored` | Session `restored` | Restore again |
@@ -573,6 +574,9 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `completed-history`, `completed-replay`, `completed-replay-note`, `inconclusive-history`, `inconclusive-replay`, `inconclusive-replay-note` | the terminal screens' links to the history and to replay |
 | `inconclusive-screen`, `inconclusive-reason`, `inconclusive-explanation`, `inconclusive-ambiguity-label`, `inconclusive-ambiguity`, `inconclusive-ambiguity-entry`, `inconclusive-ambiguity-name`, `inconclusive-restore`, `inconclusive-restore-summary` | inconclusive outcome with the ambiguity set |
 | `host-issue-screen`, `host-issue-explanation`, `host-issue-guidance`, `host-issue-restore`, `host-issue-restore-summary` | host-issue abort |
+| `aborted-screen`, `aborted-explanation`, `aborted-guidance`, `aborted-restore`, `aborted-restore-summary` | the state a declined abort lands in |
+| `abort-panel`, `abort-session`, `abort-note`, `abort-question`, `abort-detail`, `abort-restore` (`data-default="true"`), `abort-leave`, `abort-cancel` | the abort action on every live session screen and, once pressed, its "Restore all extensions?" question |
+| `new-session` (`data-blocked`), `new-session-policy`, `new-session-note`, `new-session-start` | the way out of a finished session, rendered by the completed, inconclusive, host-issue, aborted and restored screens |
 | `completed-screen`, `culprit-name`, `culprit-detail`, `completed-restore`, `completed-restore-summary` | completed state, including the `N = 1` resolution |
 | `restored-screen`, `restored-explanation`, `restored-summary`, `restored-restore` | restored audit state |
 | `session-progress`, `progress-status`, `progress-count`, `progress-trial`, `progress-enabled`, `progress-disabled`, `progress-note` | interim in-session screen |
@@ -606,6 +610,12 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `entrypoints/sidepanel/components/PreflightConsent.vue` | Consent screen: the exact candidates the baseline will disable, the culprit/restore policy, the test-tab binding and rebind, and the explicit "Start baseline" action. |
 | `entrypoints/sidepanel/components/BaselineScreen.vue` | The baseline question with the labels "Problem persists"/"Problem is gone" plus a manual test-tab reload. |
 | `entrypoints/sidepanel/components/TrialScreen.vue` | The partition trial in both of its states: plan the next partition ("Apply trial N"), or answer the applied batch with the exact verdict labels, Retry, and a test-tab reload. The applied state also renders the rebind prompt or the manual-reload hint the recorded `test-tab` outcome asks for, beside the verdict buttons and never in place of them. |
+| `entrypoints/sidepanel/components/DriftScreen.vue` | The paused-on-drift screen: the cause, one row per candidate with its expected-versus-actual state (`formatSyncState`), one entry per drift category (`drift-category-<pending\|unexpected\|missing>` with `data-count` and the affected names), and the three recovery actions Re-sync, Undo last verdict (disabled with its reason when `undoEligibilityOf` refuses) and Restore all. |
+| `entrypoints/sidepanel/components/ToggleFailurePanel.vue` | The pause a refused toggle or a refused escalation opened: one row per failed id with the mapped `ToggleErrorCode`, the browser's own message and the recovery its code asks for, the extension manager named when that is the only fix, and — for a `needs-user-gesture` failure — the single "Enable with click" escalation beside a decline that ends in a restore. |
+| `entrypoints/sidepanel/components/StartupReconciliation.vue` | The offer a browser restart raises above whatever screen shows: whether the browser restarted, the headline and the resume/restore wording (`describeStartupOffer`), the browser-versus-log difference (`describeStartupDifference`), Resume, Restore and a per-panel Dismiss. |
+| `entrypoints/sidepanel/components/AbortPanel.vue` | SPEC §Error handling `User aborts`: the "Stop this session" action on every live session screen and, once pressed, the "Restore all extensions?" question with the restore answer marked `data-default="true"` and primary, the keep-them-as-they-are answer, and a cancel back to the session. |
+| `entrypoints/sidepanel/components/AbortedScreen.vue` | The state a declined abort lands in: says the extensions the session changed are still where the session left them, offers Restore, and carries the new-session action in its blocked form. |
+| `entrypoints/sidepanel/components/NewSessionAction.vue` | The way out of a finished session: the policy note, the reason the action is held back when a restore is still owed, and the Start over / Start a new session button. Rendered by the completed, inconclusive, host-issue, aborted and restored screens. |
 | `entrypoints/sidepanel/components/TestTabPrompt.vue` | The closed-tab rebind and the unsettled-tab manual-reload hint: headline, detail, one action, and the note that the verdict can still be answered. |
 | `entrypoints/sidepanel/components/SnapshotChangeScreen.vue` | The mid-session change pause: one row per change with its kind and detail, and the Restore-or-Restart choice. An install-only pause renders no choice, because nothing about the search changed. |
 | `entrypoints/sidepanel/components/SnapshotWarning.vue` | The install-only warning banner, rendered above whatever screen is showing: an `aria-live` region listing each change and a dismiss action, so a warning is visible without being written down. |
@@ -638,6 +648,7 @@ Every meaningful node carries a stable `data-testid` (ADR-005). `sidepanel-root`
 | `utils/bisect/chrome-port.ts` | Automated adapter: `canAutoToggle: true`, `sideSurface: 'side-panel'`. |
 | `utils/bisect/firefox-port.ts` | Assisted adapter: `canAutoToggle` only for `installType === 'admin'`, `sideSurface: 'sidebar'`. Below that threshold `applyTargetState` returns a `ManualBatch` residual diff, `verifyState` splits a mismatch into pending vs unexpected, `restore` returns a manual checklist, and `watchEvents` debounces `onEnabled`/`onDisabled` into one re-verify signal. |
 | `utils/bisect/startup.ts` | `local:bisectStartupSignal` item, `raiseStartupSignal` (records the session id and event count a real browser start saw), and `readStartupSignal`; reconciliation itself is derived, never stored. |
+| `utils/bisect/manual-state.ts` | The assisted-progress publisher (ISS-020): the `local:bisectManualState` item holding `{ sessionId, round, drift, at }`, `normalizeManualState`, `readManualState`/`writeManualState`/`clearManualState`, and `watchManualState`. A *report*, never state — the expected map comes from the log's own trial and the actual one from `management.getAll()` — so it is a cache the panel converges on rather than a second source of truth. `background.ts` is its only writer, from the debounced watcher it owns. |
 | `utils/bisect/test-driver.ts` | Test builds only: the storage-backed `ManagementSurface` overlay (`enabledById`, `toggleErrors`) merged into the adapter's `getAll`/`setEnabled`, the `__extBisectTestDriver` page global, and `withTestDriverOverlay`. Never referenced by a production code path. |
 | `utils/messaging.ts` | `ProtocolMap` (the entire message surface) and the shared `messenger`. |
 | `utils/test-mode.ts` | `isTestMode()` gate over the `__EXT_TEST_MODE__` define, plus `TEST_MODE_ENABLED` so a call site can be a foldable ternary. |
@@ -667,6 +678,8 @@ All extension IPC goes through `defineExtensionMessaging<ProtocolMap>` (`utils/m
 | `getConfig` | — | `BisectConfig` | side panel ──► background |
 | `updateConfig` | `Partial<BisectConfig>` | `BisectConfig` | side panel ──► background |
 | `getSession` | — | `SessionView \| null` | side panel ──► background |
+| `getStartupReconciliation` | — | `StartupReconciliation \| null` | side panel ──► background (pure: writes nothing) |
+| `resumeSession` | — | `SessionMutationResult` | side panel ──► background |
 | `getLog` | — | `BisectLog \| null` | side panel ──► background |
 | `replayLog` | `{ log }` | `ReplayResult` | side panel ──► background (pure: writes nothing) |
 | `startSession` | `{ candidateIds, baselineMode, testTab }` | `SessionView` | side panel ──► background |
@@ -674,6 +687,8 @@ All extension IPC goes through `defineExtensionMessaging<ProtocolMap>` (`utils/m
 | `submitVerdict` | `{ verdict }` | `SessionMutationResult` | side panel ──► background |
 | `retryTrial` | `{ reason? }` | `SessionMutationResult` | side panel ──► background |
 | `resetSession` | `{ restore: boolean }` | `SessionMutationResult` | side panel ──► background |
+| `abortSession` | `{ restore: boolean }` | `SessionMutationResult` | side panel ──► background |
+| `startNewSession` | — | `SessionView \| null` | side panel ──► background |
 | `resyncSession` | — | `SessionMutationResult` | side panel ──► background |
 | `undoLastVerdict` | — | `SessionMutationResult` | side panel ──► background |
 | `recordEscalationResult` | `{ extensionId, ok, error? }` | `SessionMutationResult` | side panel ──► background |
@@ -688,20 +703,36 @@ All extension IPC goes through `defineExtensionMessaging<ProtocolMap>` (`utils/m
 | `acceptRestore` | — | `SessionView` | side panel ──► background |
 | `openAddonManager` | — | `AddonManagerResult` | side panel ──► background |
 
-`SessionMutationResult` is `{ session: SessionView; restore: { restored, errors } | null }`. The
-`restore` envelope carries the outcome of the `session-reset` event the command appended, if it
-appended one: `SessionView` has no restore field, so without it the panel could not distinguish
-a complete restore from a partial one (SPEC §Restore).
+`SessionMutationResult` is `{ session: SessionView; restore: { restored, errors, manualIds, declined } | null }`.
+The `restore` envelope carries the outcome of the `session-reset` event the command appended, if it
+appended one: `SessionView` has no restore errors, so without it the panel could not distinguish a
+complete restore from a partial one (SPEC §Restore). `declined` is the abort answer: `true` means the
+user chose to keep the extensions as the session left them, which is a decision rather than a
+failure, and neither the panel nor `restorePending` may read it as a restore.
 
 `bindTestTab` takes only an optional tab id — the panel never sends a URL because the add-on
 cannot see one without the `tabs` permission; the background resolves the active tab when the
 id is omitted ([ADR-017](DECISIONS.md)).
 
 The surface is complete: the original seventeen spec messages plus the startup-reconciliation pair
-(`getStartupReconciliation`, `resumeSession`) and the drift/undo pair (`resyncSession`,
-`undoLastVerdict`). The scaffold messages (`getState`, `updateState`, `recordInteraction`,
-`getContentStatus`, `getContentMarker`, `getTabId`) were deleted with the popup and content script
-(ADR-012).
+(`getStartupReconciliation`, `resumeSession`), the drift/undo pair (`resyncSession`,
+`undoLastVerdict`), the assisted-rail five (`getDrift`, `confirmManualState`,
+`recordExternalBaseline`, `verifyRestore`, `acceptRestore`), the mid-session pair
+(`restartSession`, `declineEscalation`) and the two ways out of a session: `abortSession` for a live
+one and `startNewSession` for a finished one. The scaffold messages (`getState`, `updateState`,
+`recordInteraction`, `getContentStatus`, `getContentMarker`, `getTabId`) were deleted with the popup
+and content script (ADR-012).
+
+`abortSession` is the SPEC §Error handling `User aborts` row. It refuses a session that already
+reached a terminal audit state. With `restore: true` it runs the ordinary restore and reports what it
+actually managed; with `restore: false` it re-enables nothing and appends
+`session-reset { restored: false, declined: true }`, which lands the session on `aborted` and leaves
+`restorePending` true.
+
+`startNewSession` replaces a terminal session's log with an empty one, which is the only route from a
+finished session back to the picker. It deliberately toggles nothing, so it is refused while a restore
+is still pending: the replacement log starts from "every candidate is enabled" and nothing else would
+re-enable what the old session left off.
 
 `getLog` is a read, not a write: it enters the same serialized queue as the mutating commands so
 a copy taken while a verdict is being recorded sees either the old log or the new one, and it
@@ -812,6 +843,8 @@ Unit tests call `fakeBrowser.reset()` per test; component and messaging tests re
 | Unit (config) | `tests/unit/bisect-config.test.ts` | fallback, normalization, serialized persistence, watcher, legacy-key deletion |
 | Unit (eligibility) | `tests/unit/candidate-eligibility.test.ts` | every exclusion reason, reason precedence, deterministic name-then-id ordering |
 | Unit (adapters) | `tests/unit/management-adapters.test.ts` | both adapters against the fake surface: listing, capability report, the `watchEvents` subscription; plus the enterprise-policy contract that makes Chrome and an `admin` Firefox install behave identically (automated diff, per-id errors, automated restore) |
+| Unit (Chrome toggling) | `tests/unit/chrome-port-toggling.test.ts` | the automated rail's per-id behaviour: the sequential `setEnabled` diff against `getAll()` and that it skips an id already in the target state, its `ToggleResult` on a partial failure, the drift comparison it returns from `verifyState`, and the restore diff that only touches ids whose state differs |
+| Unit (error mapping) | `tests/unit/management-error-mapping.test.ts` | `mapToggleError` for every documented pattern and its precedence — a greylisted extension is refused "for policy" too, so the specific cause must win — plus a non-`Error` rejection, reachability of all five codes, the mapping reaching the adapters' `ToggleResult`/`RestoreResult`, the greylisted restore that never claims success, and `rollbackTarget` inverting only what the failed apply moved |
 | Unit (Firefox assisted adapter) | `tests/unit/firefox-port-assisted.test.ts` | the manual batch residual diff, pending-vs-unexpected verification, missing ids, the debounced `onEnabled`/`onDisabled` signal, the assisted restore checklist, and the `admin` routing |
 | Unit (assisted sessions) | `tests/unit/bisect-assisted-session.test.ts` | the manual baseline and its gated transition, the assisted trial batch contents, the gated move to `awaiting-verdict`, the watcher's debounce, suspect-shrink parity with the automated flow, the whole assisted loop to a known culprit, restore-pending and explicit accept, and `admin` routing |
 | Unit (messaging) | `tests/unit/bisect-messaging.test.ts` | `getCapabilities`/`listCandidates`/`getConfig`/`updateConfig` round-trips, exclusion→reason propagation, concurrent updates, startup cleanup; plus the session surface: `getSession`, `startSession`, `applyTrial`, `submitVerdict`, `resetSession`, `bindTestTab`, `reloadTestTab`, and the `SessionMutationResult` restore envelope |
@@ -835,7 +868,9 @@ Unit tests call `fakeBrowser.reset()` per test; component and messaging tests re
 | Component (mid-session change and test tab) | `tests/unit/sidepanel-snapshot-change.test.ts` | the rebind prompt and the manual-reload hint beside live verdict buttons, the snapshot-change screen with restore/restart and its install-only no-decision state, the warning banner as a dismissable live region, the removal routing through the real background handlers, the restart writing a new session, and the install warning appearing without a pause |
 | Component (drift and escalation) | `tests/unit/sidepanel-drift.test.ts`, `sidepanel-escalation.test.ts` | the paused screen with expected-vs-actual rows and categories, re-sync and the blocked undo, the gesture-bound "Enable with click" calling `management` itself, the mapped error panel, and the declined escalation ending in a restore |
 | Component (startup, multi-panel, storage failure) | `tests/unit/sidepanel-startup.test.ts`, `sidepanel-multi-panel.test.ts`, `sidepanel-storage-failure.test.ts` | the resume/restore offer above the screen, two panels converging on one log, and a rejected write surfacing `sidepanel-error` with the previous log intact |
-| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | Chrome runs seven scenarios: `candidate-picker` (candidate list, search, exclusion persistence), `session-baseline` (pre-flight, all-off baseline, non-candidates untouched, test-tab reload, `gone` advance to the first trial, `persists` host-issue abort, Restore of only touched ids), `partition-loop` (the harness is the human oracle: full search to the known fixture culprit, including the final confirmation trial, culprit left disabled, cleared candidate enabled, non-candidates untouched, the session history with the ordered baseline and trials, both copy actions, diagnostic replay of one corrected verdict with the new culprit and the differing recorded batch, the persisted log and the extension states unchanged across the replay, Restore re-enabling the culprit), `drift` (a fixture toggled behind the panel, the pause, re-sync, undo, and a restore that re-enables only touched candidates), `toggle-failure` (policy-blocked, gesture escalation, declined escalation and greylist recovery across three sessions), `startup-convergence` (a recorded restart, the resume offer, the resumption, and two live panels converging), and `mid-session-changes` (the bound tab is closed, the applied trial records `testTab: { status: "closed" }`, the trial screen shows the rebind prompt with the verdict buttons live, the verdict reaches the log with no tab, a real `uninstallExtension` then pauses the session through `snapshot-changed` with one `removed` row, records no verdict for the dead trial, leaves the persisted snapshot identical, and a restart writes one `session-started` whose order is the surviving candidate alone). Firefox runs four: `candidate-picker`, `assisted-baseline` and `assisted-external` (all reporting a `firefoxPath`), and `assisted-trials`, which runs the assisted loop to the known culprit through the driver, asserting the verdict buttons are absent before each Verify and present after, and that the culprit is left disabled. |
+| Unit + component (user abort) | `tests/unit/bisect-abort.test.ts` | SPEC §Error handling `User aborts`, both answers: yes runs the restore and records what it managed, no re-enables nothing and records `declined: true`, the decision survives a reopen, `restorePending` stays true so a new session stays blocked, and the panel asks the question with the restore marked as the default before either answer |
+| Unit + component (new session) | `tests/unit/bisect-new-session.test.ts` | `startNewSession` refusing a live session and a pending restore, replacing the log from a terminal one while toggling nothing, and the terminal screens offering the action blocked-then-unblocked until a restore lands on the picker with a fresh log |
+| E2E (Puppeteer; Chrome CDP + Firefox BiDi) | `tests/e2e/verify.mjs` | Chrome runs seven scenarios: `candidate-picker` (candidate list, search, exclusion persistence), `session-baseline` (pre-flight, all-off baseline, non-candidates untouched, test-tab reload, `gone` advance to the first trial, `persists` host-issue abort, Restore of only touched ids, then the abort action in both of its answers: cancel, "no" landing on the aborted screen with the touched extensions untouched and `session-reset { declined: true }` in the log, and "yes" restoring them), `partition-loop` (the harness is the human oracle: full search to the known fixture culprit, including the final confirmation trial, culprit left disabled, cleared candidate enabled, non-candidates untouched, the new-session action blocked while the restore is pending and unblocked after it, a click on it landing on the picker with a new empty log and a second session that records exactly one `session-started` and reaches its own baseline, the session history with the ordered baseline and trials, both copy actions, diagnostic replay of one corrected verdict with the new culprit and the differing recorded batch, the persisted log and the extension states unchanged across the replay, Restore re-enabling the culprit), `drift` (a fixture toggled behind the panel, the pause, re-sync, undo, and a restore that re-enables only touched candidates), `toggle-failure` (policy-blocked, gesture escalation, declined escalation and greylist recovery across three sessions), `startup-convergence` (a recorded restart, the resume offer, the resumption, and two live panels converging), and `mid-session-changes` (the bound tab is closed, the applied trial records `testTab: { status: "closed" }`, the trial screen shows the rebind prompt with the verdict buttons live, the verdict reaches the log with no tab, a real `uninstallExtension` then pauses the session through `snapshot-changed` with one `removed` row, records no verdict for the dead trial, leaves the persisted snapshot identical, and a restart writes one `session-started` whose order is the surviving candidate alone). Firefox runs four: `candidate-picker`, `assisted-baseline` and `assisted-external` (all reporting a `firefoxPath`), and `assisted-trials`, which runs the assisted loop to the known culprit through the driver, asserting the verdict buttons are absent before each Verify and present after, and that the culprit is left disabled. |
 
 ### 12.3 Quality gates
 

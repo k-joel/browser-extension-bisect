@@ -1262,9 +1262,12 @@ async function runAssistedBaselineScenario({ surface, session, installed, testPa
   record('assisted-baseline-shows-progress', /\d+ of \d+ done/.test(assisted.assisted.progress ?? ''), {
     progress: assisted.assisted.progress,
   });
-  record('assisted-baseline-toggles-nothing-on-start', assisted.assisted.startToggledNothing, {
-    states: await readManualExtensionState(surface, candidateIds),
-  });
+  const afterStart = await readManualExtensionState(surface, candidateIds);
+  record(
+    'assisted-baseline-toggles-nothing-on-start',
+    candidateIds.every((id) => afterStart[id] === before[id]),
+    { before, afterStart },
+  );
 
   await clickTestId(surface, 'assisted-open-addons');
   const addons = await waitFor(

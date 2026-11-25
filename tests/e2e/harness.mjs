@@ -810,7 +810,6 @@ export async function readSessionState(page) {
           target: node.querySelector('[data-testid="assisted-checklist-target"]')?.textContent?.trim() ?? '',
           done: node.querySelector('[data-testid="assisted-checklist-done"]')?.getAttribute('data-done'),
         })),
-        startToggledNothing: true,
         restoreSummary: text('assisted-restore-summary'),
         restoreComplete: document
           .querySelector('[data-testid="assisted-restore-summary"]')

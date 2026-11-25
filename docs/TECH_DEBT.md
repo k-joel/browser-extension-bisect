@@ -181,9 +181,9 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - **Last Updated:** 2026-11-26
 - **Last Full Audit:** 2026-11-23 | **Stacks:** Node/TypeScript | **Audit Checks:** 4 PASS / 3 FAIL / 5 N/A
-- **Open Debt:** 5 total (P0: 0, P1: 0, P2: 1, P3: 4)
+- **Open Debt:** 6 total (P0: 0, P1: 0, P2: 1, P3: 5)
 - **Trend:** Improving (Resolved since last audit: 2)
-- **Open by Category:** dependency: 1, code: 2, infrastructure: 2
+- **Open by Category:** dependency: 1, code: 2, infrastructure: 2, documentation: 1
 - **Top 3 to Pay Down First:**
   1. `DEBT-2026-004` — 16 dev-tree CVEs (5 moderate, 11 high); `npm audit fix` clears part without breaking, the rest needs two major bumps.
   2. `DEBT-2026-007` — two hand-rolled `startSessionAndBind` copies in `verify.mjs`; a shared helper removes the drift (XS).
@@ -199,6 +199,7 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 | DEBT-2026-007 | P3 | Identified | code | duplicate_code | Two hand-rolled `startSessionAndBind` copies in the E2E scenarios | `tests/e2e/verify.mjs:1622-1636`, `tests/e2e/verify.mjs:1929-1943` | XS | LOW | 2026-11-26 |
 | DEBT-2026-005 | P3 | Identified | infrastructure | build_warnings | Firefox build warns about missing `data_collection_permissions` | `wxt.config.ts` (Firefox manifest branch) | XS | LOW | 2026-11-23 |
 | DEBT-2026-003 | P3 | Identified | infrastructure | missing_pipeline | No CI pipeline or CODEOWNERS; the gate runs only locally | repo root (no `.github/`, no `CODEOWNERS`) | S | LOW | 2026-11-23 |
+| DEBT-2026-008 | P3 | Identified | documentation | outdated_api_docs | 75 emitted `data-testid`s are absent from ARCH's selector contract | `docs/ARCH.md:541-590` vs `entrypoints/sidepanel/components/*.vue` | XS | LOW | 2026-11-26 |
 
 ## Debt Details
 
@@ -241,6 +242,17 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 - **Evidence:** Glob for CI configurations (2026-11-23) found none; `package.json` defines no CI scripts; verification relies entirely on local `npm run agent:verify` runs.
 - **Impact Rationale:** Nothing validates commits from other machines and the completion gate depends on a local browser install — LOW (2/10) for a private 0.0.0 project.
 - **Remediation Target:** Add a minimal CI workflow running `npm run agent:verify` after `npx puppeteer browsers install chrome --install-deps` and `firefox --install-deps`; add `CODEOWNERS`.
+
+### DEBT-2026-008: 75 emitted `data-testid`s are absent from ARCH's selector contract
+
+- **Category / Subcategory:** documentation / outdated_api_docs
+- **Status / Priority:** Identified / P3 (Impact: LOW, Effort: XS)
+- **Location:** `docs/ARCH.md:542-587` (the §6.3 selector contract) against `entrypoints/sidepanel/components/*.vue`
+- **Dates:** Created 2026-11-26 | Updated 2026-11-26
+- **Evidence:** A scan of every `data-testid` in `entrypoints/` and `utils/` found 316 distinct ids at `HEAD`, 107 of which no line of `docs/ARCH.md` mentions. 75 of those fall under four prefixes the contract never grew rows for: `drift-*` (10), `paused-*` (10), `toggle-failure-*` (9) and `assisted-*` (46, covering the assisted baseline, trial, restore and the live-progress reporter).
+- **Impact Rationale:** §6.3 is the reference a test author reads before adding an assertion, and an unlisted selector reads as unstable — the assisted rail in particular looks undocumented even though it is fully tested; no runtime effect, LOW (2/10).
+- **Remediation Target:** Add the four missing prefix groups to the §6.3 table with their `data-*` attributes, then re-run the scan above and confirm the unlisted count for those prefixes is zero.
+- **Dependencies / Ref:** Found during the 2026-11-26 residual audit; the `drift-*`/`paused-*`/`toggle-failure-*` rows depend on `DriftScreen.vue` and `ToggleFailurePanel.vue` staying as they are.
 
 ## Resolved & Retired Log
 
