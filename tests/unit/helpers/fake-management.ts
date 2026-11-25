@@ -9,6 +9,10 @@ export interface FakeManagementOptions {
 export interface FakeManagement extends ManagementSurface {
   setEnabledCalls: { id: string; enabled: boolean }[];
   removeExtension(id: string): void;
+  /** Installs a new extension and reports it, the way the browser does. */
+  installExtension(info: ManagementExtensionInfo): void;
+  /** Installs a new version in place, which is how a browser reports an update. */
+  setVersion(id: string, version: string): void;
   emitEnabled(info: ManagementExtensionInfo): void;
   emitDisabled(info: ManagementExtensionInfo): void;
   emitInstalled(info: ManagementExtensionInfo): void;
@@ -75,6 +79,14 @@ export function createFakeManagement(options: FakeManagementOptions): FakeManage
     removeExtension: (id) => {
       const index = extensions.findIndex((info) => info.id === id);
       if (index >= 0) extensions.splice(index, 1);
+    },
+    setVersion: (id, version) => {
+      const target = extensions.find((info) => info.id === id);
+      if (target !== undefined) target.version = version;
+    },
+    installExtension: (info) => {
+      extensions.push({ ...info });
+      installed.emit(info);
     },
     emitEnabled: enabled.emit,
     emitDisabled: disabled.emit,

@@ -375,7 +375,8 @@ describe('drift screen component contract', () => {
       testTab: null,
       progress: null,
       manualBatch: null,
-      pause: drift === null ? null : { reason: 'drift', drift, errors: [] },
+      pause: drift === null ? null : { reason: 'drift', drift, changes: [], errors: [] },
+      changes: [],
       createdAt: 1,
       updatedAt: 2,
     };
@@ -461,6 +462,7 @@ describe('undo eligibility mirrors the session rule', () => {
       progress: null,
       manualBatch: null,
       pause: null,
+      changes: [],
       createdAt: 1,
       updatedAt: 2,
       ...overrides,

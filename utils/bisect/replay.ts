@@ -264,6 +264,7 @@ function recomputedTrial(round: number, target: TargetState, verdict: Verdict): 
     appliedAt: null,
     errors: [],
     manual: false,
+    testTab: null,
   };
 }
 

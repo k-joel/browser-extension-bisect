@@ -9,13 +9,16 @@ import {
   applyTrial,
   bindTestTab,
   confirmManualState,
+  createSnapshotWatcher,
   declineEscalation,
   getLog,
   getSession,
   recordEscalationResult,
   recordExternalBaseline,
+  recordSnapshotPause,
   reloadTestTab,
   resetSession,
+  restartSession,
   resyncSession,
   retryTrial,
   type SessionDependencies,
@@ -195,6 +198,10 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
     const session = await declineEscalation(sessionDependencies());
     return { session, restore: await readRestoreOutcome() };
   });
+  messenger.onMessage('restartSession', async (): Promise<SessionMutationResult> => {
+    const session = await restartSession(sessionDependencies());
+    return { session, restore: await readRestoreOutcome() };
+  });
   messenger.onMessage('confirmManualState', () => confirmManualState(sessionDependencies()));
   messenger.onMessage('recordExternalBaseline', () => recordExternalBaseline(sessionDependencies()));
   messenger.onMessage('verifyRestore', (): Promise<RestoreResult> => verifyRestore(sessionDependencies()));
@@ -204,8 +211,26 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   void deleteLegacyStorageKeys();
 }
 
+/**
+ * A candidate that is removed or re-versioned under a live session must pause it, and no
+ * panel command may be needed for that to happen: the user installs or updates extensions
+ * from the browser's own UI, so the background has to react on its own. The watcher only
+ * reports the pausing changes, and `recordSnapshotPause` re-reads the log through the
+ * serialized queue, so it cannot race a command already in flight.
+ */
+function watchForSnapshotChanges(tabs: TestTabSurface): void {
+  const dependencies = { port: createManagementPort(), tabs };
+  createSnapshotWatcher({
+    dependencies,
+    onChange: (changes) => {
+      void recordSnapshotPause(dependencies, changes).catch(() => undefined);
+    },
+  });
+}
+
 export default defineBackground(() => {
   attachTestModeErrorLogging();
   registerBackgroundHandlers();
+  watchForSnapshotChanges(createTestTabSurface());
   console.info('[EXT_BG_READY]');
 });

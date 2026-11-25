@@ -300,6 +300,7 @@ describe('ToggleFailurePanel component contract', () => {
     return {
       reason: 'toggle-failed',
       drift: null,
+      changes: [],
       errors: [{ extensionId: ALPHA.id, code, message: 'the browser refused' }],
       rollback: null,
     };

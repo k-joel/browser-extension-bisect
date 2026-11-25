@@ -5,6 +5,7 @@ import type {
   EnabledStateMap,
   ExtensionKind,
   IneligibleExtension,
+  InstalledExtension,
   ManagementEvent,
   ManagementPort,
   ManualBatch,
@@ -113,6 +114,13 @@ export async function listSharedCandidates(management: ManagementSurface): Promi
   return partitionCandidates(all, { selfId: self.id });
 }
 
+export async function listInstalledExtensions(management: ManagementSurface): Promise<InstalledExtension[]> {
+  const [all, self] = await Promise.all([management.getAll(), management.getSelf()]);
+  return all
+    .filter((info) => info.id !== self.id)
+    .map((info) => ({ id: info.id, name: info.name, version: info.version, enabled: info.enabled }));
+}
+
 function toManagementEvent(info: ManagementExtensionInfo, enabled: boolean): ManagementEvent {
   return enabled
     ? { type: 'enabled', extensionId: info.id, name: info.name }
@@ -157,10 +165,11 @@ export function createNotImplementedWatchEvents(): Pick<ManagementPort, 'watchEv
 
 export function createNotImplementedMethods(): Pick<
   ManagementPort,
-  'applyTargetState' | 'verifyState' | 'restore' | 'watchEvents'
+  'listInstalled' | 'applyTargetState' | 'verifyState' | 'restore' | 'watchEvents'
 > {
   const reject = () => Promise.reject(new Error(NOT_IMPLEMENTED_MESSAGE));
   return {
+    listInstalled: reject,
     applyTargetState: reject,
     verifyState: reject,
     restore: reject,

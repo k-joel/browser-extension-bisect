@@ -152,6 +152,7 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     progress: null,
     manualBatch: null,
     pause: null,
+    changes: [],
     createdAt: 1,
     updatedAt: 2,
     ...overrides,
@@ -184,6 +185,7 @@ describe('assisted trial screen routing', () => {
         appliedAt: 1,
         errors: [],
         manual: true,
+        testTab: null,
       },
       manualBatch: { enableIds: ['aaaa'], disableIds: ['bbbb'] },
     });
@@ -203,6 +205,7 @@ describe('assisted trial screen routing', () => {
         appliedAt: 1,
         errors: [],
         manual: true,
+        testTab: null,
       },
       manualBatch: { enableIds: [], disableIds: ['aaaa', 'bbbb'] },
     });
@@ -222,6 +225,7 @@ describe('assisted trial screen routing', () => {
         appliedAt: 1,
         errors: [],
         manual: true,
+        testTab: null,
       },
     });
 

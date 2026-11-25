@@ -2,6 +2,7 @@ import type {
   CapabilityReport,
   DriftReport,
   EnabledStateMap,
+  InstalledExtension,
   ManagementEvent,
   ManagementPort,
   RestoreResult,
@@ -10,6 +11,7 @@ import type {
 } from './domain';
 import {
   applySharedTargetState,
+  listInstalledExtensions,
   listSharedCandidates,
   type PortDependencies,
   restoreSharedState,
@@ -39,6 +41,7 @@ export function createChromePort({ management }: ChromePortOptions): ChromeManag
       };
     },
     listCandidates: () => listSharedCandidates(management),
+    listInstalled: (): Promise<InstalledExtension[]> => listInstalledExtensions(management),
     applyTargetState: (target: TargetState): Promise<ToggleResult> => applySharedTargetState(management, target),
     verifyState: (expected: TargetState): Promise<DriftReport> => verifySharedState(management, expected),
     restore: (original: EnabledStateMap): Promise<RestoreResult> => restoreSharedState(management, original),

@@ -156,6 +156,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
         appliedAt: null,
         errors: [],
         manual: event.payload.manual === true,
+        testTab: null,
       });
       acc.status = 'trial';
       return;
@@ -165,6 +166,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       trial.appliedAt = event.at;
       trial.errors = event.payload.errors;
       trial.manual = event.payload.manual === true;
+      if (event.payload.testTab !== undefined) trial.testTab = event.payload.testTab;
       acc.manualBatch = trial.manual ? (event.payload.manualBatch ?? null) : null;
       acc.status = trial.manual ? 'awaiting-manual-toggle' : 'awaiting-verdict';
       return;
@@ -199,6 +201,7 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       acc.pause = {
         reason: event.payload.reason,
         drift: event.payload.drift ?? null,
+        changes: event.payload.changes ?? [],
         errors: event.payload.errors ?? [],
         rollback: event.payload.rollback ?? null,
       };
@@ -325,6 +328,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     testTab: acc.testTab,
     manualBatch: acc.manualBatch,
     pause: acc.pause,
+    changes: acc.pause?.changes ?? [],
     progress:
       acc.originalEnabledIds.length === 0
         ? null

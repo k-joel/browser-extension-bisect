@@ -162,6 +162,7 @@ describe('bisect domain surface', () => {
       appliedAt: 1,
       errors: [],
       manual: false,
+      testTab: null,
     };
     const view: SessionView = {
       sessionId: 's1',
@@ -181,6 +182,7 @@ describe('bisect domain surface', () => {
       progress: { trialNumber: 1, estimatedTrials: 3, suspectCount: 1 },
       manualBatch: null,
       pause: null,
+      changes: [],
       createdAt: 1,
       updatedAt: 2,
     };
@@ -210,11 +212,12 @@ describe('bisect domain surface', () => {
     const methodNames: (keyof ManagementPort)[] = [
       'getCapabilities',
       'listCandidates',
+      'listInstalled',
       'applyTargetState',
       'verifyState',
       'restore',
       'watchEvents',
     ];
-    expect(methodNames).toHaveLength(6);
+    expect(methodNames).toHaveLength(7);
   });
 });

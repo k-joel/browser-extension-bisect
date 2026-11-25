@@ -2,6 +2,7 @@ import type {
   CapabilityReport,
   DriftReport,
   EnabledStateMap,
+  InstalledExtension,
   ManagementEvent,
   ManagementPort,
   ManualBatch,
@@ -14,6 +15,7 @@ import {
   applySharedTargetState,
   describeError,
   diffAgainstTarget,
+  listInstalledExtensions,
   listSharedCandidates,
   type ManagementSurface,
   mapToggleError,
@@ -131,6 +133,7 @@ export function createFirefoxPort({
       };
     },
     listCandidates: () => listSharedCandidates(management),
+    listInstalled: (): Promise<InstalledExtension[]> => listInstalledExtensions(management),
     async applyTargetState(target: TargetState): Promise<ToggleResult | ManualBatch> {
       if (await isPolicyInstalled()) return applySharedTargetState(management, target);
       return requested.remember(target);

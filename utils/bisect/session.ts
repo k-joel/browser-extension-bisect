@@ -13,8 +13,10 @@ import type {
   ManualBatch,
   RestoreResult,
   SessionView,
+  SnapshotChange,
   TargetState,
   TestTabBinding,
+  TestTabOutcome,
   ToggleError,
   ToggleResult,
   Verdict,
@@ -22,6 +24,7 @@ import type {
 import { type AnsweredTrial, buildTargetState, partitionSuspects, undoEligibilityOf } from './engine';
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
 import { isManualBatch, mapToggleError, rollbackTarget } from './management-port';
+import { describeSnapshotChanges, pausingChanges, snapshotChanges } from './snapshot';
 
 export const TEST_TAB_SETTLE_TIMEOUT_MS = 15_000;
 
@@ -30,6 +33,9 @@ export const TOGGLE_FAILED_REASON = 'toggle-failed';
 
 /** The `session-paused` reason a side-panel escalation that failed records. */
 export const ESCALATION_FAILED_REASON = 'escalation-failed';
+
+/** The `session-paused` reason a candidate that changed under the session records. */
+export const SNAPSHOT_CHANGED_REASON = 'snapshot-changed';
 
 export interface TestTabSurface {
   reload(tabId: number): Promise<void>;
@@ -265,14 +271,44 @@ async function recordManualBatch(
   });
 }
 
-async function reloadAndSettle(dependencies: ResolvedDependencies, tab: TestTabBinding | null): Promise<boolean> {
-  if (tab === null) return false;
+async function reloadAndSettle(
+  dependencies: ResolvedDependencies,
+  tab: TestTabBinding | null,
+): Promise<TestTabOutcome> {
+  if (tab === null) return { status: 'unbound', tabId: null };
   try {
     await dependencies.tabs.reload(tab.tabId);
   } catch {
-    return false;
+    return { status: 'closed', tabId: tab.tabId };
   }
-  return dependencies.tabs.waitForComplete(tab.tabId);
+  const settled = await dependencies.tabs.waitForComplete(tab.tabId);
+  return { status: settled ? 'reloaded' : 'unsettled', tabId: tab.tabId };
+}
+
+/**
+ * The reload is a convenience, never a gate: a closed tab and a tab that never settles
+ * both leave the user free to answer, so the outcome is recorded on the trial and the
+ * panel turns it into a rebind prompt or a manual-reload hint. Only the two actionable
+ * outcomes are written, so an ordinary reload does not grow the log.
+ */
+async function reloadAfterApply(
+  dependencies: ResolvedDependencies,
+  log: BisectLog,
+  view: SessionView,
+): Promise<BisectLog> {
+  if (isParked(view)) return log;
+
+  const outcome = await reloadAndSettle(dependencies, view.testTab);
+  const trial = view.currentTrial;
+  if (trial === null) return log;
+  if (outcome.status !== 'closed' && outcome.status !== 'unsettled') return log;
+
+  return appendAndPersist(log, 'trial-applied', dependencies.now(), {
+    round: trial.round,
+    errors: trial.errors,
+    ...(trial.manual && view.manualBatch !== null ? { manual: true, manualBatch: view.manualBatch } : {}),
+    testTab: outcome,
+  });
 }
 
 async function restoreTouched(dependencies: ResolvedDependencies, view: SessionView): Promise<RestoreResult> {
@@ -309,6 +345,139 @@ async function guardAgainstDrift(dependencies: ResolvedDependencies, log: Bisect
 
   await pauseForDrift(dependencies, log, drift);
   throw new SessionError(describeDrift(drift));
+}
+
+export function pauseForSnapshotChange(
+  dependencies: ResolvedDependencies,
+  log: BisectLog,
+  changes: SnapshotChange[],
+): Promise<BisectLog> {
+  return appendAndPersist(log, 'session-paused', dependencies.now(), {
+    reason: SNAPSHOT_CHANGED_REASON,
+    changes,
+  });
+}
+
+export function detectSnapshotChanges(dependencies: SessionDependencies, view: SessionView): Promise<SnapshotChange[]> {
+  const resolved = resolveDependencies(dependencies);
+  return resolved.port
+    .listInstalled()
+    .then((installed) => snapshotChanges(view.candidateOrder, installed))
+    .catch(() => []);
+}
+
+export interface SnapshotWatcherOptions {
+  dependencies: SessionDependencies;
+  /** Reports the pausing subset; an install is a warning and never pauses. */
+  onChange(changes: SnapshotChange[]): void;
+}
+
+/**
+ * `management.onInstalled` also fires for an update on Chrome, so the events only say
+ * *something* happened. The watcher therefore re-derives the report from the snapshot
+ * rather than trusting the event's own shape, which keeps the pause tied to a version
+ * difference the user can see instead of to an event the browser may have reused.
+ */
+export function createSnapshotWatcher({ dependencies, onChange }: SnapshotWatcherOptions): () => void {
+  const resolved = resolveDependencies(dependencies);
+
+  const inspect = async (): Promise<void> => {
+    try {
+      const view = viewOf(await requireLog());
+      if (view.status === 'paused' || view.status === 'restored' || view.status === 'aborted') return;
+      const pausing = pausingChanges(await detectSnapshotChanges(resolved, view));
+      if (pausing.length > 0) onChange(pausing);
+    } catch {
+      // No live session, or an unreadable log: nothing to warn about.
+    }
+  };
+
+  return resolved.port.watchEvents((event) => {
+    if (event.type === 'installed' || event.type === 'uninstalled') void inspect();
+  });
+}
+
+/**
+ * The background's own reaction to a watched removal or update. It runs through the same
+ * serialized queue as every other write, so a panel command in flight cannot race the
+ * pause, and it refuses to move a session that already reached a decision.
+ */
+export function recordSnapshotPause(
+  rawDependencies: SessionDependencies,
+  changes: SnapshotChange[],
+): Promise<SessionView | null> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await readBisectLog();
+    const view = reduceLog(log);
+    if (log === null || view === null) return null;
+    if (view.status === 'paused' || view.status === 'restored' || view.status === 'aborted') return view;
+    if (changes.length === 0) return view;
+    return viewOf(await pauseForSnapshotChange(dependencies, log, changes));
+  });
+}
+
+/**
+ * Restart takes a fresh snapshot. The old session is restored first, because the new one
+ * starts from "every candidate is enabled" and the search would otherwise inherit a state
+ * it never applied. The candidate list is re-read rather than reused, so a restart is the
+ * one operation that legitimately sees the browser as it is now.
+ */
+export function restartSession(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await readBisectLog();
+    const previous = reduceLog(log);
+    if (previous === null) throw new SessionError('No session to restart');
+
+    if (log !== null) await restoreTouched(dependencies, previous);
+
+    const [lists, capability] = await Promise.all([
+      dependencies.port.listCandidates(),
+      dependencies.port.getCapabilities(),
+    ]);
+    const wanted = new Set(previous.originalEnabledIds);
+    const candidates = lists.eligible.filter((candidate) => wanted.has(candidate.id));
+    if (candidates.length === 0) {
+      throw new SessionError('No eligible enabled extensions are left to restart the search with.');
+    }
+
+    const started = appendEvent(
+      createEmptyLog(dependencies.newSessionId()),
+      makeEvent('session-started', dependencies.now(), {
+        candidateOrder: candidates,
+        capability,
+        baselineMode: previous.baselineMode,
+        testTab: previous.testTab,
+      }),
+    );
+    await writeBisectLog(started);
+    if (previous.baselineMode === 'external') return viewOf(started);
+
+    const applied = await applyAndRecord(dependencies, started, allOffTarget(candidates), 0);
+    return viewOf(await reloadAfterApply(dependencies, applied, viewOf(applied)));
+  });
+}
+
+/**
+ * A candidate that was removed or re-versioned invalidates the trial that is on screen:
+ * the partition was built from a snapshot the browser no longer matches, so the next
+ * verdict would answer a question about an extension that is gone or different. An
+ * install never reaches here — see `snapshotChanges`.
+ */
+async function guardAgainstSnapshotChanges(
+  dependencies: ResolvedDependencies,
+  log: BisectLog,
+  view: SessionView,
+): Promise<void> {
+  if (view.candidateOrder.length === 0) return;
+
+  const changes = await detectSnapshotChanges(dependencies, view);
+  const pausing = pausingChanges(changes);
+  if (pausing.length === 0) return;
+
+  await pauseForSnapshotChange(dependencies, log, pausing);
+  throw new SessionError(describeSnapshotChanges(pausing));
 }
 
 /**
@@ -497,9 +666,7 @@ export function startSession(rawDependencies: SessionDependencies, request: Star
     if (request.baselineMode === 'external') return viewOf(log);
 
     const applied = await applyAndRecord(dependencies, log, allOffTarget(candidates), 0);
-    const view = viewOf(applied);
-    if (!isParked(view)) await reloadAndSettle(dependencies, request.testTab);
-    return view;
+    return viewOf(await reloadAfterApply(dependencies, applied, viewOf(applied)));
   });
 }
 
@@ -536,12 +703,11 @@ export function applyTrial(rawDependencies: SessionDependencies): Promise<Sessio
     const log = await requireLog();
     const view = viewOf(log);
     assertTrialAppliable(view.status);
+    await guardAgainstSnapshotChanges(dependencies, log, view);
     await guardAgainstDrift(dependencies, log, view);
 
     const applied = await applyAndRecord(dependencies, log, nextTrialTarget(view), nextRoundFor(view));
-    const next = viewOf(applied);
-    if (!isParked(next)) await reloadAndSettle(dependencies, next.testTab);
-    return next;
+    return viewOf(await reloadAfterApply(dependencies, applied, viewOf(applied)));
   });
 }
 
@@ -583,8 +749,7 @@ export function resyncSession(rawDependencies: SessionDependencies): Promise<Ses
     }
 
     const next = viewOf(resumed);
-    await reloadAndSettle(dependencies, next.testTab);
-    return next;
+    return viewOf(await reloadAfterApply(dependencies, resumed, next));
   });
 }
 
@@ -632,8 +797,7 @@ export function undoLastVerdict(rawDependencies: SessionDependencies): Promise<S
     }
 
     const next = viewOf(undone);
-    await reloadAndSettle(dependencies, next.testTab);
-    return next;
+    return viewOf(await reloadAfterApply(dependencies, undone, next));
   });
 }
 
@@ -677,8 +841,7 @@ export function retryTrial(
     }
     if (isManualBatch(result)) return viewOf(reapplied);
 
-    await reloadAndSettle(dependencies, view.testTab);
-    return viewOf(reapplied);
+    return viewOf(await reloadAfterApply(dependencies, reapplied, viewOf(reapplied)));
   });
 }
 
@@ -727,11 +890,11 @@ export function recordEscalationResult(
     if (trial === null) return viewOf(resumed);
 
     const outcome = await applyWithAbort(dependencies, resumed, trial.targetState, trial.round);
-    const next = viewOf(await recordManualBatch(dependencies, outcome, trial.round, trial.targetState));
+    const recorded = await recordManualBatch(dependencies, outcome, trial.round, trial.targetState);
+    const next = viewOf(recorded);
     if (isParked(next)) return next;
 
-    await reloadAndSettle(dependencies, next.testTab);
-    return next;
+    return viewOf(await reloadAfterApply(dependencies, recorded, next));
   });
 }
 
@@ -807,6 +970,7 @@ export function submitVerdict(
     const view = viewOf(log);
 
     if (isBaselineQuestion(view)) {
+      await guardAgainstSnapshotChanges(dependencies, log, view);
       await guardAgainstDrift(dependencies, log, view);
       const recorded = await appendAndPersist(log, 'baseline-recorded', dependencies.now(), {
         mode: view.baselineMode,
@@ -829,6 +993,7 @@ export function submitVerdict(
       throw new SessionError('No verdict is pending');
     }
 
+    await guardAgainstSnapshotChanges(dependencies, log, view);
     await guardAgainstDrift(dependencies, log, view);
 
     const recorded = await appendAndPersist(log, 'verdict-recorded', dependencies.now(), {

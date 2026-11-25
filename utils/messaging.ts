@@ -100,6 +100,11 @@ export interface ProtocolMap {
   recordEscalationResult(payload: { extensionId: string; ok: boolean; error?: string }): SessionMutationResult;
   /** Ends the session and restores the touched candidates after a declined escalation. */
   declineEscalation(): SessionMutationResult;
+  /**
+   * Restores the current session and starts a fresh one from the browser as it is now.
+   * It is the only command allowed to see a mid-session install or update as a candidate.
+   */
+  restartSession(): SessionMutationResult;
   confirmManualState(): SessionView;
   recordExternalBaseline(): SessionView;
   verifyRestore(): RestoreResult;

@@ -44,6 +44,18 @@ export interface CandidateLists {
   ineligible: IneligibleExtension[];
 }
 
+/**
+ * What the browser reports about one installed extension, without the eligibility
+ * filter: the snapshot diff needs to see candidates that the session itself turned
+ * off, which `listCandidates` reports as ineligible.
+ */
+export interface InstalledExtension {
+  id: string;
+  name: string;
+  version: string;
+  enabled: boolean;
+}
+
 export interface CapabilityReport {
   browserName: string;
   canAutoToggle: boolean;
@@ -117,9 +129,27 @@ export interface DriftReport {
 
 export type DriftCategory = 'pending' | 'unexpected' | 'missing';
 
+export type SnapshotChangeKind = 'installed' | 'updated' | 'removed';
+
+/**
+ * A change the browser made under a live session. It is reported beside the snapshot and
+ * never merged into it: `session-started` stays the only source of candidates, so a new or
+ * re-versioned extension cannot reshape a search that already started.
+ */
+export interface SnapshotChange {
+  kind: SnapshotChangeKind;
+  extensionId: string;
+  name: string;
+  /** The version the snapshot recorded, or `null` for a candidate that was never in it. */
+  snapshotVersion: string | null;
+  currentVersion: string | null;
+}
+
 export interface SessionPause {
   reason: string;
   drift: DriftReport | null;
+  /** The mid-session change that paused the session, if one did. */
+  changes: SnapshotChange[];
   /**
    * The toggles that failed and could not be rolled back into place. Naming them on the
    * pause itself is what lets the panel offer the recovery its code asks for, and it
@@ -158,11 +188,23 @@ export interface BisectEventPayloads {
   };
   'baseline-recorded': { mode: BaselineMode; verdict: Verdict };
   'trial-started': { round: number; enabledIds: string[]; disabledIds: string[]; manual?: boolean };
-  'trial-applied': { round: number; errors: ToggleError[]; manual?: boolean; manualBatch?: ManualBatch };
+  'trial-applied': {
+    round: number;
+    errors: ToggleError[];
+    manual?: boolean;
+    manualBatch?: ManualBatch;
+    testTab?: TestTabOutcome;
+  };
   'verdict-recorded': { round: number; verdict: Verdict };
   'trial-retried': { round: number; reason?: string };
   'verdict-undone': { round: number };
-  'session-paused': { reason: string; drift?: DriftReport; errors?: ToggleError[]; rollback?: ToggleRollback | null };
+  'session-paused': {
+    reason: string;
+    drift?: DriftReport;
+    errors?: ToggleError[];
+    rollback?: ToggleRollback | null;
+    changes?: SnapshotChange[];
+  };
   'session-resumed': { reason: string };
   'session-completed': { culpritId: string };
   'session-inconclusive': { ambiguityIds: string[]; reason: string };
@@ -215,6 +257,19 @@ export interface Trial {
   appliedAt: number | null;
   errors: ToggleError[];
   manual: boolean;
+  /**
+   * What happened when the session tried to reload the test tab for this batch. `closed`
+   * and `unsettled` are hints the panel turns into a rebind prompt and a manual-reload
+   * hint; neither ever withholds the verdict.
+   */
+  testTab: TestTabOutcome | null;
+}
+
+export type TestTabStatus = 'reloaded' | 'unsettled' | 'closed' | 'unbound';
+
+export interface TestTabOutcome {
+  status: TestTabStatus;
+  tabId: number | null;
 }
 
 export interface SessionProgress {
@@ -252,6 +307,12 @@ export interface SessionView {
    * `session-paused` event, so a reopened panel can still show expected vs actual.
    */
   pause: SessionPause | null;
+  /**
+   * Extensions the browser installed, updated, or removed under this session. The
+   * snapshot is never rewritten: this is a report about it, so the search keeps the
+   * candidate order it started with and the panel can warn about the difference.
+   */
+  changes: SnapshotChange[];
   createdAt: number;
   updatedAt: number;
 }
@@ -281,6 +342,12 @@ export interface ReplayResult {
 export interface ManagementPort {
   getCapabilities(): Promise<CapabilityReport>;
   listCandidates(): Promise<CandidateLists>;
+  /**
+   * Every installed extension as the browser reports it, unfiltered. The snapshot diff
+   * needs the raw list because the session's own toggles make candidates ineligible and
+   * because a mid-session install is exactly what `listCandidates` leaves out.
+   */
+  listInstalled(): Promise<InstalledExtension[]>;
   applyTargetState(target: TargetState): Promise<ToggleResult | ManualBatch>;
   verifyState(expected: TargetState): Promise<DriftReport>;
   restore(original: EnabledStateMap): Promise<RestoreResult>;
