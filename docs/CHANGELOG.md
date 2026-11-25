@@ -193,6 +193,10 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - **BREAKING:** The six scaffold messages (`getState`, `updateState`, `recordInteraction`, `getContentStatus`, `getContentMarker`, `getTabId`) with their background handlers and tests.
 - The `tabs` permission, the `<all_urls>` host permission, and the `?tabId=` test hook; the legacy `local:enabled`, `local:interactionCount`, and `local:settings` keys are deleted on first start.
 
+### Security
+
+- Dev toolchain upgraded to clear all 16 `npm audit` findings: `puppeteer` 25.18.1, `happy-dom` 21.0.4, and `@vue/test-utils` 2.6.0, with `glob`/`editorconfig` pinned by `overrides` because `js-beautify` still caps them. `npm audit` now reports zero vulnerabilities; none of the affected packages shipped in the extension bundles.
+
 ### Fixed
 
 - Candidate eligibility no longer treats a user exclusion as an eligibility failure, so `listCandidates().eligible` is the single source for pickable candidates and the picker renders excluded rows from it instead of re-merging them out of the ineligible list ([ADR-016](DECISIONS.md), ISS-016).

@@ -179,39 +179,28 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## Summary
 
-- **Last Updated:** 2026-11-26
+- **Last Updated:** 2026-11-25
 - **Last Full Audit:** 2026-11-23 | **Stacks:** Node/TypeScript | **Audit Checks:** 4 PASS / 3 FAIL / 5 N/A
-- **Open Debt:** 6 total (P0: 0, P1: 0, P2: 1, P3: 5)
-- **Trend:** Improving (Resolved since last audit: 2)
-- **Open by Category:** dependency: 1, code: 2, infrastructure: 2, documentation: 1
+- **Open Debt:** 5 total (P0: 0, P1: 0, P2: 0, P3: 5)
+- **Trend:** Improving (Resolved since last audit: 3)
+- **Open by Category:** code: 2, infrastructure: 2, documentation: 1
 - **Top 3 to Pay Down First:**
-  1. `DEBT-2026-004` — 16 dev-tree CVEs (5 moderate, 11 high); `npm audit fix` clears part without breaking, the rest needs two major bumps.
-  2. `DEBT-2026-007` — two hand-rolled `startSessionAndBind` copies in `verify.mjs`; a shared helper removes the drift (XS).
-  3. `DEBT-2026-005` — Firefox build warns about missing `data_collection_permissions`; one manifest key closes it (XS).
+  1. `DEBT-2026-007` — two hand-rolled `startSessionAndBind` copies in `verify.mjs`; a shared helper removes the drift (XS).
+  2. `DEBT-2026-005` — Firefox build warns about missing `data_collection_permissions`; one manifest key closes it (XS).
+  3. `DEBT-2026-008` — 75 emitted `data-testid`s are absent from ARCH's selector contract; one table update closes it (XS).
 
-Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit suite 17/17, zero `TODO`/`FIXME`/`HACK` in code. FAIL — `npm audit --quiet` (16 vulnerabilities), CI-config scan (none exist), `build:firefox` emits a `data_collection_permissions` warning. N/A — `npm outdated`, unused-dependency scan, coverage, secret scan, circular-dependency scan (not run).
+Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit suite 17/17, zero `TODO`/`FIXME`/`HACK` in code. FAIL — `npm audit --quiet` (16 vulnerabilities, resolved 2026-11-25 by `DEBT-2026-004`), CI-config scan (none exist), `build:firefox` emits a `data_collection_permissions` warning. N/A — `npm outdated`, unused-dependency scan, coverage, secret scan, circular-dependency scan (not run).
 
 ## Active Debt Ledger
 
 | ID | Priority | Status | Category | Subcategory | Item | Location | Effort | Impact | Updated |
 | :- | :- | :- | :- | :- | :- | :- | :- | :- | :- |
-| DEBT-2026-004 | P2 | Identified | dependency | vulnerable_dependencies | 16 dev-toolchain CVEs (5 moderate, 11 high) from `npm audit` | `package-lock.json` (puppeteer, happy-dom, @vue/test-utils chains) | S | MEDIUM | 2026-11-23 |
 | DEBT-2026-007 | P3 | Identified | code | duplicate_code | Two hand-rolled `startSessionAndBind` copies in the E2E scenarios | `tests/e2e/verify.mjs:1622-1636`, `tests/e2e/verify.mjs:1929-1943` | XS | LOW | 2026-11-26 |
 | DEBT-2026-005 | P3 | Identified | infrastructure | build_warnings | Firefox build warns about missing `data_collection_permissions` | `wxt.config.ts` (Firefox manifest branch) | XS | LOW | 2026-11-23 |
 | DEBT-2026-003 | P3 | Identified | infrastructure | missing_pipeline | No CI pipeline or CODEOWNERS; the gate runs only locally | repo root (no `.github/`, no `CODEOWNERS`) | S | LOW | 2026-11-23 |
 | DEBT-2026-008 | P3 | Identified | documentation | outdated_api_docs | 75 emitted `data-testid`s are absent from ARCH's selector contract | `docs/ARCH.md:541-590` vs `entrypoints/sidepanel/components/*.vue` | XS | LOW | 2026-11-26 |
 
 ## Debt Details
-
-### DEBT-2026-004: 16 dev-toolchain CVEs (5 moderate, 11 high) from `npm audit`
-
-- **Category / Subcategory:** dependency / vulnerable_dependencies
-- **Status / Priority:** Identified / P2 (Impact: MEDIUM, Effort: S)
-- **Location:** `package-lock.json` (dev tree: `puppeteer`, `happy-dom`, `@vue/test-utils` → `js-beautify` chain)
-- **Dates:** Created 2026-11-23 | Updated 2026-11-23
-- **Evidence:** `npm audit --quiet` (2026-11-23): 16 vulnerabilities (5 moderate, 11 high) — `basic-ftp`/`extract-zip`/`zod` via the `puppeteer` chain, `happy-dom` (≤21.0.3 advisories), `minimatch`/`glob`/`editorconfig` via `js-beautify`. All affect devDependencies only; none ship in the extension bundles.
-- **Impact Rationale:** Dev-machine supply-chain and DoS exposure (browser downloads, HTML parsing of trusted fixture pages, BiDi payloads); zero end-user impact — MEDIUM (5/10).
-- **Remediation Target:** Run `npm audit fix` (clears the glob/minimatch/editorconfig chain without breaking changes) and bump `puppeteer` to ≥25.18.1 and `happy-dom` to ≥21.0.4; verify `npm audit` reports no high/moderate and `npm run agent:verify` still exits 0.
 
 ### DEBT-2026-007: Two hand-rolled `startSessionAndBind` copies in the E2E scenarios
 
@@ -258,6 +247,7 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 
 | ID | Category | Item | Final Status | Resolution & Verification Evidence | Closed |
 | :- | :- | :- | :- | :- | :- |
+| DEBT-2026-004 | dependency | 16 dev-toolchain CVEs (5 moderate, 11 high) from `npm audit` | Done | `puppeteer` 24.43.1→25.18.1, `happy-dom` 20.14.6→21.0.4, `@vue/test-utils` 2.4.11→2.6.0 (js-beautify 1.15.4→2.0.3); the residual `js-beautify` chain was pinned with `overrides: { editorconfig: ^4.0.1, glob: ^14.0.6 }` because upstream caps `glob` at 13.0.7. `npm audit` reports `found 0 vulnerabilities`; `npm run agent:verify` exits 0 on both browsers. | 2026-11-25 |
 | DEBT-2026-001 | code | E2E harness re-declares the content-marker attribute constants | Done | Component deleted: `utils/content-marker.ts` and the `EXTENSION_MARKER_ATTRIBUTE`/`EXTENSION_TAB_ID_ATTRIBUTE` constants in `tests/e2e/harness.mjs` went with the content script (ISS-013); no duplicated attribute name remains, `npm run agent:verify` green on both browsers | 2026-11-26 |
 | DEBT-2026-002 | code | `getContentStatus` message surface has no sender (dead code) | Done | Component deleted: `getContentStatus`, `getContentMarker`, `getTabId`, `ContentStatus`, `readContentStatus`/`resolveContentStatus` and the popup/content script that could have sent them are gone (ISS-013); `ProtocolMap` carries only bisect messages | 2026-11-26 |
 | DEBT-2026-006 | code | `user-excluded` eligibility contract encoded twice | Done | `user-excluded` removed from `IneligibleReason` so exclusions stay purely in `BisectConfig.excludedExtensionIds`; `buildPickerRows(eligible, excludedIds)` no longer re-merges from `ineligible`, and `intrinsicIneligible` is deleted (ISS-016) | 2026-11-25 |

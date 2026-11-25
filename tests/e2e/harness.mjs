@@ -89,18 +89,19 @@ export async function waitForLog(recorder, predicate, timeout = 10000) {
 
 /**
  * Firefox's WebDriver BiDi implementation never resolves `page.goto` promises for
- * `moz-extension://` documents with `waitUntil: 'domcontentloaded' | 'load'`.
- * `waitUntil: 'commit'` resolves immediately, so navigate with it and then wait
- * for the app root to exist.
+ * `moz-extension://` documents with `waitUntil: 'domcontentloaded' | 'load'`;
+ * `waitUntil: 'commit'` resolves immediately. Chrome rejects `commit`, and probing
+ * for that by calling `reload({ waitUntil: 'commit' })` first is not safe: CDP's
+ * `reload` sends `Page.reload` inside `Promise.all` before it validates `waitUntil`,
+ * so the rejected probe really reloads the page and the retry aborts it, leaving a
+ * spurious `net::ERR_ABORTED` in `requestFailures`. Pick the value per browser.
  */
+function extensionPageWaitUntil(page) {
+  return page.browser().protocol === 'webDriverBiDi' ? 'commit' : 'domcontentloaded';
+}
+
 export async function gotoExtensionPage(page, url, { selector = SIDEPANEL_ROOT_SELECTOR, timeout = 20000 } = {}) {
-  const navigation = page.goto(url, { waitUntil: 'commit', timeout }).catch((error) => {
-    if (error instanceof Error && error.message.includes('Unknown value for options.waitUntil')) {
-      return page.goto(url, { waitUntil: 'domcontentloaded', timeout });
-    }
-    throw error;
-  });
-  await navigation.catch(() => undefined);
+  await page.goto(url, { waitUntil: extensionPageWaitUntil(page), timeout }).catch(() => undefined);
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const ready = await page.evaluate((target) => document.querySelector(target) !== null, selector).catch(() => false);
@@ -111,12 +112,7 @@ export async function gotoExtensionPage(page, url, { selector = SIDEPANEL_ROOT_S
 }
 
 export async function reloadExtensionPage(page, { selector = SIDEPANEL_ROOT_SELECTOR, timeout = 20000 } = {}) {
-  await page.reload({ waitUntil: 'commit', timeout }).catch((error) => {
-    if (error instanceof Error && error.message.includes('Unknown value for options.waitUntil')) {
-      return page.reload({ waitUntil: 'domcontentloaded', timeout }).catch(() => undefined);
-    }
-    return undefined;
-  });
+  await page.reload({ waitUntil: extensionPageWaitUntil(page), timeout }).catch(() => undefined);
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     const ready = await page.evaluate((target) => document.querySelector(target) !== null, selector).catch(() => false);
@@ -251,6 +247,15 @@ async function launchFirefox({ headless, recorder, extPath }) {
   const browser = await puppeteer.launch({
     browser: 'firefox',
     headless,
+    /**
+     * Firefox 160 refuses WebDriver BiDi navigation to privileged schemes such as
+     * `moz-extension://` unless `RemoteAgent.allowSystemAccess` is set, and that flag
+     * only comes from this environment variable. Without it every panel navigation
+     * fails with `UnsupportedOperationError: Navigation to "moz-extension://…" is not
+     * allowed in this context`. The harness loses nothing: it drives the panel through
+     * the same page API and holds no extra browser privileges because of the variable.
+     */
+    env: { ...process.env, MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
     extraPrefsFirefox: {
       'xpinstall.signatures.required': false,
       'extensions.webextensions.uuids': JSON.stringify({ [geckoId]: FIXED_FIREFOX_UUID }),

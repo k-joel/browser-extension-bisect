@@ -811,14 +811,23 @@ E2E install (tests/e2e/harness.mjs):
                     args: ['--enable-unsafe-extension-debugging'] })
            ──► browser.installExtension(extPath)
            ──► browser.installExtension(<each fixture>)   (installFixtures)
-  Firefox: extraPrefsFirefox({ 'xpinstall.signatures.required': false,
-                    'extensions.webextensions.uuids': { [geckoId]: FIXED_FIREFOX_UUID } })
+  Firefox: launch({ env: { MOZ_REMOTE_ALLOW_SYSTEM_ACCESS: '1' },
+                    extraPrefsFirefox({ 'xpinstall.signatures.required': false,
+                    'extensions.webextensions.uuids': { [geckoId]: FIXED_FIREFOX_UUID } }) })
            ──► installExtension(extPath) (asserted to return geckoId)
            ──► installExtension(<each fixture>)
+
+  Firefox 160+ gates BiDi navigation to the privileged `moz-extension:` scheme behind
+  `RemoteAgent.allowSystemAccess`, which only the environment variable above sets; without
+  it the panel never leaves `about:blank` (NOTES.md §e2e-harness).
 
 Surface opening:
   openSurface() ──► Chrome:  chrome-extension://<id>/sidepanel.html
                └──► Firefox: moz-extension://<uuid>/sidepanel.html  (gotoExtensionPage)
+
+  gotoExtensionPage()/reloadExtensionPage() choose `waitUntil` from `page.browser().protocol`
+  (`domcontentloaded` over CDP, `commit` over WebDriver BiDi) — never by probing `commit`
+  with a reload, which fires the navigation before it validates and leaves an ERR_ABORTED.
 
 Test tab id:
   focusTestTab() ──► panel page evaluates tabs.query({active:true}) + tabs.getCurrent()

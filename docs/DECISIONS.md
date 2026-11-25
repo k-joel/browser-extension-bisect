@@ -145,6 +145,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [016](#adr-016-keep-user-exclusions-out-of-candidate-eligibility) | Keep user exclusions out of candidate eligibility |
 | [017](#adr-017-store-the-test-tab-url-as-nullable) | Store the test tab URL as nullable |
 | [018](#adr-018-take-the-disabled-half-of-a-partition-from-the-tail-of-the-pool) | Take the disabled half of a partition from the tail of the pool |
+| [019](#adr-019-pin-the-js-beautify-transitive-chain-with-npm-overrides) | Pin the js-beautify transitive chain with npm overrides |
 
 ---
 
@@ -579,4 +580,26 @@ Eligibility is **intrinsic only**: `self`, `theme-or-app`, `disabled-at-start`, 
 **Mitigations**: `tests/unit/bisect-engine.test.ts` asserts the full `N = 24` trace and the `#7` sixth-trial variant, and `docs/NOTES.md` §partition-loop records why the naive reading must not be reintroduced.
 
 ---
+
+## ADR-019: Pin the js-beautify transitive chain with npm overrides
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: DEBT-2026-004 remediation session (LLM-driven)
+
+### Context
+
+`npm audit` reported 16 dev-tree advisories (`DEBT-2026-004`): 11 high via the `puppeteer` 24 and `happy-dom` 20 chains, and 5 moderate via `@vue/test-utils` → `js-beautify`. Bumping the first two closed the high findings, but `js-beautify` 2.0.3 — the latest release — still declares `glob: ^13.0.6` and `editorconfig: ^3.0.2`, whose only patched successors are `glob` 14 and `editorconfig` 4. No upstream release accepts them, so the remaining advisories were unreachable by a version bump or `npm audit fix` (which only offered to *downgrade* `@vue/test-utils` to 2.4.11 and re-open a worse tree).
+
+### Decision
+
+Pin the two transitive packages with npm `overrides` in `package.json`: `editorconfig: ^4.0.1` and `glob: ^14.0.6`. Both are used only by `js-beautify`, which `@vue/test-utils` uses to pretty-print component snapshots in unit tests, and both keep a compatible API for that use. Do not override `minimatch` directly — it follows from `glob`/`editorconfig` and is already patched there.
+
+### Consequences
+
+**Good**: `npm audit` reports zero vulnerabilities with no downgrade; the direct dependencies stay on their latest releases; the pin is one visible block that names exactly which packages are ahead of their declared ranges.
+
+**Bad**: The overrides defeat the semver ranges `js-beautify` declares, so a future `js-beautify` release that widens them needs the block re-checked rather than trusted; `npm` does not warn when an override becomes stale. `glob` 14 and `editorconfig` 4 are major bumps taken on API compatibility reasoning, not on upstream testing.
+
+**Mitigations**: `npm run test:unit` exercises the snapshot printer on every run, and `npm run agent:verify` is the completion gate; delete the block once `js-beautify` declares `glob` ≥14 and `editorconfig` ≥4. `docs/RUNBOOK.md` RUN-001 installs from the pinned lockfile.
 

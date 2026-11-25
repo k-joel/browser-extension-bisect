@@ -116,14 +116,13 @@ Installs dependencies and the pinned browsers used by lint, unit tests, and E2E.
    ```
 
    Expected: install completes; the `postinstall` hook runs `wxt prepare` and generates `.wxt/` types.
-2. Install the E2E browsers:
+2. Install the E2E browsers (puppeteer 25 pins Chrome 157 and Firefox 160):
 
    ```
-   npx puppeteer browsers install chrome
-   npx puppeteer browsers install firefox
+   npx puppeteer browsers install chrome firefox
    ```
 
-   Expected: both commands report the downloaded browser versions.
+   Expected: the command reports the downloaded Chrome and Firefox versions. A Firefox older than 160 still runs, but Firefox 16x is the covered target.
 3. Sanity-check the toolchain:
 
    ```
@@ -148,7 +147,7 @@ Runs Biome, the Vue/TS typecheck, and the Vitest suite — the check to run afte
    npm run lint && npm run typecheck && npm run test:unit
    ```
 
-   Expected: Biome reports `Checked N files ... No fixes applied.` (count varies with repo contents); `vue-tsc` emits nothing; Vitest reports 35 passed test files and 684 passed tests (as of 2026-11-26); exit code 0.
+   Expected: Biome reports `Checked N files ... No fixes applied.` (count varies with repo contents); `vue-tsc` emits nothing; Vitest reports 37 passed test files and 728 passed tests (as of 2026-11-25); exit code 0.
 
 **Troubleshooting**
 
@@ -176,6 +175,9 @@ Runs the complete gate: lint, typecheck, unit tests, both test-mode builds, and 
 - **A browser's steps time out or the background never logs `[EXT_BG_READY]`**: capture state per browser with RUN-005 before changing any code.
 - **`candidate-list-matches-fixtures` fails on only one browser**: fixture names must stay identical across `tests/e2e/fixtures/extensions/chrome/**` and `.../firefox/**`, because `ELIGIBLE_FIXTURES` in `tests/e2e/fixtures/fixtures.mjs` is the single expectation for both. Compare the fixture manifests first.
 - **`disabled-fixture-reported-disabled-at-start` fails**: Firefox temporary add-ons are always enabled, so the Firefox run seeds the dormant fixture through the test-mode driver (`setManualExtensionState`) before each scenario. If the step fails there, the driver overlay is missing — check `hasTestDriverGlobal()` and that the build ran with `EXT_TEST_MODE=1`.
+- **`Could not find Firefox (ver. stable_160.0)` / `Could not find Chrome`**: the cached browsers predate the installed puppeteer. Fix: `npx puppeteer browsers install chrome firefox`.
+- **`no-request-failures` fails with `net::ERR_ABORTED` on `sidepanel.html`**: something issued a navigation and then immediately started another, so the first was aborted. Never probe `waitUntil` by calling `reload({ waitUntil: 'commit' })` and retrying — CDP fires the reload before it validates the value; use `extensionPageWaitUntil()` in `tests/e2e/harness.mjs` (NOTES.md §e2e-harness).
+- **Every Firefox step times out on `sidepanel-root` with a blank page**: Firefox 160+ refuses BiDi navigation to `moz-extension://` without `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1`, which `launchFirefox` sets through `env`. Do not remove it (NOTES.md §e2e-harness).
 
 ---
 

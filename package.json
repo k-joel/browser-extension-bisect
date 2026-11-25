@@ -27,14 +27,18 @@
     "@webext-core/messaging": "^2.3.0",
     "vue": "^3.5.29"
   },
+  "overrides": {
+    "editorconfig": "^4.0.1",
+    "glob": "^14.0.6"
+  },
   "devDependencies": {
     "@biomejs/biome": "^2.4.5",
     "@vitejs/plugin-vue": "^6.0.11",
-    "@vue/test-utils": "^2.4.6",
+    "@vue/test-utils": "^2.6.0",
     "@wxt-dev/module-vue": "^1.0.3",
     "cross-env": "^10.1.0",
-    "happy-dom": "^20.0.11",
-    "puppeteer": "^24.37.5",
+    "happy-dom": "^21.0.4",
+    "puppeteer": "^25.18.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.0",
     "vue-tsc": "^3.2.5",
