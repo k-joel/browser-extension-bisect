@@ -480,6 +480,45 @@ export async function readSessionState(page) {
         copyMessage: text('copy-status-message'),
         copyFallback: document.querySelector('[data-testid="copy-fallback-text"]')?.value ?? null,
       },
+      replay: {
+        notice: text('replay-diagnostic-notice'),
+        sourceNote: text('replay-source-note'),
+        rounds: Array.from(document.querySelectorAll('[data-testid="replay-round"]')).map((node) => ({
+          round: node.getAttribute('data-round'),
+          corrected: node.getAttribute('data-corrected'),
+          original: node.querySelector('[data-testid="replay-round-original"]')?.textContent?.trim() ?? null,
+          edited: node.querySelector('[data-testid="replay-round-edited"]')?.textContent?.trim() ?? null,
+        })),
+        corrections: text('replay-correction-count'),
+        runLabel: document.querySelector('[data-testid="replay-run"]')?.textContent?.trim() ?? null,
+        runDisabled: document.querySelector('[data-testid="replay-run"]')?.disabled ?? null,
+        result: document.querySelector('[data-testid="replay-result"]')?.getAttribute('data-outcome') ?? null,
+        outcome: text('replay-outcome'),
+        trials: Array.from(document.querySelectorAll('[data-testid="replay-trial"]')).map((node) => ({
+          round: node.getAttribute('data-round'),
+          enabled: node.querySelector('[data-testid="replay-trial-enabled"]')?.textContent?.trim() ?? null,
+          disabled: node.querySelector('[data-testid="replay-trial-disabled"]')?.textContent?.trim() ?? null,
+        })),
+        differencesStatus: document
+          .querySelector('[data-testid="replay-differences-status"]')
+          ?.getAttribute('data-differences'),
+        differencesStatusText: text('replay-differences-status'),
+        differences: Array.from(document.querySelectorAll('[data-testid="replay-difference"]')).map((node) => ({
+          round: node.getAttribute('data-round'),
+          label: node.querySelector('[data-testid="replay-difference-label"]')?.textContent?.trim() ?? null,
+          recordedEnabled: node.querySelector('[data-testid="replay-difference-enabled"]')?.textContent?.trim() ?? null,
+          recordedDisabled:
+            node.querySelector('[data-testid="replay-difference-disabled"]')?.textContent?.trim() ?? null,
+          recomputedEnabled:
+            node.querySelector('[data-testid="replay-difference-recomputed-enabled"]')?.textContent?.trim() ?? null,
+          recomputedDisabled:
+            node.querySelector('[data-testid="replay-difference-recomputed-disabled"]')?.textContent?.trim() ?? null,
+        })),
+        invalidMessage: text('replay-invalid-message'),
+        invalidEvent: text('replay-invalid-event'),
+        copyStatus: document.querySelector('[data-testid="copy-status"]')?.getAttribute('data-status') ?? null,
+        copyMessage: text('copy-status-message'),
+      },
       restore: {
         visible: document.querySelector('[data-testid="restore-panel"]') !== null,
         summary: summary?.textContent?.trim() ?? null,
@@ -633,6 +672,18 @@ export async function resetBisectState(page) {
   await page.evaluate(async () => {
     const api = globalThis.browser ?? globalThis.chrome;
     await api.storage.local.remove(['bisectLog', 'bisectConfig']);
+  });
+}
+
+/**
+ * Reads the persisted bisect log straight out of storage, so a test can prove the live
+ * log stayed append-only across a read-only flow such as replay.
+ */
+export async function readPersistedBisectLog(page) {
+  return page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const stored = await api.storage.local.get('bisectLog');
+    return stored?.bisectLog ?? null;
   });
 }
 

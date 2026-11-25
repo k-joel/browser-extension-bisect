@@ -19,6 +19,7 @@ import {
   readExtensionEnabledStates,
   readManualExtensionState,
   readPageReloadMarker,
+  readPersistedBisectLog,
   readSessionState,
   reloadExtensionPage,
   resetBisectState,
@@ -494,7 +495,7 @@ async function assertHistoryAndCopy({ surface, record, screen, culprit, answered
       history.history.outcomeNames.includes(culprit.name),
     { outcome: history.history.outcome, label: history.history.outcomeLabel },
   );
-  record('history-offers-a-disabled-replay-affordance', history.history.replayDisabled === true, {
+  record('history-offers-a-functional-replay-action', history.history.replayDisabled === false, {
     replayDisabled: history.history.replayDisabled,
   });
 
@@ -566,10 +567,164 @@ async function assertHistoryAndCopy({ surface, record, screen, culprit, answered
   );
   record('history-returns-to-the-session-screen', back.screen === 'completed', { screen: back.screen });
   record(
-    'completed-screen-offers-a-disabled-replay',
-    screen.completed.replayDisabled === true && (screen.completed.replayNote ?? '').includes('not available yet'),
+    'completed-screen-offers-a-functional-replay',
+    screen.completed.replayDisabled === false && (screen.completed.replayNote ?? '').includes('never changes'),
     { replayDisabled: screen.completed.replayDisabled, note: screen.completed.replayNote },
   );
+}
+
+/**
+ * Corrections that flip the recorded culprit are the point of replay, so the helper
+ * corrects the first partition verdict — the one that decided the search. In this
+ * two-candidate fixture set the first trial keeps the culprit enabled, so replacing
+ * `Problem persists` with `Problem is gone` re-implicates the innocent fixture and
+ * makes the recorded final-confirmation batch unreachable.
+ */
+async function assertReplayDiagnostics({ surface, record, culprit, innocent }) {
+  const statesBeforeReplay = await readExtensionEnabledStates(surface, [culprit.id, innocent.id]);
+  const logBeforeReplay = await readPersistedBisectLog(surface);
+
+  await clickTestId(surface, 'completed-replay');
+  const replay = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'replay' ? state : null;
+    },
+    { label: 'the replay screen' },
+  );
+
+  record('completed-screen-opens-the-replay-screen', replay.screen === 'replay', { screen: replay.screen });
+  record(
+    'replay-states-it-does-not-change-installed-extensions',
+    (replay.replay.notice ?? '').includes('does not change installed extensions'),
+    { notice: replay.replay.notice },
+  );
+  record('replay-states-it-edits-a-copy', (replay.replay.sourceNote ?? '').includes('copy'), {
+    sourceNote: replay.replay.sourceNote,
+  });
+  record('replay-lists-the-recorded-verdicts', replay.replay.rounds.length >= 1, { rounds: replay.replay.rounds });
+  record(
+    'replay-shows-the-recorded-verdict-and-the-copy-side-by-side',
+    (replay.replay.rounds[0]?.original ?? '') === 'Recorded: Problem persists' &&
+      (replay.replay.rounds[0]?.edited ?? '') === 'Copy: Problem persists',
+    { first: replay.replay.rounds[0] },
+  );
+
+  await clickTestId(surface, 'replay-correct-1');
+  const corrected = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.replay.rounds[0]?.corrected === 'true' ? state : null;
+    },
+    { label: 'the corrected copy' },
+  );
+
+  record(
+    'replay-edit-changes-the-copy-verdict-with-the-exact-label',
+    corrected.replay.rounds[0]?.edited === 'Copy: Problem is gone' &&
+      corrected.replay.rounds[0]?.original === 'Recorded: Problem persists',
+    { first: corrected.replay.rounds[0] },
+  );
+  record('replay-counts-the-corrected-verdicts', (corrected.replay.corrections ?? '').includes('1 verdict'), {
+    corrections: corrected.replay.corrections,
+  });
+
+  const logAfterEdit = await readPersistedBisectLog(surface);
+  record(
+    'replay-edit-leaves-the-live-log-unchanged',
+    JSON.stringify(logAfterEdit) === JSON.stringify(logBeforeReplay),
+    {
+      sessionId: logAfterEdit?.sessionId ?? null,
+    },
+  );
+  record(
+    'replay-edit-toggles-nothing',
+    JSON.stringify(await readExtensionEnabledStates(surface, [culprit.id, innocent.id])) ===
+      JSON.stringify(statesBeforeReplay),
+    { statesBeforeReplay },
+  );
+
+  await clickTestId(surface, 'replay-run');
+  const result = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.replay.outcome !== null ? state : null;
+    },
+    { label: 'the replay result' },
+  );
+
+  record('replay-recomputes-a-new-culprit', result.replay.result === 'culprit', { result: result.replay.result });
+  record(
+    'replay-names-the-fixture-the-correction-implicates',
+    result.replay.outcome === `Replayed culprit: ${innocent.name}`,
+    {
+      outcome: result.replay.outcome,
+      expected: innocent.name,
+    },
+  );
+  record(
+    'replay-renders-the-recomputed-trials',
+    result.replay.trials.length >= 1 && (result.replay.trials[0]?.round ?? '') === '1',
+    { trials: result.replay.trials },
+  );
+  record('replay-marks-the-recorded-batches-that-differ', result.replay.differencesStatus === 'present', {
+    differencesStatus: result.replay.differencesStatus,
+    text: result.replay.differencesStatusText,
+  });
+  record(
+    'replay-shows-the-recorded-and-the-recomputed-batch',
+    result.replay.differences.length >= 1 &&
+      (result.replay.differences[0]?.recordedDisabled ?? '').startsWith('Recorded disabled: ') &&
+      (result.replay.differences[0]?.recomputedDisabled ?? '').startsWith('Recomputed disabled: '),
+    { differences: result.replay.differences },
+  );
+
+  await clickTestId(surface, 'replay-copy-report');
+  const copyStatus = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.replay.copyStatus !== null ? state : null;
+    },
+    { label: 'the copied replay report' },
+  );
+  record('replay-report-copies-successfully', copyStatus.replay.copyStatus === 'copied', {
+    status: copyStatus.replay.copyStatus,
+    message: copyStatus.replay.copyMessage,
+  });
+
+  const captures = await readClipboardCaptures(surface);
+  const reportText = captures.at(-1) ?? '';
+  record(
+    'replay-report-carries-the-correction-and-the-diagnostic-notice',
+    reportText.includes('Replay of a corrected bisect log') &&
+      reportText.includes('no installed extension was changed') &&
+      reportText.includes(`Replayed culprit: ${innocent.name}`),
+    { head: reportText.slice(0, 200) },
+  );
+
+  const statesAfterReplay = await readExtensionEnabledStates(surface, [culprit.id, innocent.id]);
+  record(
+    'replay-changes-no-installed-extension',
+    JSON.stringify(statesAfterReplay) === JSON.stringify(statesBeforeReplay),
+    { statesBeforeReplay, statesAfterReplay },
+  );
+  const logAfterReplay = await readPersistedBisectLog(surface);
+  record('replay-leaves-the-live-log-append-only', JSON.stringify(logAfterReplay) === JSON.stringify(logBeforeReplay), {
+    sessionId: logAfterReplay?.sessionId ?? null,
+  });
+
+  await clickTestId(surface, 'replay-back');
+  const back = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'completed' ? state : null;
+    },
+    { label: 'the completed screen after replay' },
+  );
+  record('replay-returns-to-the-live-session', back.screen === 'completed', { screen: back.screen });
+  record('replay-keeps-the-live-outcome', back.completed.culpritName === culprit.name, {
+    culpritName: back.completed.culpritName,
+  });
 }
 
 /**
@@ -720,6 +875,7 @@ async function runPartitionLoopScenario({ surface, session, installed, testPage,
   });
 
   await assertHistoryAndCopy({ surface, record, screen, culprit, answered });
+  await assertReplayDiagnostics({ surface, record, culprit, innocent });
 
   await clickTestId(surface, 'restore-button');
   const restored = await waitFor(
