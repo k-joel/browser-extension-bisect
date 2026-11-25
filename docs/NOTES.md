@@ -106,6 +106,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - **Install Chrome extensions after launch, never via launch arguments** (2026-11-24): passing `enableExtensions: [path]` inside `launch()` crashes the browser on Windows with `Extensions.loadUnpacked: Target closed`. Launch with `enableExtensions: true`, `pipe: true`, and `--enable-unsafe-extension-debugging`, then call `browser.installExtension(extPath)`.
 - **CDP-only Puppeteer APIs must stay behind the `browserName` branch** (2026-11-24): `page.triggerExtensionAction()`, `browser.extensions()`, `frame.extensionRealms()`, and `service_worker` targets do not exist over Firefox BiDi and throw; `tests/e2e/harness.mjs` is the only place that touches them.
+- **Linux CI needs `--no-sandbox` and `--disable-dev-shm-usage`** (2026-11-25): the GitHub runner's user namespaces and `/dev/shm` do not satisfy Chrome 157's sandbox, so Chrome exits during startup; because Puppeteer must run with `pipe: true` (required for `browser.installExtension`), the only visible error is `Protocol error (Target.setDiscoverTargets): Target closed`. `launchChrome` adds both flags on Linux and enables `dumpio` when `CI=true`, so Chrome's own stderr reaches the job log if it still fails.
 - **`waitUntil: 'commit'` is Firefox-only** (2026-11-25): `page.goto(url, { waitUntil: 'commit' })` throws `Unknown value for options.waitUntil` on Chrome. `gotoExtensionPage()` already falls back to `domcontentloaded`; any ad-hoc navigation must do the same.
 
 ## e2e-firefox

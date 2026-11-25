@@ -209,12 +209,20 @@ export async function failNextStorageWrite(page, message = 'QUOTA_BYTES quota ex
 }
 
 async function launchChrome({ headless, recorder, extPath }) {
+  /**
+   * Linux CI runs Chrome as an unprivileged user on a runner whose user namespaces and
+   * `/dev/shm` may not satisfy the sandbox; without these flags Chrome exits during
+   * startup and `pipe: true` reduces the real cause to `Target.setDiscoverTargets:
+   * Target closed`. `dumpio` exposes Chrome's own stderr in CI logs for the next failure.
+   */
+  const linuxArgs = process.platform === 'linux' ? ['--no-sandbox', '--disable-dev-shm-usage'] : [];
   const browser = await puppeteer.launch({
     browser: 'chrome',
     headless,
     pipe: true,
     enableExtensions: true,
-    args: ['--no-first-run', '--enable-unsafe-extension-debugging'],
+    dumpio: process.env.CI === 'true',
+    args: ['--no-first-run', '--enable-unsafe-extension-debugging', ...linuxArgs],
   });
 
   const extensionId = await browser.installExtension(extPath);
