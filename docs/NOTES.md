@@ -155,3 +155,12 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - **Replay edits live in panel state, never in storage** (2026-11-26): `replayEdits` is a plain `Record<number, Verdict>` and the corrected log is built fresh by `applyReplayEdits` — an explicit unwrap so no Vue proxy reaches `structuredClone` (the ISS-005 trap). A panel reload discards the edits by design; the live log is never a target of the edit path.
 - **`replayLog` must not enter the session queue** (2026-11-26): the queue exists to serialize read-modify-write against the log. Replay reads nothing and writes nothing, so queueing it only couples a pure computation to a live mutation and makes "replay is diagnostic" harder to see in the code.
 
+## drift-and-undo
+
+- **The guard verifies the *current* trial's target, and that is correct** (2026-11-26): `guardAgainstDrift` compares `verifyState` against `view.currentTrial.targetState` before applying a trial and before recording a verdict. Between rounds the answered trial is still `currentTrial`, so the check covers the state the next partition builds on. Do not "improve" it into a last-applied lookup; the reducer never leaves `currentTrial` null while a session is live.
+- **A drift pause is a refusal, not a screen transition** (2026-11-26): the session appends `session-paused` and throws, so the message handler rejects. `run()` in `App.vue` catches it, calls `refreshSessionAfterRefusal()`, and the panel re-renders from the rehydrated view. That is why a refused command still ends on the paused screen instead of a bare error string.
+- **An assisted attestation requires the browser to actually be all-off** (2026-11-26): `assisted-attest` records an external baseline, but the following `applyTrial` still verifies round 0's all-off target. A harness that attests while the candidates are enabled gets a correct drift pause; the E2E therefore disables the candidates before attesting. Same rule applies to any future external-baseline test.
+- **Undo lives on the plan screen, not the answered one** (2026-11-26): `trial-undo-verdict` renders in the `awaitingApply` branch, because undo reopens the just-answered round. Asserting undo eligibility on the answered screen finds no button at all.
+- **Resync re-parks an assisted pause in `awaiting-manual-toggle`** (2026-11-26): the add-on cannot apply a manual batch, so `resyncSession` records a fresh `trial-applied` for the same round and the checklist returns. On the automated rail it reloads the tab and returns to the trial instead. Both are asserted.
+
+

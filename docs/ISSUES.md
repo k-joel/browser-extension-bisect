@@ -224,14 +224,14 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Before applying a trial or recording a verdict, verify the expected state. A mismatch pauses the session with a drift report showing expected versus actual, pending manual toggles, unexpected toggles, and disappeared candidates. Offer Re-sync, Undo last verdict, and Restore all. Live undo is allowed only for the most recent trial and only when the previous trial state can be restored without ambiguity.
 - **Blocked by**: ISS-006.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, 114464a). The E2E exercises drift, re-sync, undo gating, and reload survival on Chrome; the assisted pause path is covered by the fake-port tests.
 
-- [ ] Verification compares expected and actual for the current trial and reports all drift categories.
-- [ ] Drift pauses the session and shows expected and actual; Re-sync re-applies the expected state, Undo returns to the previous trial state, and Restore all starts restore.
-- [ ] Live undo is gated to the most recent trial, verifies state first, appends `verdict-undone`, re-applies the previous target state, and returns to awaiting-verdict; it refuses when drift exists.
-- [ ] Pause and resume events are logged; the session view survives panel close.
-- [ ] Fake-port and E2E tests cover drift, re-sync, undo eligibility, and resume on both platforms.
-- [ ] The quality gates pass.
+- [x] Verification compares expected and actual for the current trial and reports all drift categories.
+- [x] Drift pauses the session and shows expected and actual; Re-sync re-applies the expected state, Undo returns to the previous trial state, and Restore all starts restore.
+- [x] Live undo is gated to the most recent trial, verifies state first, appends `verdict-undone`, re-applies the previous target state, and returns to awaiting-verdict; it refuses when drift exists.
+- [x] Pause and resume events are logged; the session view survives panel close.
+- [x] Fake-port and E2E tests cover drift, re-sync, undo eligibility, and resume on both platforms.
+- [x] The quality gates pass.
 
 ### ISS-010: Toggle failures, escalation, greylist recovery
 
