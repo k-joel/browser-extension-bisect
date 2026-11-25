@@ -35,9 +35,8 @@ import {
 } from '@/utils/bisect/session';
 import { raiseStartupSignal } from '@/utils/bisect/startup';
 import { withTestDriverOverlay } from '@/utils/bisect/test-driver';
-import type { AddonManagerResult, ContentStatus, SessionMutationResult } from '@/utils/messaging';
+import type { AddonManagerResult, SessionMutationResult } from '@/utils/messaging';
 import { messenger } from '@/utils/messaging';
-import { applyStateUpdate, readState, recordInteraction } from '@/utils/state';
 import { isTestMode, TEST_MODE_ENABLED } from '@/utils/test-mode';
 
 const TAB_STATUS_POLL_INTERVAL_MS = 150;
@@ -51,22 +50,6 @@ function attachTestModeErrorLogging(): void {
   self.addEventListener('error', (event) => {
     console.error('[EXT_BG_ERR]', event.error ?? event.message);
   });
-}
-
-async function readContentStatus(tabId: number): Promise<ContentStatus> {
-  try {
-    const marker = await messenger.sendMessage('getContentMarker', undefined, tabId);
-    return { active: marker !== null, marker };
-  } catch {
-    return { active: false, marker: null };
-  }
-}
-
-async function resolveContentStatus(targetTabId?: number): Promise<ContentStatus> {
-  if (targetTabId !== undefined) return readContentStatus(targetTabId);
-  const [activeTab] = await browser.tabs.query({ active: true, currentWindow: true });
-  if (activeTab?.id === undefined) return { active: false, marker: null };
-  return readContentStatus(activeTab.id);
 }
 
 async function readTabCompleted(tabId: number): Promise<boolean> {
@@ -149,12 +132,6 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   const port = dependencies.managementPort ?? createManagementPort();
   const tabs = dependencies.tabs ?? createTestTabSurface();
   const sessionDependencies = (): SessionDependencies => ({ port, tabs });
-
-  messenger.onMessage('getState', () => readState());
-  messenger.onMessage('updateState', ({ data }) => applyStateUpdate(data));
-  messenger.onMessage('recordInteraction', () => recordInteraction());
-  messenger.onMessage('getContentStatus', ({ data }) => resolveContentStatus(data));
-  messenger.onMessage('getTabId', ({ sender }) => sender.tab?.id ?? null);
 
   messenger.onMessage('getCapabilities', () => port.getCapabilities());
   messenger.onMessage('listCandidates', () => port.listCandidates());

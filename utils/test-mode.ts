@@ -12,10 +12,3 @@ export const TEST_MODE_ENABLED = typeof __EXT_TEST_MODE__ !== 'undefined' && __E
 export function isTestMode(): boolean {
   return TEST_MODE_ENABLED;
 }
-
-export function readTabIdParam(search: string): number | undefined {
-  const raw = new URLSearchParams(search).get('tabId');
-  if (raw === null) return undefined;
-  const parsed = Number(raw);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
-}

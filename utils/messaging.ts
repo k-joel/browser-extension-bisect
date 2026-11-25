@@ -13,18 +13,6 @@ import type {
   Verdict,
 } from './bisect/domain';
 import type { ReloadTestTabResult, StartSessionRequest } from './bisect/session';
-import type { BisectSettings } from './storage';
-
-export interface ExtensionState {
-  enabled: boolean;
-  interactionCount: number;
-  settings: BisectSettings;
-}
-
-export interface ContentStatus {
-  active: boolean;
-  marker: string | null;
-}
 
 /**
  * `bindTestTab` carries only the id when the caller already knows it; the
@@ -57,12 +45,6 @@ export interface AddonManagerResult {
 }
 
 export interface ProtocolMap {
-  getState(): ExtensionState;
-  updateState(changes: Partial<BisectSettings> & { enabled?: boolean }): ExtensionState;
-  recordInteraction(): ExtensionState;
-  getContentStatus(targetTabId?: number): ContentStatus;
-  getContentMarker(): string | null;
-  getTabId(): number | null;
   getCapabilities(): CapabilityReport;
   listCandidates(): CandidateLists;
   getConfig(): BisectConfig;
