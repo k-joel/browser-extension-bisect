@@ -15,13 +15,17 @@ import type {
   SessionView,
   TargetState,
   TestTabBinding,
+  ToggleResult,
   Verdict,
 } from './domain';
 import { type AnsweredTrial, buildTargetState, partitionSuspects, undoEligibilityOf } from './engine';
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
-import { isManualBatch } from './management-port';
+import { isManualBatch, rollbackTarget } from './management-port';
 
 export const TEST_TAB_SETTLE_TIMEOUT_MS = 15_000;
+
+/** The `session-paused` reason an aborted batch records. */
+export const TOGGLE_FAILED_REASON = 'toggle-failed';
 
 export interface TestTabSurface {
   reload(tabId: number): Promise<void>;
@@ -161,6 +165,52 @@ function targetBatchOf(target: TargetState): ManualBatch {
   return { enableIds: [...target.enabled], disableIds: [...target.disabled] };
 }
 
+/**
+ * A failed toggle aborts the trial. The log keeps the honest `trial-applied` with its
+ * errors (the append-only record of what the browser refused), then the ids this batch
+ * did move are put back and the abort is recorded as a `session-paused` that carries
+ * the rollback. Nothing is retried silently, so the panel can report the failing id and
+ * the recovery its code asks for instead of pretending the batch happened.
+ *
+ * The commands that re-apply an existing target disagree about the success event they
+ * leave behind, so only the abort is shared here; each caller records its own success.
+ * A rollback is scoped to what this apply actually moved, because re-applying the whole
+ * previous target would retry the toggle that just failed.
+ */
+type ApplyOutcome = { kind: 'manual' | 'applied' | 'aborted'; log: BisectLog };
+
+async function applyWithAbort(
+  dependencies: ResolvedDependencies,
+  log: BisectLog,
+  target: TargetState,
+  round: number,
+): Promise<ApplyOutcome> {
+  const result = await dependencies.port.applyTargetState(target);
+  if (isManualBatch(result)) return { kind: 'manual', log };
+  if (result.ok) return { kind: 'applied', log };
+
+  const recorded = await appendAndPersist(log, 'trial-applied', dependencies.now(), {
+    round,
+    errors: result.errors,
+  });
+  return { kind: 'aborted', log: await rollbackAndPause(dependencies, recorded, target, result) };
+}
+
+async function rollbackAndPause(
+  dependencies: ResolvedDependencies,
+  log: BisectLog,
+  target: TargetState,
+  result: ToggleResult,
+): Promise<BisectLog> {
+  const rollback = await dependencies.port.applyTargetState(rollbackTarget(target, result.applied));
+  const restoredIds = isManualBatch(rollback) ? [] : rollback.applied;
+  const errors = isManualBatch(rollback) ? [] : rollback.errors;
+  return appendAndPersist(log, 'session-paused', dependencies.now(), {
+    reason: TOGGLE_FAILED_REASON,
+    rollback: { restoredIds, errors },
+  });
+}
+
 async function applyAndRecord(
   dependencies: ResolvedDependencies,
   log: BisectLog,
@@ -172,16 +222,22 @@ async function applyAndRecord(
     enabledIds: target.enabled,
     disabledIds: target.disabled,
   });
-  const result = await dependencies.port.applyTargetState(target);
-  if (isManualBatch(result)) {
-    return appendAndPersist(started, 'trial-applied', dependencies.now(), {
-      round,
-      errors: [],
-      manual: true,
-      manualBatch: targetBatchOf(target),
-    });
-  }
-  return appendAndPersist(started, 'trial-applied', dependencies.now(), { round, errors: result.errors });
+  const outcome = await applyWithAbort(dependencies, started, target, round);
+  if (outcome.kind === 'aborted') return outcome.log;
+
+  return appendAndPersist(outcome.log, 'trial-applied', dependencies.now(), {
+    round,
+    errors: [],
+    ...(outcome.kind === 'manual' ? { manual: true, manualBatch: targetBatchOf(target) } : {}),
+  });
+}
+
+/**
+ * True once a command has parked the session somewhere the caller must not override:
+ * an assisted batch still waiting on the user, or an aborted batch.
+ */
+function isParked(view: SessionView): boolean {
+  return view.status === 'awaiting-manual-toggle' || view.status === 'paused';
 }
 
 async function reloadAndSettle(dependencies: ResolvedDependencies, tab: TestTabBinding | null): Promise<boolean> {
@@ -417,19 +473,8 @@ export function startSession(rawDependencies: SessionDependencies, request: Star
 
     const applied = await applyAndRecord(dependencies, log, allOffTarget(candidates), 0);
     const view = viewOf(applied);
-    if (view.status !== 'awaiting-manual-toggle') await reloadAndSettle(dependencies, request.testTab);
-
-    const failures = view.currentTrial?.errors ?? [];
-    if (failures.length === 0) return view;
-
-    const restored = await restoreTouched(dependencies, view);
-    return viewOf(
-      await appendAndPersist(applied, 'session-reset', dependencies.now(), {
-        restored: restored.complete,
-        errors: restored.errors,
-        manualIds: restored.manualIds,
-      }),
-    );
+    if (!isParked(view)) await reloadAndSettle(dependencies, request.testTab);
+    return view;
   });
 }
 
@@ -470,7 +515,7 @@ export function applyTrial(rawDependencies: SessionDependencies): Promise<Sessio
 
     const applied = await applyAndRecord(dependencies, log, nextTrialTarget(view), nextRoundFor(view));
     const next = viewOf(applied);
-    if (next.status !== 'awaiting-manual-toggle') await reloadAndSettle(dependencies, next.testTab);
+    if (!isParked(next)) await reloadAndSettle(dependencies, next.testTab);
     return next;
   });
 }
@@ -503,6 +548,13 @@ export function resyncSession(rawDependencies: SessionDependencies): Promise<Ses
           manualBatch: targetBatchOf(trial.targetState),
         }),
       );
+    }
+    if (!result.ok) {
+      const aborted = await appendAndPersist(resumed, 'trial-applied', dependencies.now(), {
+        round: trial.round,
+        errors: result.errors,
+      });
+      return viewOf(await rollbackAndPause(dependencies, aborted, trial.targetState, result));
     }
 
     const next = viewOf(resumed);
@@ -546,6 +598,13 @@ export function undoLastVerdict(rawDependencies: SessionDependencies): Promise<S
         }),
       );
     }
+    if (!result.ok) {
+      const aborted = await appendAndPersist(undone, 'trial-applied', dependencies.now(), {
+        round: trial.round,
+        errors: result.errors,
+      });
+      return viewOf(await rollbackAndPause(dependencies, aborted, trial.targetState, result));
+    }
 
     const next = viewOf(undone);
     await reloadAndSettle(dependencies, next.testTab);
@@ -588,6 +647,9 @@ export function retryTrial(
           round: trial.round,
           errors: result.errors,
         });
+    if (!isManualBatch(result) && !result.ok) {
+      return viewOf(await rollbackAndPause(dependencies, reapplied, trial.targetState, result));
+    }
     if (isManualBatch(result)) return viewOf(reapplied);
 
     await reloadAndSettle(dependencies, view.testTab);

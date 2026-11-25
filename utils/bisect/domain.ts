@@ -88,6 +88,16 @@ export interface ToggleResult {
   ok: boolean;
 }
 
+/**
+ * What the abort actually managed to return to the previous target state. It is
+ * recorded next to the failure so a rollback that could not finish is auditable
+ * instead of being implied by the absence of an error.
+ */
+export interface ToggleRollback {
+  restoredIds: string[];
+  errors: ToggleError[];
+}
+
 export interface ManualBatch {
   enableIds: string[];
   disableIds: string[];
@@ -110,6 +120,8 @@ export type DriftCategory = 'pending' | 'unexpected' | 'missing';
 export interface SessionPause {
   reason: string;
   drift: DriftReport | null;
+  /** Present when the pause aborted a batch that could not be applied. */
+  rollback?: ToggleRollback | null;
 }
 
 export interface RestoreError {
@@ -144,7 +156,7 @@ export interface BisectEventPayloads {
   'verdict-recorded': { round: number; verdict: Verdict };
   'trial-retried': { round: number; reason?: string };
   'verdict-undone': { round: number };
-  'session-paused': { reason: string; drift?: DriftReport };
+  'session-paused': { reason: string; drift?: DriftReport; rollback?: ToggleRollback };
   'session-resumed': { reason: string };
   'session-completed': { culpritId: string };
   'session-inconclusive': { ambiguityIds: string[]; reason: string };

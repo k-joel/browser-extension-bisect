@@ -168,18 +168,70 @@ export function createNotImplementedMethods(): Pick<
   };
 }
 
-/**
- * Error-code mapping seam. ISS-010 owns the full mapping
- * (`policy-blocked`, `needs-user-gesture`, `manual-recovery-required`,
- * `extension-removed`); until then every rejection becomes one generic
- * mapped code with the original message preserved.
- */
-export function mapToggleError(_error: unknown): ToggleErrorCode {
-  return 'unsupported-requirements';
-}
-
 export function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+interface ToggleErrorPattern {
+  code: ToggleErrorCode;
+  patterns: RegExp[];
+}
+
+/**
+ * Ordered because the browser's messages overlap: a greylisted extension is also
+ * refused "for policy", so the specific cause has to be recognised first. Every
+ * code here is a distinct recovery, so a wrong match sends the user to the wrong
+ * place — the fallback is the honest "the browser refused, we cannot fix it".
+ *
+ * The symbolic names (`kGestureNeededForEscalationError` and friends) are matched
+ * verbatim because Chromium only carries them in the message of the error it throws,
+ * and a test-mode or older build may surface the symbol rather than the sentence.
+ */
+const TOGGLE_ERROR_PATTERNS: readonly ToggleErrorPattern[] = [
+  { code: 'manual-recovery-required', patterns: [/kCannotReEnableGreylistedError/, /greylist/i] },
+  {
+    code: 'needs-user-gesture',
+    patterns: [/kGestureNeededForEscalationError/, /user gesture/i, /requires? a click/i, /user activation/i],
+  },
+  {
+    code: 'extension-removed',
+    patterns: [
+      /kNoExtensionError/,
+      /no extension with id/i,
+      /no (such|matching) extension/i,
+      /unknown extension/i,
+      /not installed/i,
+    ],
+  },
+  {
+    code: 'policy-blocked',
+    patterns: [
+      /extensionmaymodifysettings/i,
+      /may modify settings/i,
+      /(cannot|can not|is not|not) (be )?modified/i,
+      /blocked by (the )?policy/i,
+      /managed by your (administrator|organisation|organization)/i,
+      /policy/i,
+    ],
+  },
+  {
+    code: 'unsupported-requirements',
+    patterns: [/requirements/i, /new version of the browser/i, /unsupported/i],
+  },
+];
+
+/**
+ * Maps a `setEnabled` rejection onto the documented error-code vocabulary. The
+ * unknown case is `unsupported-requirements`: the vocabulary has no separate
+ * "unknown" code, and that code already means "the browser refused and the add-on
+ * cannot fix it", which is what an unrecognised message tells us.
+ */
+export function mapToggleError(error: unknown): ToggleErrorCode {
+  const message = describeError(error);
+  for (const entry of TOGGLE_ERROR_PATTERNS) {
+    if (entry.patterns.some((pattern) => pattern.test(message))) return entry.code;
+  }
+  return 'unsupported-requirements';
 }
 
 export function isManualBatch(result: ToggleResult | ManualBatch): result is ManualBatch {
@@ -191,6 +243,24 @@ export function targetEnabledMap(target: TargetState): EnabledStateMap {
   for (const id of target.enabled) map[id] = true;
   for (const id of target.disabled) map[id] = false;
   return map;
+}
+
+/**
+ * The state to apply to undo a partially applied target: exactly the ids this apply
+ * moved, each back to the value the target replaced. Re-applying the previous trial's
+ * whole target would retry the toggle that just failed and reach for ids this apply
+ * never touched, so the rollback is scoped to what actually changed.
+ */
+export function rollbackTarget(target: TargetState, applied: readonly string[]): TargetState {
+  const desired = targetEnabledMap(target);
+  const enabled: string[] = [];
+  const disabled: string[] = [];
+  for (const extensionId of applied) {
+    const wanted = desired[extensionId];
+    if (wanted === true) disabled.push(extensionId);
+    else if (wanted === false) enabled.push(extensionId);
+  }
+  return { enabled, disabled, allOutsideSuspectsEnabled: true };
 }
 
 export interface ScopedTarget {

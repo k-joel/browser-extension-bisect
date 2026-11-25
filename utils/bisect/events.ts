@@ -196,7 +196,11 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       return;
     }
     case 'session-paused':
-      acc.pause = { reason: event.payload.reason, drift: event.payload.drift ?? null };
+      acc.pause = {
+        reason: event.payload.reason,
+        drift: event.payload.drift ?? null,
+        rollback: event.payload.rollback ?? null,
+      };
       acc.status = 'paused';
       return;
     case 'session-resumed': {

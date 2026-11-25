@@ -766,25 +766,66 @@ describe('enterprise-policy assisted routing', () => {
       testTab: null,
     });
 
-    // The failing toggle is recorded on the applied batch, and the session leaves the
-    // baseline for the panel to report instead of asking an unanswerable question.
-    expect(started.status).toBe('restored');
+    // The failing toggle aborts the baseline: its mapped code is recorded on the applied
+    // batch, the id that did move is put back, and the panel gets a pause to report —
+    // never an auto-restore that would hide the failure.
+    expect(started.status).toBe('paused');
+    expect(started.pause?.reason).toBe('toggle-failed');
     const log = await readBisectLog();
     const applied = log?.events.find((event) => event.type === 'trial-applied');
     expect(applied?.payload).not.toHaveProperty('manual');
-    const errors = (applied?.payload as { errors: { extensionId: string }[] } | undefined)?.errors ?? [];
-    expect(errors[0]).toMatchObject({ extensionId: 'aaaa', message: 'blocked by policy' });
+    const errors = (applied?.payload as { errors: { extensionId: string; code: string }[] } | undefined)?.errors ?? [];
+    expect(errors[0]).toMatchObject({ extensionId: 'aaaa', message: 'blocked by policy', code: 'policy-blocked' });
 
-    // `aaaa` never moved, so only the id that did is re-enabled: the failed toggle is
-    // reported once, on the batch, and is not double-counted as a restore failure.
-    expect(log?.events.at(-1)?.type).toBe('session-reset');
+    expect(log?.events.at(-1)?.type).toBe('session-paused');
+    expect(started.pause?.rollback).toEqual({ restoredIds: ['bbbb'], errors: [] });
     expect(surface.setEnabledCalls).toEqual([
       { id: 'aaaa', enabled: false },
       { id: 'bbbb', enabled: false },
       { id: 'bbbb', enabled: true },
     ]);
   });
+
+  it('aborts an automated baseline and re-enables what it had already disabled', async () => {
+    const surface = createFakeManagement({
+      self: POLICY_SELF,
+      extensions: [
+        makeExtensionInfo({ id: 'aaaa', name: 'Alpha' }),
+        makeExtensionInfo({ id: 'bbbb', name: 'Bravo' }),
+        POLICY_SELF,
+      ],
+      setEnabledError: (id) => (id === 'aaaa' ? new Error('kCannotReEnableGreylistedError') : null),
+    });
+    const dependencies: SessionDependencies = {
+      port: createFirefoxPort({ management: surface, debounceMs: 5 }),
+      tabs: { reload: async () => undefined, waitForComplete: async () => true },
+      now: () => 1_000,
+      newSessionId: () => 'session-greylist',
+    };
+
+    const started = await startSession(dependencies, {
+      candidateIds: ['aaaa', 'bbbb'],
+      baselineMode: 'manual',
+      testTab: null,
+    });
+
+    expect(started.status).toBe('paused');
+    expect(started.currentTrial?.errors[0]).toMatchObject({
+      extensionId: 'aaaa',
+      code: 'manual-recovery-required',
+    });
+    // The previous state was everything enabled, so the rollback turns `bbbb` back on.
+    expect(await readExtensionStates(surface, ['aaaa', 'bbbb'])).toEqual({ aaaa: true, bbbb: true });
+  });
 });
+
+async function readExtensionStates(
+  surface: ReturnType<typeof createFakeManagement>,
+  ids: string[],
+): Promise<Record<string, boolean>> {
+  const all = await surface.getAll();
+  return Object.fromEntries(ids.map((id) => [id, all.find((info) => info.id === id)?.enabled ?? false]));
+}
 
 describe('assisted restore pending and explicit accept', () => {
   beforeEach(() => {
