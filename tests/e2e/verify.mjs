@@ -892,6 +892,31 @@ async function runPartitionLoopScenario({ surface, session, installed, testPage,
     restoreLabel: screen.completed.restoreLabel,
   });
 
+  /**
+   * The way out of a finished session, in its blocked form. Nothing the session touched has
+   * been restored yet, so replacing the log would start the next search from a browser with
+   * a disabled extension in it: the action must be visible, disabled, and must say why.
+   */
+  record('completed-screen-offers-a-new-session', screen.newSession.visible, {
+    newSession: screen.newSession,
+  });
+  record(
+    'new-session-is-blocked-while-the-restore-is-pending',
+    screen.newSession.blocked === 'true' && screen.newSession.disabled === true,
+    { newSession: screen.newSession },
+  );
+  record(
+    'blocked-new-session-names-the-restore-it-waits-for',
+    (screen.newSession.note ?? '').includes('Restore all extensions first'),
+    { note: screen.newSession.note },
+  );
+  record('blocked-new-session-keeps-the-start-over-label', screen.newSession.label === 'Start over', {
+    label: screen.newSession.label,
+  });
+
+  /** The log the second-session half compares against: it must survive every read-only flow. */
+  const completedLog = await readPersistedBisectLog(surface);
+
   await assertHistoryAndCopy({ surface, record, screen, culprit, answered });
   await assertReplayDiagnostics({ surface, record, culprit, innocent });
 
@@ -914,6 +939,107 @@ async function runPartitionLoopScenario({ surface, session, installed, testPage,
     'restore-leaves-non-candidates-untouched',
     untouchableIds.every((id) => afterRestore[id] === before[id]),
     { before, afterRestore, untouchableIds },
+  );
+
+  /**
+   * The second session, proved through the UI rather than through a harness reset. The
+   * finished log is still in storage — nothing between the scenarios has cleared it — so
+   * the only way back to the picker is the panel's own new-session action, and the log it
+   * produces must be a genuinely different one.
+   */
+  const finishedLog = await readPersistedBisectLog(surface);
+  record('finished-session-is-still-the-stored-log', finishedLog?.sessionId === completedLog?.sessionId, {
+    stored: finishedLog?.sessionId ?? null,
+    completed: completedLog?.sessionId ?? null,
+  });
+
+  record(
+    'restored-screen-offers-a-new-session',
+    restored.newSession.visible && restored.newSession.blocked === 'false' && restored.newSession.disabled === false,
+    { newSession: restored.newSession },
+  );
+  record('restored-new-session-is-no-longer-held-back', restored.newSession.label === 'Start a new session', {
+    label: restored.newSession.label,
+    note: restored.newSession.note,
+  });
+
+  await clickTestId(surface, 'new-session-start');
+  const nextSession = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'picker' && state.picker.startLabel !== null ? state : null;
+    },
+    { label: 'the picker after starting a new session' },
+  );
+
+  record('new-session-lands-on-the-picker', nextSession.screen === 'picker', { screen: nextSession.screen });
+  record('new-session-offers-fresh-candidates', nextSession.picker.startDisabled === false, {
+    startDisabled: nextSession.picker.startDisabled,
+    blocked: nextSession.picker.blocked,
+  });
+  record('new-session-clears-the-finished-session', nextSession.newSession.visible === false, {
+    newSession: nextSession.newSession,
+  });
+
+  const nextLog = await readPersistedBisectLog(surface);
+  record(
+    'new-session-writes-a-new-log',
+    nextLog?.sessionId !== undefined && nextLog.sessionId !== finishedLog?.sessionId,
+    {
+      finished: finishedLog?.sessionId ?? null,
+      next: nextLog?.sessionId ?? null,
+    },
+  );
+  record('new-session-log-is-empty', Array.isArray(nextLog?.events) && nextLog.events.length === 0, {
+    events: nextLog?.events?.length ?? null,
+  });
+
+  await clickTestId(surface, 'picker-start');
+  await waitForScreen(surface, 'preflight');
+  await clickTestId(surface, 'preflight-start');
+  const secondSession = await waitForScreen(surface, 'baseline');
+
+  const startedLog = await readPersistedBisectLog(surface);
+  const starts = (startedLog?.events ?? []).filter((event) => event.type === 'session-started');
+  record('second-session-records-exactly-one-session-start', starts.length === 1, { starts: starts.length });
+  record(
+    'second-session-has-its-own-session-id',
+    typeof startedLog?.sessionId === 'string' && startedLog.sessionId !== finishedLog?.sessionId,
+    { finished: finishedLog?.sessionId ?? null, second: startedLog?.sessionId ?? null },
+  );
+  record(
+    'second-session-starts-from-the-event-not-the-empty-log',
+    (startedLog?.events[0]?.type ?? null) === 'session-started' && (startedLog?.events.length ?? 0) > 1,
+    { firstEvent: startedLog?.events[0]?.type ?? null, events: startedLog?.events?.length ?? null },
+  );
+  record('second-session-reaches-its-own-baseline', secondSession.screen === 'baseline', {
+    screen: secondSession.screen,
+  });
+
+  const secondSnapshot = await readSnapshotCandidateIds(surface);
+  record(
+    'second-session-snapshots-the-candidates-it-can-see',
+    secondSnapshot.length > 0 && secondSnapshot.every((entry) => candidateIds.includes(entry.id)),
+    { snapshot: secondSnapshot, candidateIds },
+  );
+
+  await clickTestId(surface, 'verdict-gone');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen !== 'baseline' ? state : null;
+    },
+    { label: 'the second session advancing past its baseline' },
+  );
+
+  await clickTestId(surface, 'restore-button');
+  await waitForScreen(surface, 'restored');
+  const afterSecondRestore = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  record(
+    'second-session-restores-what-it-touched',
+    candidateIds.every((id) => afterSecondRestore[id] === true) &&
+      untouchableIds.every((id) => afterSecondRestore[id] === before[id]),
+    { before, afterSecondRestore, candidateIds, untouchableIds },
   );
 
   const errors = collectErrors(session.recorder);

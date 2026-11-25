@@ -760,6 +760,19 @@ export async function readSessionState(page) {
         blocked: text('picker-blocked'),
         modeNote: text('picker-mode-note'),
       },
+      /**
+       * The way out of a finished session. `blocked` is the panel's own answer to whether the
+       * log may be replaced yet, and `note` is the reason it gives, so a scenario can prove
+       * both the offered action and the restore-first rule that holds it back.
+       */
+      newSession: {
+        visible: document.querySelector('[data-testid="new-session"]') !== null,
+        blocked: document.querySelector('[data-testid="new-session"]')?.getAttribute('data-blocked') ?? null,
+        label: document.querySelector('[data-testid="new-session-start"]')?.textContent?.trim() ?? null,
+        disabled: document.querySelector('[data-testid="new-session-start"]')?.disabled ?? null,
+        note: text('new-session-note'),
+        policy: text('new-session-policy'),
+      },
       assisted: {
         explanation: text('assisted-explanation'),
         attestLabel: document.querySelector('[data-testid="assisted-attest"]')?.textContent?.trim() ?? null,
