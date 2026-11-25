@@ -370,6 +370,13 @@ export function describeStartupDifference(reconciliation: StartupReconciliation)
   return `The browser came back with ${parts.join(', ')}.`;
 }
 
+/**
+ * A restore that did not finish reports two different leftovers, and they need different
+ * words: a `manualId` is a candidate the user still has to switch back on, an error is a
+ * re-enable the browser refused. Counting only the errors read as
+ * "Restore incomplete: 0 extensions could not be re-enabled." above a checklist that was
+ * visibly unfinished.
+ */
 export function summarizeRestore(outcome: RestoreOutcome, candidates: CandidateExtension[]): RestoreSummary {
   const failures = outcome.errors.map((error) => ({
     id: error.extensionId,
@@ -378,16 +385,30 @@ export function summarizeRestore(outcome: RestoreOutcome, candidates: CandidateE
     message: error.message,
     guidance: describeRecovery(error.code),
   }));
-  const complete = outcome.restored && failures.length === 0;
+  const manualIds = outcome.manualIds ?? [];
+  const complete = outcome.restored && failures.length === 0 && manualIds.length === 0;
   const requiresManager = outcome.errors.some((error) => recoveryNeedsExtensionManager(error.code));
   return {
     complete,
-    headline: complete
-      ? 'All touched extensions are enabled again.'
-      : `Restore incomplete: ${plural(failures.length, 'extension')} could not be re-enabled.`,
+    headline: complete ? COMPLETE_RESTORE_HEADLINE : incompleteRestoreHeadline(manualIds.length, failures.length),
     failures,
     extensionManagerUrl: requiresManager ? EXTENSION_MANAGER_URL : null,
   };
+}
+
+const COMPLETE_RESTORE_HEADLINE = 'All touched extensions are enabled again.';
+
+/**
+ * The leftovers in one sentence. `manualIds` and errors are counted apart because they
+ * are different facts — one extension is still off, the other was refused — and neither
+ * count may stand in for the other.
+ */
+function incompleteRestoreHeadline(manualCount: number, failureCount: number): string {
+  const parts: string[] = [];
+  if (manualCount > 0) parts.push(`${plural(manualCount, 'extension')} still off`);
+  if (failureCount > 0) parts.push(`${plural(failureCount, 'extension')} could not be re-enabled`);
+  if (parts.length === 0) return 'Restore incomplete: the browser did not report a complete restore.';
+  return `Restore incomplete: ${parts.join(' and ')}.`;
 }
 
 export function describeProgress(view: SessionView): string {

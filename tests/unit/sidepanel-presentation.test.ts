@@ -12,6 +12,7 @@ import {
   manualProgress,
   matchesSearch,
   resolveScreen,
+  summarizeRestore,
 } from '@/entrypoints/sidepanel/presentation';
 import type { CandidateExtension, CapabilityReport, IneligibleExtension, SessionView } from '@/utils/bisect/domain';
 
@@ -231,6 +232,69 @@ describe('assisted trial screen routing', () => {
     });
 
     expect(resolveScreen({ session: view, preflightOpen: false })).toBe('trial');
+  });
+});
+
+describe('restore summary', () => {
+  const CANDIDATES = [candidate('aaaa', 'Alpha'), candidate('bbbb', 'Bravo'), candidate('cccc', 'Charlie')];
+
+  it('claims a complete restore only when nothing is left over', () => {
+    const summary = summarizeRestore({ restored: true, errors: [] }, CANDIDATES);
+
+    expect(summary.complete).toBe(true);
+    expect(summary.headline).toBe('All touched extensions are enabled again.');
+    expect(summary.failures).toEqual([]);
+    expect(summary.extensionManagerUrl).toBeNull();
+  });
+
+  /**
+   * An assisted restore reports the extensions the user has not turned back on as
+   * `manualIds`, not as errors. Counting only the errors produced the nonsense
+   * "Restore incomplete: 0 extensions could not be re-enabled." above two rows that
+   * plainly still had to be switched on.
+   */
+  it('names the extensions the user still has to turn back on', () => {
+    const summary = summarizeRestore({ restored: false, errors: [], manualIds: ['aaaa', 'bbbb'] }, CANDIDATES);
+
+    expect(summary.complete).toBe(false);
+    expect(summary.headline).toBe('Restore incomplete: 2 extensions still off.');
+    expect(summary.failures).toEqual([]);
+  });
+
+  it('counts a manual re-enable and a failed re-enable separately in one headline', () => {
+    const summary = summarizeRestore(
+      {
+        restored: false,
+        errors: [{ extensionId: 'cccc', code: 'policy-blocked', message: 'locked by policy' }],
+        manualIds: ['aaaa'],
+      },
+      CANDIDATES,
+    );
+
+    expect(summary.complete).toBe(false);
+    expect(summary.headline).toBe('Restore incomplete: 1 extension still off and 1 extension could not be re-enabled.');
+    expect(summary.failures.map((failure) => failure.name)).toEqual(['Charlie']);
+    expect(summary.extensionManagerUrl).toBe('chrome://extensions');
+  });
+
+  it('reports only the failed re-enables when no manual toggle is left', () => {
+    const summary = summarizeRestore(
+      {
+        restored: false,
+        errors: [{ extensionId: 'aaaa', code: 'manual-recovery-required', message: 'greylisted' }],
+      },
+      CANDIDATES,
+    );
+
+    expect(summary.complete).toBe(false);
+    expect(summary.headline).toBe('Restore incomplete: 1 extension could not be re-enabled.');
+  });
+
+  it('never claims a complete restore when the browser reported one but the ids remain', () => {
+    const summary = summarizeRestore({ restored: true, errors: [], manualIds: ['aaaa'] }, CANDIDATES);
+
+    expect(summary.complete).toBe(false);
+    expect(summary.headline).toBe('Restore incomplete: 1 extension still off.');
   });
 });
 
