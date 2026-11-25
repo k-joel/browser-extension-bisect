@@ -235,7 +235,13 @@ Reports the status of the CI gate (`.github/workflows/ci.yml`, the same `npm run
    gh run list --branch <branch> --limit 5
    ```
 
-   Expected: one row per push/PR run, newest first, naming the `CI` workflow, with status and conclusion.
+   Expected: one row per push/PR run, newest first, naming the `CI` workflow, with status and conclusion. If a push run never appeared (GitHub webhook outage), start one on the pushed commit:
+
+   ```
+   gh workflow run ci.yml --ref <branch>
+   ```
+
+   Expected: `Created workflow_dispatch event for ci.yml`; the new run then appears in `gh run list`.
 2. Watch it to completion (blocks until the run finishes):
 
    ```
