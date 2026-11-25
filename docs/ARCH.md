@@ -354,7 +354,12 @@ npm run agent:verify
                                    │                       Firefox: WebDriver BiDi (installExtension)
                                    ├──► tests/e2e/fixtures/extensions/{chrome,firefox}/* (fixture extensions)
                                    └──► tests/e2e/fixture-server.mjs (HTTP on 127.0.0.1:0)
+
+npm run manual:chrome | manual:firefox
+    └──► tools/manual-browser.mjs ──► same harness, headful, no scenarios
 ```
+
+`tools/manual-browser.mjs` is the second consumer of the harness: it launches the same browsers with the same install path, binds a fixture page as the test tab, and hands the window to a human ([ADR-021](DECISIONS.md)). It asserts nothing unless passed `--smoke`, which runs the path headless and checks the panel rendered with the expected candidates and a bound test tab.
 
 ---
 
@@ -843,6 +848,8 @@ Test tab id:
                      (no `tabs` permission needed; only url/title are gated)
 
 Manual dev: npm run dev / npm run dev:firefox (WXT dev server)
+Manual session: npm run manual:chrome / manual:firefox (tools/manual-browser.mjs; a built
+  bundle in a throwaway Puppeteer profile, fixtures installed, test tab pre-bound)
 ```
 
 ---

@@ -147,6 +147,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [018](#adr-018-take-the-disabled-half-of-a-partition-from-the-tail-of-the-pool) | Take the disabled half of a partition from the tail of the pool |
 | [019](#adr-019-pin-the-js-beautify-transitive-chain-with-npm-overrides) | Pin the js-beautify transitive chain with npm overrides |
 | [020](#adr-020-run-the-verification-gate-in-github-actions) | Run the verification gate in GitHub Actions |
+| [021](#adr-021-reuse-the-e2e-harness-for-manual-browser-sessions) | Reuse the E2E harness for manual browser sessions |
 
 ---
 
@@ -627,4 +628,28 @@ Run the existing gate unchanged in GitHub Actions (`.github/workflows/ci.yml`) o
 **Bad**: A run is Linux-only and repeats the browser install and the whole E2E suite, so it is slower than the fast inner loop; the workflow is coupled to Puppeteer's pinned browser builds and to `apt-get satisfy` on the runner image; browser automation remains the most likely flake source.
 
 **Mitigations**: The CI command is byte-identical to RUN-003; `timeout-minutes: 30` bounds a hung run; `npm run agent:verify:chrome|firefox` (RUN-004) stays the single-browser iteration path; the browser-install quirks are recorded in NOTES.md §ci.
+
+---
+
+## ADR-021: Reuse the E2E harness for manual browser sessions
+
+**Status**: Accepted
+**Date**: 2026-11-25
+**Deciders**: Manual-session tooling request (LLM-driven, user-approved)
+
+### Context
+
+The add-on could only be run by hand in a developer's own browser — either the unpacked build or the WXT dev server, both of which attach to a real profile that a test add-on should not touch. Exercising the product properly needed a browser where the extension, a bound test tab, and a set of installed extensions already existed — the same three preconditions the E2E harness establishes. That launch path is genuinely subtle: Chrome extensions must be installed after launch rather than through launch arguments (NOTES.md §e2e-chrome), Firefox needs the BiDi system-access environment variable and a pinned extension UUID (NOTES.md §e2e-firefox), and a fresh profile has no extensions at all, so the candidate picker renders empty and looks broken.
+
+### Decision
+
+Add `tools/manual-browser.mjs`, a headful consumer of `tests/e2e/harness.mjs`, exposed as `npm run manual:chrome` and `npm run manual:firefox`. It launches through the existing `launchTestBrowser()`, installs the fixture extensions, opens the panel, pre-binds a fixture page as the test tab by writing `bisectConfig` directly, and holds the window until the browser disconnects. It duplicates no launch logic and adds no manual-only branches to the harness. A `--smoke` flag runs the same path headless with a handful of assertions so the tool can be verified without a human.
+
+### Consequences
+
+**Good**: One launch path, so a manual session cannot exercise a browser the gate never exercises; the install-after-launch, BiDi, and UUID subtleties stay in one file; the pre-bind avoids a bug a human would otherwise hit every session (`bindTestTab` resolves the active tab, and the panel is a tab); `--smoke` makes the tool agent-verifiable.
+
+**Bad**: `tests/e2e/harness.mjs` is no longer E2E-private — its exports are now a contract that `tools/` depends on, so an incompatible harness change breaks a non-test consumer; the harness gained a `userDataDir` passthrough it did not need for tests; the panel opens as a tab rather than the real side panel, because a toolbar click is not scriptable over CDP or BiDi.
+
+**Mitigations**: The harness stays free of manual-only branches and the launcher owns its pre-bind, banner, and smoke checks; `npm run agent:verify` still exercises the harness on both browsers, so an incompatible change fails the gate; NOTES.md §manual-browser records the tab-vs-side-panel limitation for the next session.
 

@@ -77,5 +77,5 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## Inventory
 
-_No tools registered._
+- **`manual-browser.mjs`** — Launches a visible Puppeteer browser with the built extension and its fixture extensions installed, pre-binds a fixture page as the test tab, and holds the window open for hands-on use; `--smoke` runs the same path headless as a self-check. Reuses `tests/e2e/harness.mjs`; requires `puppeteer` and a prior `npm run build:<browser>`.
 

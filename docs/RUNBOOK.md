@@ -103,6 +103,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [004](#run-004-safe-iterate-verification-on-a-single-browser) | Iterate verification on a single browser |
 | [005](#run-005-safe-capture-ad-hoc-debug-state-with-the-inspect-cli) | Capture ad-hoc debug state with the inspect CLI |
 | [006](#run-006-safe-watch-the-github-actions-verification-run) | Watch the GitHub Actions verification run |
+| [007](#run-007-safe-launch-a-visible-manual-browser-session) | Launch a visible manual browser session |
 
 ---
 
@@ -261,3 +262,43 @@ Reports the status of the CI gate (`.github/workflows/ci.yml`, the same `npm run
 
 - **`Installing system dependencies requires root privileges` in the browser-install step**: `--install-deps` ran without `sudo`. Fix: use the workflow's `sudo env "HOME=$HOME" "PATH=$PATH" npx puppeteer browsers install ...` form (NOTES.md §ci).
 - **Every Firefox step times out on `sidepanel-root` in CI**: the runner lacks a Firefox runtime library or the BiDi env flag. Check the browser-install step first; `launchFirefox` already sets `MOZ_REMOTE_ALLOW_SYSTEM_ACCESS=1` (NOTES.md §e2e-harness).
+
+---
+
+## RUN-007 (SAFE): Launch a visible manual browser session
+
+Builds the extension and opens a visible Puppeteer-owned browser with the add-on and its fixture extensions installed, the panel loaded, and a fixture page pre-bound as the test tab — so you can drive the product by hand. Does not touch your installed browser or its profile, and does not assert anything unless `--smoke` is passed. Rollback: none; the throwaway profile is discarded when the window closes.
+
+1. Launch the browser you want:
+
+   ```
+   npm run manual:chrome
+   # or
+   npm run manual:firefox
+   ```
+
+   Expected: the build runs first, then a visible window opens on the panel tab. The shell prints a banner naming the panel URL, the bound test page, and the installed fixtures, then waits. The candidate picker lists `Fixture Alpha` and `Fixture Bravo` as eligible; `Fixture Theme` (and on Chrome `Fixture Dormant`) appear as not eligible.
+2. Drive the product by hand:
+
+   The panel opens as a **tab**, because an extension page always loads that way and a toolbar click is not scriptable. Open the native surface instead from Chrome's toolbar icon, or Firefox's **View → Sidebar**, when you need to check the real side panel or sidebar.
+3. Close the browser window to end the session:
+
+   Expected: the shell returns to the prompt with exit code 0 and no leftover browser process. `Ctrl+C` in the terminal closes the browser too.
+
+Vary the launch as needed:
+
+```
+node tools/manual-browser.mjs --browser=chrome --url=/form
+node tools/manual-browser.mjs --browser=firefox --user-data-dir=.agent-artifacts/manual-profile
+node tools/manual-browser.mjs --browser=chrome --smoke
+```
+
+`--url` accepts `/`, `/form`, `/dynamic`, or an absolute URL. `--user-data-dir` keeps the profile between runs, which is the only way to hand-test the Resume/Restore offer after a real browser restart; omit it for a clean slate. `--no-fixtures` launches with no extensions installed. `--smoke` runs the same path headless, asserts the panel rendered with the expected candidates and a bound test tab, prints a JSON verdict, and exits 0 or 1 — use it to check the tool itself without a human at the keyboard.
+
+**Troubleshooting**
+
+- **`Extension build missing at ...\.output\chrome-mv3. Run "npm run build:chrome" first.`**: the tool was invoked directly with `node tools/manual-browser.mjs` before any build. Fix: `npm run manual:chrome` (which builds first) or `npm run build:all`.
+- **The picker shows "No eligible enabled extensions." and Start baseline is disabled**: the launch used `--no-fixtures`, or the `.output/` bundle predates the fixture extensions. Fix: drop `--no-fixtures` and re-run `npm run manual:chrome`.
+- **"Bind the current tab" binds the panel instead of the test page**: the pre-bind did not take, so `tabs.query({active:true})` resolved the panel's own tab. Fix: reload the panel — the bound tab is written to `bisectConfig` before the window is handed over, so a reload shows the real binding (NOTES.md §manual-browser).
+- **`Failed To Create Data Directory` in the browser window**: `--user-data-dir` pointed at a path the browser could not create, usually an unexpanded shell variable. Fix: pass a literal path; the tool creates the directory it is given.
+- **The `--smoke` run reports `test-tab-bound` false**: the panel never saw another active tab, so `focusTestTab` timed out. Re-run once; if it repeats, capture the state with RUN-005 and check `focusTestTab` in `tests/e2e/harness.mjs` (NOTES.md §test-tab-binding).

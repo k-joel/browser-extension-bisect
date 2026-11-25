@@ -208,7 +208,7 @@ export async function failNextStorageWrite(page, message = 'QUOTA_BYTES quota ex
   }, message);
 }
 
-async function launchChrome({ headless, recorder, extPath }) {
+async function launchChrome({ headless, recorder, extPath, userDataDir }) {
   /**
    * Linux CI runs Chrome as an unprivileged user on a runner whose user namespaces and
    * `/dev/shm` may not satisfy the sandbox; without these flags Chrome exits during
@@ -223,6 +223,7 @@ async function launchChrome({ headless, recorder, extPath }) {
     enableExtensions: true,
     dumpio: process.env.CI === 'true',
     args: ['--no-first-run', '--enable-unsafe-extension-debugging', ...linuxArgs],
+    ...(userDataDir === undefined ? {} : { userDataDir }),
   });
 
   const extensionId = await browser.installExtension(extPath);
@@ -249,7 +250,7 @@ async function launchChrome({ headless, recorder, extPath }) {
   };
 }
 
-async function launchFirefox({ headless, recorder, extPath }) {
+async function launchFirefox({ headless, recorder, extPath, userDataDir }) {
   const geckoId = readFirefoxGeckoId(extPath);
 
   const browser = await puppeteer.launch({
@@ -268,6 +269,7 @@ async function launchFirefox({ headless, recorder, extPath }) {
       'xpinstall.signatures.required': false,
       'extensions.webextensions.uuids': JSON.stringify({ [geckoId]: FIXED_FIREFOX_UUID }),
     },
+    ...(userDataDir === undefined ? {} : { userDataDir }),
   });
 
   const extensionId = await browser.installExtension(extPath);
@@ -291,7 +293,7 @@ async function launchFirefox({ headless, recorder, extPath }) {
   };
 }
 
-export async function launchTestBrowser({ browserName, headless = true }) {
+export async function launchTestBrowser({ browserName, headless = true, userDataDir }) {
   if (browserName !== 'chrome' && browserName !== 'firefox') {
     throw new Error(`Unsupported browser "${browserName}"`);
   }
@@ -299,7 +301,7 @@ export async function launchTestBrowser({ browserName, headless = true }) {
   const extPath = resolveOutputDir(browserName);
   const recorder = createRecorder();
   const launcher = browserName === 'chrome' ? launchChrome : launchFirefox;
-  const session = await launcher({ headless, recorder, extPath });
+  const session = await launcher({ headless, recorder, extPath, userDataDir });
 
   return {
     ...session,
@@ -485,6 +487,7 @@ export async function readCandidateState(page) {
       id: node.getAttribute('data-extension-id'),
       name: node.querySelector('[data-testid="ineligible-name"]')?.textContent?.trim() ?? '',
       reason: node.querySelector('[data-testid="ineligible-reason"]')?.textContent?.trim() ?? '',
+      reasonCode: node.getAttribute('data-reason'),
     })),
     eligibleEmpty: document.querySelector('[data-testid="eligible-empty"]')?.textContent?.trim() ?? null,
     searchEmpty: document.querySelector('[data-testid="search-empty"]')?.textContent?.trim() ?? null,

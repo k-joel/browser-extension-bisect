@@ -121,6 +121,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ### Added
 
+- `npm run manual:chrome` and `npm run manual:firefox` launch a visible browser with the built add-on and its fixture extensions installed, a fixture page pre-bound as the test tab, and the panel open, so the product can be exercised by hand without installing anything into a personal browser profile; `--smoke` runs the same path headless as a self-check (RUN-007).
 - Cross-browser Browser Extension Bisect add-on built on WXT, producing Chrome (Manifest V3) and Firefox (Manifest V2) builds from one TypeScript codebase.
 - Side panel UI (`side panel` on Chrome, `sidebar_action` on Firefox) rendering the no-session screen, the capability report, and the candidate picker, replacing the popup as the product surface ([ADR-009](DECISIONS.md)).
 - Candidate picker with display-name search, per-extension include/exclude checkboxes, deterministic name-then-id ordering, and a "Not eligible" list that explains every intrinsic exclusion (theme or app, disabled at start, policy-locked, this add-on).

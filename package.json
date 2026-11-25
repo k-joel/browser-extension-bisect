@@ -21,6 +21,8 @@
     "agent:verify:firefox": "npm run build:firefox && node tests/e2e/verify.mjs --browser=firefox --json",
     "agent:verify": "npm run lint && npm run typecheck && npm run test:unit && npm run build:all && npm run test:e2e",
     "agent:inspect": "node tests/e2e/inspect.mjs",
+    "manual:chrome": "npm run build:chrome && node tools/manual-browser.mjs --browser=chrome",
+    "manual:firefox": "npm run build:firefox && node tools/manual-browser.mjs --browser=firefox",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
