@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPickerRows,
   compareByNameThenId,
+  describeRestoreStatus,
   formatIneligibleReason,
   formatSideSurface,
   formatToggleMode,
@@ -154,6 +155,7 @@ function sessionView(overrides: Partial<SessionView> = {}): SessionView {
     manualBatch: null,
     pause: null,
     changes: [],
+    restore: null,
     restorePending: false,
     createdAt: 1,
     updatedAt: 2,
@@ -295,6 +297,81 @@ describe('restore summary', () => {
 
     expect(summary.complete).toBe(false);
     expect(summary.headline).toBe('Restore incomplete: 1 extension still off.');
+  });
+});
+
+describe('restored screen status', () => {
+  const CANDIDATES = [candidate('aaaa', 'Alpha'), candidate('bbbb', 'Bravo'), candidate('cccc', 'Charlie')];
+
+  /**
+   * SPEC §Restore: the session stays restore-pending until the state matches or the user
+   * explicitly accepts the remaining differences, and the UI must never claim a restore a
+   * re-enable did not make. The screen therefore derives its copy from the recorded
+   * leftovers, never from `status: 'restored'`.
+   */
+  it('claims success only when nothing is left over', () => {
+    const status = describeRestoreStatus({ restored: true, errors: [], manualIds: [], accepted: false }, CANDIDATES);
+
+    expect(status.complete).toBe(true);
+    expect(status.leftover).toEqual([]);
+    expect(status.nextStep).toBeNull();
+    expect(status.headline).toBe('All touched extensions are enabled again.');
+    expect(status.detail).toContain('every extension it touched is enabled again');
+  });
+
+  it('names the extensions that are still off and what to do about them', () => {
+    const status = describeRestoreStatus(
+      { restored: false, errors: [], manualIds: ['aaaa', 'bbbb'], accepted: false },
+      CANDIDATES,
+    );
+
+    expect(status.complete).toBe(false);
+    expect(status.headline).toBe('Restore incomplete: 2 extensions still off.');
+    expect(status.leftover).toEqual([
+      { id: 'aaaa', name: 'Alpha', kind: 'manual' },
+      { id: 'bbbb', name: 'Bravo', kind: 'manual' },
+    ]);
+    expect(status.detail).toContain('still not back in the state they were in when the session started');
+    expect(status.nextStep).toContain('turn it back on in the Add-ons Manager');
+  });
+
+  it('names a refused re-enable as a failure with the extension manager as the place to fix it', () => {
+    const status = describeRestoreStatus(
+      {
+        restored: false,
+        errors: [{ extensionId: 'cccc', code: 'manual-recovery-required', message: 'greylisted' }],
+        manualIds: [],
+        accepted: false,
+      },
+      CANDIDATES,
+    );
+
+    expect(status.complete).toBe(false);
+    expect(status.headline).toBe('Restore incomplete: 1 extension could not be re-enabled.');
+    expect(status.leftover).toEqual([{ id: 'cccc', name: 'Charlie', kind: 'failed' }]);
+    expect(status.nextStep).toContain('chrome://extensions');
+  });
+
+  it('stops asking for a next step once the user accepted the remaining differences', () => {
+    const status = describeRestoreStatus(
+      { restored: false, errors: [], manualIds: ['bbbb'], accepted: true },
+      CANDIDATES,
+    );
+
+    expect(status.complete).toBe(false);
+    expect(status.accepted).toBe(true);
+    expect(status.headline).toContain('still off');
+    expect(status.nextStep).toBeNull();
+    expect(status.detail).toContain('You accepted the remaining differences');
+  });
+
+  it('never reports success when no restore was recorded at all', () => {
+    const status = describeRestoreStatus(null, CANDIDATES);
+
+    expect(status.complete).toBe(false);
+    expect(status.accepted).toBe(false);
+    expect(status.leftover).toEqual([]);
+    expect(status.headline).toContain('Restore incomplete');
   });
 });
 

@@ -81,6 +81,7 @@ function sessionWith(overrides: Partial<SessionView> = {}): SessionView {
     manualBatch: null,
     pause: null,
     changes: [],
+    restore: null,
     restorePending: false,
     createdAt: 1,
     updatedAt: 2,

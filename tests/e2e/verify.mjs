@@ -1095,6 +1095,37 @@ async function runAssistedBaselineScenario({ surface, session, installed, testPa
     complete: restored.restore.complete,
     summary: restored.restore.summary,
   });
+  /**
+   * The restored screen is the one that used to assert "the touched extensions are back to
+   * their original states" above a checklist of extensions that were still off. It now
+   * reports the leftovers and what to do about them, and never says "0 extensions".
+   */
+  record(
+    'assisted-restored-screen-does-not-claim-success',
+    restored.restoredScreen.complete === 'false' &&
+      (restored.restoredScreen.explanation ?? '').includes('is not back in its original state') &&
+      !(restored.restoredScreen.explanation ?? '').includes('back to their original states'),
+    {
+      explanation: restored.restoredScreen.explanation,
+      complete: restored.restoredScreen.complete,
+    },
+  );
+  record(
+    'assisted-restored-screen-names-the-extensions-still-off',
+    restored.restoredScreen.leftovers.length === candidateIds.length &&
+      restored.restoredScreen.leftovers.every((row) => row.kind === 'manual' && row.state === 'Off') &&
+      (restored.restoredScreen.nextStep ?? '').includes('Add-ons Manager'),
+    {
+      leftovers: restored.restoredScreen.leftovers,
+      nextStep: restored.restoredScreen.nextStep,
+    },
+  );
+  record(
+    'assisted-restored-summary-counts-what-is-left',
+    (restored.restoredScreen.summary ?? '').includes('still off') &&
+      !(restored.restoredScreen.summary ?? '').includes('0 extensions'),
+    { summary: restored.restoredScreen.summary },
+  );
   const restoreSummary = await waitFor(
     async () => {
       const state = await readSessionState(surface);

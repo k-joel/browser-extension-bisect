@@ -625,6 +625,27 @@ export async function readSessionState(page) {
           message: node.querySelector('[data-testid="restore-failure-message"]')?.textContent?.trim() ?? '',
         })),
       },
+      /**
+       * The restored screen never asserts success: `restored` is the audit state a
+       * `session-reset` records, so the screen's own `data-complete` and its leftover list
+       * are what a scenario must assert on.
+       */
+      restoredScreen: {
+        complete: document.querySelector('[data-testid="restored-screen"]')?.getAttribute('data-complete') ?? null,
+        explanation: text('restored-explanation'),
+        summary: text('restored-summary'),
+        summaryComplete:
+          document.querySelector('[data-testid="restored-summary"]')?.getAttribute('data-complete') ?? null,
+        detail: text('restored-detail'),
+        nextStep: text('restored-next-step'),
+        restoreLabel: document.querySelector('[data-testid="restored-restore"]')?.textContent?.trim() ?? null,
+        leftovers: Array.from(document.querySelectorAll('[data-testid="restored-leftover"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          kind: node.getAttribute('data-kind'),
+          name: node.querySelector('[data-testid="restored-leftover-name"]')?.textContent?.trim() ?? '',
+          state: node.querySelector('[data-testid="restored-leftover-state"]')?.textContent?.trim() ?? '',
+        })),
+      },
       toggleFailure: {
         visible: document.querySelector('[data-testid="toggle-failure"]') !== null,
         explanation: text('toggle-failure-explanation'),

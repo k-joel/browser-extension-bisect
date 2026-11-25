@@ -47,6 +47,7 @@ import {
   baselineModeFor,
   buildPickerRows,
   describeProgress,
+  describeRestoreStatus,
   findCandidate,
   formatTestTab,
   isAssisted,
@@ -56,6 +57,7 @@ import {
   newSessionOffer,
   plural,
   type RestoreOutcome,
+  type RestoreStatus,
   type RestoreSummary,
   resolveScreen,
   selectIncludedCandidates,
@@ -154,6 +156,34 @@ const culprit = computed(() => findCandidate(culprits.value, session.value?.culp
 
 const restoreSummary = computed<RestoreSummary | null>(() =>
   restoreOutcome.value === null ? null : summarizeRestore(restoreOutcome.value, culprits.value),
+);
+
+/**
+ * The outcome the restored screen renders. The panel's own `restoreOutcome` is the freshest
+ * report — it carries what the restore attempt just found — but a panel that reopened after
+ * the restore has none, so the recorded `session-reset` on the session view is the fallback.
+ * Both shapes are the same three fields, and the screen never reads the status: a
+ * `restored` status is an audit state, not a claim that the browser state matches.
+ */
+const restoredOutcome = computed<RestoreOutcome | null>(() => {
+  if (restoreOutcome.value !== null) return restoreOutcome.value;
+  const recorded = session.value?.restore ?? null;
+  if (recorded === null) return null;
+  return { restored: recorded.restored, errors: recorded.errors, manualIds: recorded.manualIds };
+});
+
+const restoreStatus = computed<RestoreStatus>(() =>
+  describeRestoreStatus(
+    restoredOutcome.value === null
+      ? null
+      : {
+          restored: restoredOutcome.value.restored,
+          errors: restoredOutcome.value.errors,
+          manualIds: restoredOutcome.value.manualIds ?? [],
+          accepted: restoreAccepted.value || (session.value?.restore?.accepted ?? false),
+        },
+    culprits.value,
+  ),
 );
 
 const restoreAvailable = computed(() => session.value !== null && session.value.status !== 'restored');
@@ -300,7 +330,7 @@ const announcement = computed(() => {
     case 'completed':
       return `Culprit identified: ${culprit.value?.name ?? session.value?.culpritId ?? 'unknown'}. It is still disabled.`;
     case 'restored':
-      return restoreSummary.value?.headline ?? 'Session finished and restored.';
+      return restoreStatus.value.headline;
     case 'progress':
       return session.value === null ? '' : describeProgress(session.value);
     default:
@@ -1001,7 +1031,7 @@ onUnmounted(() => {
 
       <RestoredScreen
         v-else-if="screen === 'restored' && newSession !== null"
-        :summary="restoreSummary"
+        :restore="restoreStatus"
         :offer="newSession"
         :busy="busy"
         @restore="restore"

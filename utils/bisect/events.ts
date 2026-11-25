@@ -5,6 +5,7 @@ import type {
   CapabilityReport,
   ManualBatch,
   SessionPause,
+  SessionRestore,
   SessionStatus,
   SessionView,
   TargetState,
@@ -114,6 +115,7 @@ interface SessionAccumulator {
   testTab: SessionView['testTab'];
   manualBatch: ManualBatch | null;
   pause: SessionPause | null;
+  restore: SessionRestore | null;
   resetRecorded: boolean;
   createdAt: number;
   updatedAt: number;
@@ -259,6 +261,12 @@ function applyEvent(acc: SessionAccumulator, event: BisectEvent): void {
       acc.manualBatch = null;
       acc.pause = null;
       acc.resetRecorded = true;
+      acc.restore = {
+        restored: event.payload.restored,
+        errors: event.payload.errors,
+        manualIds: [...(event.payload.manualIds ?? [])],
+        accepted: event.payload.accepted === true,
+      };
       acc.status = acc.abortReason === null ? 'restored' : 'aborted';
       return;
   }
@@ -341,6 +349,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     testTab: null,
     manualBatch: null,
     pause: null,
+    restore: null,
     resetRecorded: false,
     createdAt: 0,
     updatedAt: 0,
@@ -368,6 +377,7 @@ export function reduceLog(log: BisectLog | null): SessionView | null {
     manualBatch: acc.manualBatch,
     pause: acc.pause,
     changes: acc.pause?.changes ?? [],
+    restore: acc.restore,
     restorePending: !acc.resetRecorded && touchedCount > 0,
     progress:
       acc.originalEnabledIds.length === 0

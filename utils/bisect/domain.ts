@@ -280,6 +280,19 @@ export interface SessionProgress {
 
 export type AbortReason = 'host-issue';
 
+/**
+ * What the last `session-reset` recorded. It is kept on the session view so the restored
+ * screen can still say honestly what is left over after a panel reload: the `session-reset`
+ * event is the audit record, and `accepted` distinguishes "the state matches" from "the
+ * user decided the remaining differences are fine" (SPEC §Restore).
+ */
+export interface SessionRestore {
+  restored: boolean;
+  errors: RestoreError[];
+  manualIds: string[];
+  accepted: boolean;
+}
+
 export interface SessionView {
   sessionId: string;
   status: SessionStatus;
@@ -313,6 +326,13 @@ export interface SessionView {
    * candidate order it started with and the panel can warn about the difference.
    */
   changes: SnapshotChange[];
+  /**
+   * What the last `session-reset` said, or `null` while no restore was recorded. The
+   * restored screen reads it so an incomplete assisted restore is never rendered as a
+   * success, and so a panel that reopened after the restore still shows what is left
+   * over instead of an empty summary.
+   */
+  restore: SessionRestore | null;
   /**
    * True while no `session-reset` is recorded and the session touched something, so
    * candidates may still be disabled. Starting a new session is refused until this is

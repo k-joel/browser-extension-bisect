@@ -9,6 +9,7 @@ import type {
   ManualBatch,
   RestoreError,
   SessionPause,
+  SessionRestore,
   SessionStatus,
   SessionView,
   SnapshotChange,
@@ -409,6 +410,80 @@ function incompleteRestoreHeadline(manualCount: number, failureCount: number): s
   if (failureCount > 0) parts.push(`${plural(failureCount, 'extension')} could not be re-enabled`);
   if (parts.length === 0) return 'Restore incomplete: the browser did not report a complete restore.';
   return `Restore incomplete: ${parts.join(' and ')}.`;
+}
+
+export interface RestoreLeftover {
+  id: string;
+  name: string;
+  /** Whether the browser refused this id, or the user simply has not switched it on again. */
+  kind: 'manual' | 'failed';
+}
+
+export interface RestoreStatus {
+  /** True only when nothing remains — the one case where the screen may claim success. */
+  complete: boolean;
+  /** The explicit accept the user recorded, or `false` when none was. */
+  accepted: boolean;
+  headline: string;
+  detail: string;
+  leftover: RestoreLeftover[];
+  /** What the user has to do next, or `null` when there is nothing left to do. */
+  nextStep: string | null;
+}
+
+/**
+ * What a `session-reset` actually said, in the words the restored screen needs.
+ *
+ * SPEC §Restore keeps a session `restore-pending` until the browser state matches or the
+ * user explicitly accepts the remaining differences, and forbids claiming a full restore
+ * when a re-enable failed. `status: 'restored'` is only the audit state — a recorded
+ * `session-reset` — so the screen's copy is derived here from the event's own two
+ * leftover lists instead of from the status.
+ */
+export function describeRestoreStatus(restore: SessionRestore | null, candidates: CandidateExtension[]): RestoreStatus {
+  const nameOf = (id: string) => candidates.find((candidate) => candidate.id === id)?.name ?? id;
+  const manual = restore?.manualIds ?? [];
+  const errors = restore?.errors ?? [];
+
+  const leftover: RestoreLeftover[] = [
+    ...manual.map((id) => ({ id, name: nameOf(id), kind: 'manual' as const })),
+    ...errors.map((error) => ({ id: error.extensionId, name: nameOf(error.extensionId), kind: 'failed' as const })),
+  ];
+  const accepted = restore?.accepted === true;
+  const complete = restore?.restored === true && leftover.length === 0;
+
+  if (complete) {
+    return {
+      complete,
+      accepted,
+      headline: COMPLETE_RESTORE_HEADLINE,
+      detail: 'The session is over and every extension it touched is enabled again.',
+      leftover: [],
+      nextStep: null,
+    };
+  }
+
+  const headline = incompleteRestoreHeadline(manual.length, errors.length);
+  const detail = accepted
+    ? 'You accepted the remaining differences, so these extensions were left as they are. Nothing else about the session is pending.'
+    : 'These extensions are still not back in the state they were in when the session started.';
+
+  return {
+    complete,
+    accepted,
+    headline,
+    detail,
+    leftover,
+    nextStep: accepted ? null : describeRestoreNextStep(manual.length, errors.length),
+  };
+}
+
+function describeRestoreNextStep(manualCount: number, failureCount: number): string {
+  const actions: string[] = [];
+  if (manualCount > 0) actions.push('turn it back on in the Add-ons Manager');
+  if (failureCount > 0) actions.push(`re-enable it in ${EXTENSION_MANAGER_URL}`);
+  if (actions.length === 0) return 'Press Restore again to record the outcome.';
+  return `To finish, ${actions.join(' and ')}. Then press Restore again to record the result.`;
 }
 
 export function describeProgress(view: SessionView): string {

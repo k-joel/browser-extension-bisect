@@ -575,3 +575,88 @@ describe('assisted restore pending and explicit accept', () => {
     expect(harness.wrapper.find('[data-testid="assisted-restore-accept"]').exists()).toBe(false);
   });
 });
+
+/**
+ * SPEC §Restore keeps a restore-pending session pending until the state matches or the user
+ * accepts what is left, and a `session-reset { restored: false, manualIds }` is not a
+ * success. The restored screen used to assert "the touched extensions are back to their
+ * original states" above two extensions that were visibly still off.
+ */
+describe('the restored screen after an incomplete assisted restore', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+    resetSessionQueue();
+    messenger.removeAllListeners();
+    installMessagingBridge();
+  });
+
+  async function restoreToRestoredScreen(): Promise<Harness> {
+    const harness = mountAssisted();
+    await flushPromises();
+    await startAssistedBaseline(harness);
+    await userToggles(harness.surface, { aaaa: false, bbbb: false });
+    await harness.wrapper.get('[data-testid="assisted-verify"]').trigger('click');
+    await flushPromises();
+    await harness.wrapper.get('[data-testid="verdict-gone"]').trigger('click');
+    await flushPromises();
+    expect(screenOf(harness.wrapper)).toBe('trial');
+    await harness.wrapper.get('[data-testid="restore-button"]').trigger('click');
+    await flushPromises();
+    expect(screenOf(harness.wrapper)).toBe('restored');
+    return harness;
+  }
+
+  it('does not claim the touched extensions are back when they are not', async () => {
+    const harness = await restoreToRestoredScreen();
+
+    const explanation = harness.wrapper.get('[data-testid="restored-explanation"]').text();
+    expect(explanation).not.toContain('back to their original states');
+    expect(explanation).toContain('is not back in its original state');
+
+    const summary = harness.wrapper.get('[data-testid="restored-summary"]');
+    expect(summary.attributes('data-complete')).toBe('false');
+    expect(summary.text()).toContain('still off');
+    expect(summary.text()).not.toContain('0 extensions');
+  });
+
+  it('names every extension that is still off, with what to do about it', async () => {
+    const harness = await restoreToRestoredScreen();
+
+    const rows = harness.wrapper.findAll('[data-testid="restored-leftover"]');
+    expect(rows.map((row) => row.get('[data-testid="restored-leftover-name"]').text())).toEqual([
+      'Alpha Blocker',
+      'Bravo Reader',
+    ]);
+    expect(rows.map((row) => row.attributes('data-kind'))).toEqual(['manual', 'manual']);
+    expect(harness.wrapper.get('[data-testid="restored-next-step"]').text()).toContain('Add-ons Manager');
+    expect(harness.wrapper.get('[data-testid="restored-screen"]').attributes('data-complete')).toBe('false');
+  });
+
+  it('still offers the explicit accept of the remaining differences', async () => {
+    const harness = await restoreToRestoredScreen();
+
+    expect(harness.wrapper.find('[data-testid="assisted-restore-accept"]').exists()).toBe(true);
+    await harness.wrapper.get('[data-testid="assisted-restore-accept"]').trigger('click');
+    await flushPromises();
+
+    expect(harness.wrapper.get('[data-testid="restored-detail"]').text()).toContain('You accepted');
+    expect(harness.wrapper.find('[data-testid="restored-next-step"]').exists()).toBe(false);
+    expect(harness.wrapper.get('[data-testid="restored-summary"]').attributes('data-complete')).toBe('false');
+  });
+
+  it('renders the honest state after a panel reload, when no live outcome is held', async () => {
+    const harness = await restoreToRestoredScreen();
+    harness.wrapper.unmount();
+    messenger.removeAllListeners();
+    registerBackgroundHandlers({
+      managementPort: createFirefoxPort({ management: harness.surface, debounceMs: 5 }),
+      tabs: { reload: async () => undefined, waitForComplete: async () => true },
+    });
+    const reopened = mount(App);
+    await flushPromises();
+
+    expect(screenOf(reopened)).toBe('restored');
+    expect(reopened.get('[data-testid="restored-summary"]').attributes('data-complete')).toBe('false');
+    expect(reopened.findAll('[data-testid="restored-leftover"]')).toHaveLength(2);
+  });
+});

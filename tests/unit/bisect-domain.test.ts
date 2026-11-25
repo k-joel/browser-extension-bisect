@@ -183,6 +183,7 @@ describe('bisect domain surface', () => {
       manualBatch: null,
       pause: null,
       changes: [],
+      restore: null,
       restorePending: false,
       createdAt: 1,
       updatedAt: 2,
