@@ -14,18 +14,32 @@ export const TEST_DRIVER_GLOBAL = '__extBisectTestDriver';
 
 export interface TestDriverStore {
   enabledById: Record<string, boolean>;
+  /**
+   * `setEnabled` rejections the harness wants the adapter to hit, keyed by
+   * `${extensionId}:${enabled ? 'on' : 'off'}`. Chrome cannot be made to refuse a
+   * toggle on demand, so the failure paths are driven through this documented
+   * test-mode overlay instead of a real browser restriction.
+   */
+  toggleErrors?: Record<string, string>;
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  if (typeof value !== 'object' || value === null) return false;
+  return Object.values(value).every((entry) => typeof entry === 'string');
 }
 
 function normalizeStore(value: unknown): TestDriverStore {
   if (typeof value !== 'object' || value === null) return { enabledById: {} };
-  const source = (value as Partial<TestDriverStore>).enabledById;
+  const source = value as Partial<TestDriverStore>;
   const enabledById: Record<string, boolean> = {};
-  if (typeof source === 'object' && source !== null) {
-    for (const [id, enabled] of Object.entries(source)) {
+  const stored = source.enabledById;
+  if (typeof stored === 'object' && stored !== null) {
+    for (const [id, enabled] of Object.entries(stored)) {
       if (typeof enabled === 'boolean') enabledById[id] = enabled;
     }
   }
-  return { enabledById };
+  const toggleErrors = isStringMap(source.toggleErrors) ? { ...source.toggleErrors } : {};
+  return Object.keys(toggleErrors).length === 0 ? { enabledById } : { enabledById, toggleErrors };
 }
 
 function storeItem() {
@@ -38,7 +52,27 @@ export async function readTestDriverStore(): Promise<TestDriverStore> {
 
 export async function setTestDriverEnabled(extensionId: string, enabled: boolean): Promise<TestDriverStore> {
   const current = await readTestDriverStore();
-  const next: TestDriverStore = { enabledById: { ...current.enabledById, [extensionId]: enabled } };
+  const next: TestDriverStore = { ...current, enabledById: { ...current.enabledById, [extensionId]: enabled } };
+  await storeItem().setValue(next);
+  return next;
+}
+
+/**
+ * Arms a `setEnabled` rejection for one id in one direction. Arming replaces the whole
+ * map so a test can turn one failure into the next one without a reset in between.
+ */
+export async function setTestDriverToggleError(
+  extensionId: string,
+  enabled: boolean,
+  message: string | null,
+): Promise<TestDriverStore> {
+  const current = await readTestDriverStore();
+  const key = `${extensionId}:${enabled ? 'on' : 'off'}`;
+  const toggleErrors = { ...(current.toggleErrors ?? {}) };
+  if (message === null) delete toggleErrors[key];
+  else toggleErrors[key] = message;
+  const next: TestDriverStore = { enabledById: current.enabledById };
+  if (Object.keys(toggleErrors).length > 0) next.toggleErrors = toggleErrors;
   await storeItem().setValue(next);
   return next;
 }
@@ -56,6 +90,11 @@ function withOverlay(info: ManagementExtensionInfo, store: TestDriverStore): Man
  * Merges the recorded manual state into `getAll` so the adapter observes it as the
  * real enabled state. Toggles stay browser-rejected, so the assisted rail is still
  * exercised end to end: the add-on can only observe.
+ *
+ * On the automated rail the overlay also honours an armed `setEnabled` rejection. That
+ * is the only way to drive the failure paths in a real browser — Chrome cannot be asked
+ * to refuse a toggle on demand — and it keeps the product's error mapping and abort
+ * rollback under test rather than replacing them.
  */
 export function withTestDriverOverlay(management: ManagementSurface): ManagementSurface {
   return {
@@ -65,11 +104,18 @@ export function withTestDriverOverlay(management: ManagementSurface): Management
       const all = await management.getAll();
       return all.map((info) => withOverlay(info, store));
     },
+    async setEnabled(extensionId: string, enabled: boolean): Promise<void> {
+      const store = await readTestDriverStore();
+      const armed = store.toggleErrors?.[`${extensionId}:${enabled ? 'on' : 'off'}`];
+      if (armed !== undefined) throw new Error(armed);
+      await management.setEnabled(extensionId, enabled);
+    },
   };
 }
 
 export interface TestDriverGlobal {
   setEnabled(extensionId: string, enabled: boolean): Promise<TestDriverStore>;
+  setToggleError(extensionId: string, enabled: boolean, message: string | null): Promise<TestDriverStore>;
   read(): Promise<TestDriverStore>;
   reset(): Promise<void>;
 }
@@ -81,6 +127,7 @@ export interface TestDriverGlobal {
 export function installTestDriverGlobal(target: Record<string, unknown>): void {
   const driver: TestDriverGlobal = {
     setEnabled: setTestDriverEnabled,
+    setToggleError: setTestDriverToggleError,
     read: readTestDriverStore,
     reset: resetTestDriverStore,
   };

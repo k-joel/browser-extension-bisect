@@ -7,6 +7,7 @@ import {
   readTestDriverStore,
   resetTestDriverStore,
   setTestDriverEnabled,
+  setTestDriverToggleError,
   TEST_DRIVER_GLOBAL,
   type TestDriverGlobal,
   withTestDriverOverlay,
@@ -113,6 +114,72 @@ describe('test-mode driver overlay', () => {
     await expect(port.verifyState(target([], ['aaaa', 'bbbb']))).resolves.toMatchObject({
       pendingManualToggles: ['bbbb'],
     });
+  });
+});
+
+describe('test-mode driver toggle failures', () => {
+  beforeEach(() => {
+    fakeBrowser.reset();
+  });
+
+  it('rejects an armed direction only', async () => {
+    const { surface, overlaid } = harness();
+    await setTestDriverToggleError('aaaa', false, 'kCannotReEnableGreylistedError');
+
+    await expect(overlaid.setEnabled('aaaa', false)).rejects.toThrow('kCannotReEnableGreylistedError');
+    await expect(overlaid.setEnabled('aaaa', true)).resolves.toBeUndefined();
+    await expect(overlaid.setEnabled('bbbb', false)).resolves.toBeUndefined();
+    expect(surface.setEnabledCalls).toEqual([
+      { id: 'aaaa', enabled: true },
+      { id: 'bbbb', enabled: false },
+    ]);
+  });
+
+  it('survives a reset, which disarms every armed failure', async () => {
+    const { overlaid } = harness();
+    await setTestDriverToggleError('aaaa', false, 'blocked by policy');
+
+    await resetTestDriverStore();
+
+    await expect(overlaid.setEnabled('aaaa', false)).resolves.toBeUndefined();
+  });
+
+  it('disarms one direction without clearing the other', async () => {
+    const { overlaid } = harness();
+    await setTestDriverToggleError('aaaa', false, 'blocked by policy');
+    await setTestDriverToggleError('aaaa', true, 'kNoExtensionError');
+
+    await setTestDriverToggleError('aaaa', false, null);
+
+    await expect(overlaid.setEnabled('aaaa', false)).resolves.toBeUndefined();
+    await expect(overlaid.setEnabled('aaaa', true)).rejects.toThrow('kNoExtensionError');
+  });
+
+  it('keeps the recorded manual state when arming a failure', async () => {
+    await setTestDriverEnabled('aaaa', false);
+
+    await setTestDriverToggleError('bbbb', true, 'blocked by policy');
+
+    await expect(readTestDriverStore()).resolves.toEqual({
+      enabledById: { aaaa: false },
+      toggleErrors: { 'bbbb:on': 'blocked by policy' },
+    });
+  });
+
+  it('ignores a corrupted toggle-error map', async () => {
+    await fakeBrowser.storage.local.set({ bisectTestDriver: { enabledById: {}, toggleErrors: { 'aaaa:off': 7 } } });
+
+    await expect(readTestDriverStore()).resolves.toEqual({ enabledById: {} });
+  });
+
+  it('publishes setToggleError on the driver global', async () => {
+    const scope: Record<string, unknown> = {};
+    installTestDriverGlobal(scope);
+
+    const driver = scope[TEST_DRIVER_GLOBAL] as TestDriverGlobal;
+    await driver.setToggleError('aaaa', false, 'blocked by policy');
+
+    await expect(driver.read()).resolves.toMatchObject({ toggleErrors: { 'aaaa:off': 'blocked by policy' } });
   });
 });
 

@@ -21,6 +21,7 @@ import {
   readPageReloadMarker,
   readPersistedBisectLog,
   readSessionState,
+  readToggleErrors,
   reloadExtensionPage,
   resetBisectState,
   resetManualExtensionState,
@@ -28,6 +29,7 @@ import {
   SIDEPANEL_ROOT_SELECTOR,
   setExtensionEnabled,
   setManualExtensionState,
+  setToggleError,
   waitForAttribute,
   waitForLog,
 } from './harness.mjs';
@@ -42,8 +44,9 @@ const SCENARIOS = [
   'assisted-trials',
   'partition-loop',
   'drift',
+  'toggle-failure',
 ];
-const CHROME_SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop', 'drift'];
+const CHROME_SCENARIOS = ['candidate-picker', 'session-baseline', 'partition-loop', 'drift', 'toggle-failure'];
 const FIREFOX_SCENARIOS = ['candidate-picker', 'assisted-baseline', 'assisted-external', 'assisted-trials'];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1580,6 +1583,314 @@ async function runDriftScenario({ surface, session, installed, testPage, fixture
   return { steps };
 }
 
+/**
+ * Toggle failures, escalation, and greylist recovery on the automated rail. Chrome cannot
+ * be asked to refuse a toggle, so the failures arrive through the documented test-mode
+ * driver (`setToggleError`) while the product's own mapping, abort and rollback run
+ * unchanged. The gesture-bound retry is the interesting part: the panel calls `management`
+ * itself and never sees the overlay, so the same armed failure that aborts the background
+ * apply succeeds once the user clicks.
+ *
+ * The scenario is three separate sessions, each reset from the panel, because each failure
+ * ends the previous one.
+ */
+async function runToggleFailureScenario({ surface, session, installed, testPage, fixtureServer }) {
+  const steps = [];
+  const record = makeRecorder(steps);
+  const { candidates, theme, dormant } = extensionGroups(installed);
+
+  const culprit = candidates.find((entry) => entry.dir === FIXTURES.alpha.dir);
+  const innocent = candidates.find((entry) => entry.dir === FIXTURES.bravo.dir);
+  if (culprit === undefined || innocent === undefined) {
+    throw new Error('The toggle-failure scenario needs the alpha and bravo fixtures');
+  }
+
+  const untouchableIds = [theme?.id, dormant?.id].filter((id) => typeof id === 'string');
+  const candidateIds = candidates.map((entry) => entry.id);
+  const before = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+
+  async function startSessionAndBind() {
+    await clickTestId(surface, 'picker-start');
+    await waitForScreen(surface, 'preflight');
+    await focusPage(testPage);
+    await waitForAttribute(testPage, EXTENSION_TAB_ID_ATTRIBUTE, 15000);
+    await clickTestId(surface, 'preflight-bind');
+    await waitFor(
+      async () => {
+        const state = await readSessionState(surface);
+        return state.preflight.testTab !== 'No test tab bound' ? state : null;
+      },
+      { label: 'the bound test tab' },
+    );
+    await clickTestId(surface, 'preflight-start');
+    await waitForScreen(surface, 'baseline');
+  }
+
+  /**
+   * `reloadExtensionPage` resolves as soon as the app root exists, which is the loading
+   * skeleton — the picker's own nodes come a message round-trip later. Waiting on the
+   * button itself is the only unambiguous "the panel is usable again" signal.
+   */
+  async function waitForPicker() {
+    await waitFor(
+      async () => {
+        const ready = await surface
+          .evaluate(() => document.querySelector('[data-testid="picker-start"]') !== null)
+          .catch(() => false);
+        return ready ? true : null;
+      },
+      { label: 'the candidate picker to finish loading' },
+    );
+  }
+
+  async function resetAndOpenPicker() {
+    await setToggleError(surface, culprit.id, false, null);
+    await setToggleError(surface, culprit.id, true, null);
+    await resetBisectState(surface);
+    await restoreFixtureState(surface, { candidates, dormant });
+    await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+    await waitForPicker();
+  }
+
+  // ---- 1. A failed toggle aborts the trial and rolls the batch back ----------------
+  await startSessionAndBind();
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-gone');
+  const plan = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan' },
+  );
+  record('toggle-failure-plan-arrives', plan.screen === 'trial', { planDisabled: plan.trial.planDisabled });
+
+  const beforeAbort = await readExtensionEnabledStates(surface, candidateIds);
+  record(
+    'toggle-failure-baseline-left-every-candidate-off',
+    candidateIds.every((id) => beforeAbort[id] === false),
+    { beforeAbort },
+  );
+
+  // Round 1 enables the culprit and disables the innocent one. Arming the enable of the
+  // culprit is the half of the batch that must be rolled back.
+  await setToggleError(surface, culprit.id, true, 'ExtensionMayModifySettings');
+  await clickTestId(surface, 'trial-apply');
+  const aborted = await waitForScreen(surface, 'toggle-failure');
+
+  record('failed-toggle-aborts-the-trial', aborted.screen === 'toggle-failure', { screen: aborted.screen });
+
+  record(
+    'failed-toggle-is-reported-with-its-mapped-code',
+    aborted.toggleFailure.rows[0]?.id === culprit.id && aborted.toggleFailure.rows[0]?.code === 'policy-blocked',
+    { rows: aborted.toggleFailure.rows },
+  );
+  record(
+    'failed-toggle-names-the-browser-error',
+    (aborted.toggleFailure.rows[0]?.message ?? '').includes('ExtensionMayModifySettings'),
+    { message: aborted.toggleFailure.rows[0]?.message },
+  );
+
+  const afterAbort = await readExtensionEnabledStates(surface, candidateIds);
+  record('failed-toggle-rolls-the-batch-back', JSON.stringify(afterAbort) === JSON.stringify(beforeAbort), {
+    beforeAbort,
+    afterAbort,
+  });
+  const afterAbortAll = await readExtensionEnabledStates(surface, [...candidateIds, ...untouchableIds]);
+  record(
+    'failed-toggle-leaves-non-candidates-untouched',
+    untouchableIds.every((id) => afterAbortAll[id] === before[id]),
+    { before, afterAbortAll, untouchableIds },
+  );
+
+  record(
+    'policy-failure-points-at-the-extension-manager',
+    aborted.toggleFailure.manualRecovery.url === 'chrome://extensions' &&
+      (aborted.toggleFailure.manualRecovery.note ?? '').includes('extension manager'),
+    { manualRecovery: aborted.toggleFailure.manualRecovery },
+  );
+  record('policy-failure-offers-no-escalation', aborted.toggleFailure.escalation.present === false, {
+    escalation: aborted.toggleFailure.escalation,
+  });
+  record('failed-toggle-still-offers-restore', aborted.toggleFailure.restoreLabel !== null, {
+    restoreLabel: aborted.toggleFailure.restoreLabel,
+  });
+
+  // ---- 2. An escalation is offered and succeeds after the click -------------------
+  await resetAndOpenPicker();
+  await startSessionAndBind();
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-gone');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan of the escalation run' },
+  );
+
+  await setToggleError(surface, culprit.id, true, 'kGestureNeededForEscalationError');
+  await clickTestId(surface, 'trial-apply');
+  const escalating = await waitForScreen(surface, 'toggle-failure');
+
+  record(
+    'escalation-is-mapped-from-the-gesture-error',
+    escalating.toggleFailure.rows[0]?.code === 'needs-user-gesture',
+    { rows: escalating.toggleFailure.rows },
+  );
+  record('escalation-offers-enable-with-click', escalating.toggleFailure.escalation.present === true, {
+    escalation: escalating.toggleFailure.escalation,
+  });
+  record(
+    'escalation-names-exactly-one-extension-and-the-exact-label',
+    escalating.toggleFailure.escalation.label === 'Enable with click' &&
+      escalating.toggleFailure.escalation.extensionId === culprit.id,
+    { escalation: escalating.toggleFailure.escalation },
+  );
+  record(
+    'escalation-explains-the-user-activation-requirement',
+    [(escalating.toggleFailure.escalation.note ?? '').toLowerCase().includes('click')].every(Boolean),
+    { note: escalating.toggleFailure.escalation.note },
+  );
+
+  const storedErrors = await readToggleErrors(surface);
+  record(
+    'escalation-canary-the-armed-failure-is-in-place',
+    storedErrors[`${culprit.id}:on`] === 'kGestureNeededForEscalationError',
+    { storedErrors },
+  );
+
+  // The panel's own `management.setEnabled` runs against the real browser surface, which
+  // the test-mode overlay does not touch: that difference is the whole point of the
+  // escalation, so the click is expected to succeed even while the overlay is armed.
+  await clickTestId(surface, 'escalation-enable');
+  const escalated = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen !== 'toggle-failure' ? state : null;
+    },
+    { label: 'the session after the escalation click' },
+  );
+  record('escalation-click-resumes-the-session', escalated.screen === 'trial', { screen: escalated.screen });
+
+  const afterEscalation = await readExtensionEnabledStates(surface, [culprit.id, innocent.id]);
+  record('escalation-enable-actually-enabled-the-extension', afterEscalation[culprit.id] === true, {
+    culprit: culprit.id,
+    enabled: afterEscalation[culprit.id],
+  });
+  record(
+    'escalation-leaves-the-other-candidate-in-the-batch-state',
+    afterEscalation[innocent.id] === beforeAbort[innocent.id],
+    { innocent: innocent.id, enabled: afterEscalation[innocent.id], before: beforeAbort[innocent.id] },
+  );
+
+  await setToggleError(surface, culprit.id, true, null);
+
+  // ---- 3. Declining an escalation reaches an outcome, never a stuck pause ---------
+  await resetAndOpenPicker();
+  await startSessionAndBind();
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-gone');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan of the decline run' },
+  );
+
+  await setToggleError(surface, culprit.id, true, 'kGestureNeededForEscalationError');
+  await clickTestId(surface, 'trial-apply');
+  const declining = await waitForScreen(surface, 'toggle-failure');
+  record('decline-run-shows-the-escalation', declining.toggleFailure.escalation.present === true, {
+    escalation: declining.toggleFailure.escalation,
+  });
+
+  await clickTestId(surface, 'escalation-decline');
+  const declined = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'restored' ? state : null;
+    },
+    { label: 'the restored screen after declining' },
+  );
+  record('declining-an-escalation-ends-in-an-outcome', declined.screen === 'restored', { screen: declined.screen });
+  record('declining-records-a-restore-outcome', declined.restore.summary !== null, {
+    summary: declined.restore.summary,
+    complete: declined.restore.complete,
+  });
+
+  await setToggleError(surface, culprit.id, true, null);
+
+  // ---- 4. A greylist failure leaves restore reporting incomplete -----------------
+  await resetAndOpenPicker();
+  await startSessionAndBind();
+  await testPage.goto(`${fixtureServer.url}/`, { waitUntil: 'domcontentloaded' }).catch(() => undefined);
+  await clickTestId(surface, 'verdict-gone');
+  await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'trial' && state.trial.applyLabel !== null ? state : null;
+    },
+    { label: 'the first trial plan of the greylist run' },
+  );
+
+  await setToggleError(surface, culprit.id, true, 'blocked by policy');
+  await clickTestId(surface, 'trial-apply');
+  await waitForScreen(surface, 'toggle-failure');
+  // The re-enable itself now hits the greylist, and stays armed through the restore.
+  await setToggleError(surface, culprit.id, true, 'kCannotReEnableGreylistedError');
+
+  await clickTestId(surface, 'toggle-failure-restore');
+  const incomplete = await waitFor(
+    async () => {
+      const state = await readSessionState(surface);
+      return state.screen === 'restored' ? state : null;
+    },
+    { label: 'the restored screen after the greylist failure' },
+  );
+
+  record('greylist-failure-lands-on-the-restored-screen', incomplete.screen === 'restored', {
+    screen: incomplete.screen,
+  });
+  record('greylist-restore-does-not-claim-success', incomplete.restore.complete === 'false', {
+    complete: incomplete.restore.complete,
+    summary: incomplete.restore.summary,
+  });
+  record(
+    'greylist-restore-reports-the-code-and-the-extension',
+    incomplete.restore.failures.length === 1 &&
+      incomplete.restore.failures[0]?.id === culprit.id &&
+      incomplete.restore.failures[0]?.code === 'manual-recovery-required',
+    { failures: incomplete.restore.failures },
+  );
+  record(
+    'greylist-restore-names-the-extension-manager',
+    (incomplete.restore.managerUrl ?? '').includes('chrome://extensions'),
+    { managerUrl: incomplete.restore.managerUrl },
+  );
+
+  const afterGreylist = await readExtensionEnabledStates(surface, [culprit.id, innocent.id]);
+  record('greylist-leaves-the-extension-disabled', afterGreylist[culprit.id] === false, {
+    culprit: culprit.id,
+    enabled: afterGreylist[culprit.id],
+  });
+
+  await setToggleError(surface, culprit.id, true, null);
+  await resetBisectState(surface);
+  await restoreFixtureState(surface, { candidates, dormant });
+  await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
+  await waitForPicker();
+
+  const errors = collectErrors(session.recorder);
+  record('no-background-runtime-errors', errors.backgroundErrors.length === 0, { errors: errors.backgroundErrors });
+  record('no-page-errors', errors.pageErrors.length === 0, { errors: errors.pageErrors });
+  record('no-console-errors', errors.consoleErrors.length === 0, { errors: errors.consoleErrors });
+  record('no-request-failures', errors.requestFailures.length === 0, { errors: errors.requestFailures });
+
+  return { steps };
+}
+
 async function captureFailure(surface, page, browserName, scenario) {
   const file = path.join(ARTIFACTS_DIR, `failure-${browserName}-${scenario}.png`);
   for (const target of [surface, page]) {
@@ -1645,6 +1956,16 @@ async function runScenarioForBrowser(browserName, scenario, session, context) {
 
   if (scenario === 'assisted-trials') {
     return runAssistedTrialsScenario({
+      surface: context.surface,
+      session,
+      installed: context.installed,
+      testPage: context.page,
+      fixtureServer: context.fixtureServer,
+    });
+  }
+
+  if (scenario === 'toggle-failure') {
+    return runToggleFailureScenario({
       surface: context.surface,
       session,
       installed: context.installed,
@@ -1730,6 +2051,7 @@ async function runBrowser(browserName, options) {
       };
       if (browserName === 'chrome') {
         await resetBisectState(surface);
+        await resetManualExtensionState(surface);
         await restoreFixtureState(surface, { candidates: eligibleInstalled, dormant: dormantInstalled });
         await reloadExtensionPage(surface, { selector: SIDEPANEL_ROOT_SELECTOR });
       } else {

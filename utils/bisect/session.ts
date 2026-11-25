@@ -245,6 +245,26 @@ function isParked(view: SessionView): boolean {
   return view.status === 'awaiting-manual-toggle' || view.status === 'paused';
 }
 
+/**
+ * The assisted rail re-records the batch so its checklist comes back. On the automated
+ * rail nothing extra is written: the batch is already in the browser, the caller's own
+ * event is the whole record, and an abort has already written its `trial-applied`.
+ */
+async function recordManualBatch(
+  dependencies: ResolvedDependencies,
+  outcome: ApplyOutcome,
+  round: number,
+  target: TargetState,
+): Promise<BisectLog> {
+  if (outcome.kind !== 'manual') return outcome.log;
+  return appendAndPersist(outcome.log, 'trial-applied', dependencies.now(), {
+    round,
+    errors: [],
+    manual: true,
+    manualBatch: targetBatchOf(target),
+  });
+}
+
 async function reloadAndSettle(dependencies: ResolvedDependencies, tab: TestTabBinding | null): Promise<boolean> {
   if (tab === null) return false;
   try {
@@ -665,9 +685,12 @@ export function retryTrial(
 /**
  * The recording half of the Chrome permissions escalation. User activation does not
  * cross a runtime message, so the side panel has to make the `setEnabled` call itself;
- * the background only records what happened. A success resumes the session from the
- * pause the failed batch opened, and a failure re-pauses with the browser's code, so
- * declining or failing always lands on a recovery screen instead of a stuck state.
+ * the background only records what happened.
+ *
+ * A success resumes only after the batch is re-applied: the abort rolled back whatever
+ * had landed, so resuming on the strength of one toggle alone would ask the user about a
+ * batch that is not in the browser. A failure re-pauses with the browser's code, so a
+ * declined or failed escalation always lands on a recovery screen.
  */
 export function recordEscalationResult(
   rawDependencies: SessionDependencies,
@@ -677,6 +700,7 @@ export function recordEscalationResult(
   return serialize(async () => {
     const log = await requireLog();
     const view = viewOf(log);
+    const trial = view.currentTrial;
 
     if (view.pause === null) {
       throw new SessionError('No pause is waiting for an escalation result.');
@@ -684,23 +708,30 @@ export function recordEscalationResult(
     if (view.status !== 'paused') {
       throw new SessionError(`Cannot record an escalation while the session is ${view.status}`);
     }
-
-    if (payload.ok) {
-      return viewOf(await appendAndPersist(log, 'session-resumed', dependencies.now(), { reason: 'escalated' }));
+    if (!payload.ok) {
+      const error: ToggleError = {
+        extensionId: payload.extensionId,
+        code: payload.error === undefined ? 'needs-user-gesture' : mapToggleError(new Error(payload.error)),
+        message: payload.error ?? 'The extension could not be enabled from the side panel.',
+      };
+      return viewOf(
+        await appendAndPersist(log, 'session-paused', dependencies.now(), {
+          reason: ESCALATION_FAILED_REASON,
+          errors: [error],
+          rollback: view.pause.rollback ?? null,
+        }),
+      );
     }
 
-    const error: ToggleError = {
-      extensionId: payload.extensionId,
-      code: payload.error === undefined ? 'needs-user-gesture' : mapToggleError(new Error(payload.error)),
-      message: payload.error ?? 'The extension could not be enabled from the side panel.',
-    };
-    return viewOf(
-      await appendAndPersist(log, 'session-paused', dependencies.now(), {
-        reason: ESCALATION_FAILED_REASON,
-        errors: [error],
-        rollback: view.pause.rollback ?? null,
-      }),
-    );
+    const resumed = await appendAndPersist(log, 'session-resumed', dependencies.now(), { reason: 'escalated' });
+    if (trial === null) return viewOf(resumed);
+
+    const outcome = await applyWithAbort(dependencies, resumed, trial.targetState, trial.round);
+    const next = viewOf(await recordManualBatch(dependencies, outcome, trial.round, trial.targetState));
+    if (isParked(next)) return next;
+
+    await reloadAndSettle(dependencies, next.testTab);
+    return next;
   });
 }
 

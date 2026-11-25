@@ -337,6 +337,43 @@ export async function resetManualExtensionState(page) {
   });
 }
 
+/**
+ * Arms a `setEnabled` rejection for one id in one direction through the documented
+ * test-mode driver. Chrome cannot be made to refuse a toggle on demand, so this is the
+ * only way to drive the failure paths in a real browser; the product's own error
+ * mapping, abort and rollback still run unchanged behind it.
+ *
+ * The panel's gesture-bound escalation calls `management` directly and therefore never
+ * sees this overlay — which is exactly the difference between "the background cannot
+ * retry" and "a click can".
+ */
+export async function setToggleError(page, extensionId, enabled, message) {
+  return page.evaluate(
+    async ({ id, next, text }) => {
+      const api = globalThis.browser ?? globalThis.chrome;
+      const stored = await api.storage.local.get('bisectTestDriver');
+      const storedValue = stored?.bisectTestDriver ?? {};
+      const errors = { ...(storedValue.toggleErrors ?? {}) };
+      const key = `${id}:${next ? 'on' : 'off'}`;
+      if (text === null) delete errors[key];
+      else errors[key] = text;
+      const nextValue = { enabledById: storedValue.enabledById ?? {} };
+      if (Object.keys(errors).length > 0) nextValue.toggleErrors = errors;
+      await api.storage.local.set({ bisectTestDriver: nextValue });
+      return nextValue;
+    },
+    { id: extensionId, next: enabled, text: message },
+  );
+}
+
+export async function readToggleErrors(page) {
+  return page.evaluate(async () => {
+    const api = globalThis.browser ?? globalThis.chrome;
+    const stored = await api.storage.local.get('bisectTestDriver');
+    return stored?.bisectTestDriver?.toggleErrors ?? {};
+  });
+}
+
 export async function hasTestDriverGlobal(page) {
   return page.evaluate(() => globalThis.__extBisectTestDriver !== undefined);
 }
@@ -547,12 +584,42 @@ export async function readSessionState(page) {
         summary: summary?.textContent?.trim() ?? null,
         complete: summary?.getAttribute('data-complete') ?? null,
         buttonDisabled: document.querySelector('[data-testid="restore-button"]')?.disabled ?? null,
+        managerUrl: text('restore-manager-url'),
         failures: Array.from(document.querySelectorAll('[data-testid="restore-failure"]')).map((node) => ({
           id: node.getAttribute('data-extension-id'),
+          code: node.getAttribute('data-code'),
           name: node.querySelector('[data-testid="restore-failure-name"]')?.textContent?.trim() ?? '',
-          code: node.querySelector('[data-testid="restore-failure-code"]')?.textContent?.trim() ?? '',
+          codeLabel: node.querySelector('[data-testid="restore-failure-code"]')?.textContent?.trim() ?? '',
+          guidance: node.querySelector('[data-testid="restore-failure-guidance"]')?.textContent?.trim() ?? '',
           message: node.querySelector('[data-testid="restore-failure-message"]')?.textContent?.trim() ?? '',
         })),
+      },
+      toggleFailure: {
+        visible: document.querySelector('[data-testid="toggle-failure"]') !== null,
+        explanation: text('toggle-failure-explanation'),
+        rows: Array.from(document.querySelectorAll('[data-testid="toggle-failure-row"]')).map((node) => ({
+          id: node.getAttribute('data-extension-id'),
+          code: node.getAttribute('data-code'),
+          name: node.querySelector('[data-testid="toggle-failure-name"]')?.textContent?.trim() ?? '',
+          codeLabel: node.querySelector('[data-testid="toggle-failure-code"]')?.textContent?.trim() ?? '',
+          guidance: node.querySelector('[data-testid="toggle-failure-guidance"]')?.textContent?.trim() ?? '',
+          message: node.querySelector('[data-testid="toggle-failure-message"]')?.textContent?.trim() ?? '',
+          managerUrl:
+            node.querySelector('[data-testid="toggle-failure-manager"]')?.getAttribute('data-manager-url') ?? null,
+        })),
+        escalation: {
+          present: document.querySelector('[data-testid="escalation-enable"]') !== null,
+          extensionId:
+            document.querySelector('[data-testid="escalation-actions"]')?.getAttribute('data-extension-id') ?? null,
+          label: document.querySelector('[data-testid="escalation-enable"]')?.textContent?.trim() ?? null,
+          declineLabel: document.querySelector('[data-testid="escalation-decline"]')?.textContent?.trim() ?? null,
+          note: text('escalation-note'),
+        },
+        manualRecovery: {
+          note: text('manual-recovery-note'),
+          url: text('manual-recovery-url'),
+        },
+        restoreLabel: document.querySelector('[data-testid="toggle-failure-restore"]')?.textContent?.trim() ?? null,
       },
       paused: {
         cause: text('paused-cause'),
