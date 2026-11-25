@@ -30,14 +30,10 @@ function sanitizeExcludedIds(value: unknown): string[] {
 
 export function normalizeBisectConfig(value: unknown): BisectConfig {
   const source = (typeof value === 'object' && value !== null ? value : {}) as Partial<BisectConfig>;
-  const candidateIds = Array.isArray(source.lastCandidateIds)
-    ? sanitizeExcludedIds(source.lastCandidateIds)
-    : undefined;
   return {
     schemaVersion: 1,
     excludedExtensionIds: sanitizeExcludedIds(source.excludedExtensionIds),
     testTab: isTestTabBinding(source.testTab) ? source.testTab : null,
-    ...(candidateIds === undefined ? {} : { lastCandidateIds: candidateIds }),
   };
 }
 

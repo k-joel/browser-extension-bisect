@@ -7,7 +7,6 @@ import type {
   IneligibleExtension,
   InstalledExtension,
   ManagementEvent,
-  ManagementPort,
   ManualBatch,
   RestoreError,
   RestoreResult,
@@ -47,8 +46,6 @@ export interface ManagementSurface {
 export interface PortDependencies {
   management: ManagementSurface;
 }
-
-export const NOT_IMPLEMENTED_MESSAGE = 'not implemented';
 
 export interface CandidateFilterOptions {
   selfId: string;
@@ -153,27 +150,6 @@ export function subscribeToManagementEvents(
     management.onDisabled.removeListener(onDisabled);
     management.onInstalled.removeListener(onInstalled);
     management.onUninstalled.removeListener(onUninstalled);
-  };
-}
-
-export function createNotImplementedWatchEvents(): Pick<ManagementPort, 'watchEvents'> {
-  const throwSync = (): never => {
-    throw new Error(NOT_IMPLEMENTED_MESSAGE);
-  };
-  return { watchEvents: throwSync };
-}
-
-export function createNotImplementedMethods(): Pick<
-  ManagementPort,
-  'listInstalled' | 'applyTargetState' | 'verifyState' | 'restore' | 'watchEvents'
-> {
-  const reject = () => Promise.reject(new Error(NOT_IMPLEMENTED_MESSAGE));
-  return {
-    listInstalled: reject,
-    applyTargetState: reject,
-    verifyState: reject,
-    restore: reject,
-    ...createNotImplementedWatchEvents(),
   };
 }
 

@@ -510,7 +510,7 @@ The full type surface lives in `utils/bisect/domain.ts` and is owned by ISS-002;
 | **CandidateExtension** | browser extension id | `name`, `version`, `enabledAtStart`, `mayDisable`, `installType`, `type`, `icons` |
 | **IneligibleExtension** | browser extension id | `reason`: `theme-or-app` \| `disabled-at-start` \| `policy-locked` \| `self` (intrinsic only; user exclusions stay in the config) |
 | **CapabilityReport** | derived per runtime | `browserName`, `canAutoToggle`, `selfInstallType`, `sideSurface` |
-| **BisectConfig** | `local:bisectConfig` | `schemaVersion: 1`, `excludedExtensionIds`, `testTab: { tabId, url } \| null`, optional `lastCandidateIds` |
+| **BisectConfig** | `local:bisectConfig` | `schemaVersion: 1`, `excludedExtensionIds`, `testTab: { tabId, url } \| null` |
 | **TargetState** | per trial | `enabled[]`, `disabled[]`, `allOutsideSuspectsEnabled` |
 | **ToggleError / ToggleResult** | per extension id | error codes `policy-blocked`, `needs-user-gesture`, `manual-recovery-required`, `extension-removed`, `unsupported-requirements` |
 | **BisectEvent / BisectLog** | monotonic sequence | 12 event types with payloads; log in `local:bisectLog` |
@@ -758,7 +758,7 @@ Chrome MV3 service worker vs Firefox MV2 background, and Puppeteer CDP vs WebDri
 |---|---|---|
 | New message | extend `ProtocolMap` (`utils/messaging.ts`) + handler in `background.ts` | keep payload types in `utils/bisect/domain.ts`; cover in unit tests and `verify.mjs` steps |
 | New persisted item | `storage.defineItem` in `utils/bisect/config.ts` (or a new `utils/bisect/*` module) | `local:` area, fallback required, versioned shape |
-| Port behaviour | implement a `not implemented` method in `utils/bisect/chrome-port.ts` / `firefox-port.ts` | keep `domain.ts` signatures stable; reuse the shared filter/ordering helpers |
+| Port behaviour | extend the method in `utils/bisect/management-port.ts` (shared) or in `utils/bisect/chrome-port.ts` / `firefox-port.ts` (platform-specific) | keep `domain.ts` signatures stable; reuse the shared filter/ordering helpers |
 | New UI surface | WXT entrypoint under `entrypoints/` | plain CSS with tokens; `data-testid` on meaningful nodes; host-injected UI must use `createShadowRootUi` with `cssInjectionMode: 'ui'` |
 | New E2E step | append to the scenario runner in `tests/e2e/verify.mjs` | stay browser-agnostic or branch on `browserName`; keep CDP-only calls inside `harness.mjs` |
 | New E2E scenario | add a `run<Name>Scenario` in `tests/e2e/verify.mjs`, register it in `SCENARIOS` and dispatch it in `runScenarioForBrowser` | the default Chrome run must execute every scenario; `--scenario=<name>` runs one; make every `waitFor` target an unambiguous screen state |

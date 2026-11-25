@@ -13,12 +13,10 @@ import type {
 } from './domain';
 import {
   applySharedTargetState,
-  describeError,
   diffAgainstTarget,
   listInstalledExtensions,
   listSharedCandidates,
   type ManagementSurface,
-  mapToggleError,
   type PortDependencies,
   restoreSharedState,
   subscribeToManagementEvents,
@@ -157,8 +155,4 @@ export function createFirefoxPort({
       };
     },
   };
-}
-
-export function mapAssistedError(error: unknown): string {
-  return `${mapToggleError(error)}: ${describeError(error)}`;
 }

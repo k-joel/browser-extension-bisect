@@ -238,7 +238,6 @@ export interface BisectConfig {
   schemaVersion: 1;
   excludedExtensionIds: string[];
   testTab: TestTabBinding | null;
-  lastCandidateIds?: string[];
 }
 
 export interface BisectLog {

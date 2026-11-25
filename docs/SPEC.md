@@ -392,7 +392,6 @@ interface BisectConfig {
   schemaVersion: 1;
   excludedExtensionIds: string[];
   testTab: { tabId: number; url: string | null } | null;
-  lastCandidateIds?: string[];
 }
 
 interface BisectLog {
