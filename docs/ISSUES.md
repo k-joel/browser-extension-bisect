@@ -265,13 +265,13 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: On browser startup, reconcile an unfinished session against the actual extension state and offer Resume or Restore. Multiple side panels show the same session and every mutation is serialized through the background. A storage write failure fails the command, preserves the previous log, and surfaces the error.
 - **Blocked by**: ISS-010, ISS-011.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, af3364f). The Chrome `startup-convergence` scenario covers the restart offer, Resume, and two live panels; the rejected-write path is covered by the unit tests.
 
-- [ ] Browser startup reconciles the persisted log with the actual management state and offers Resume or Restore.
-- [ ] Multiple panels show the same session view; commands are serialized and cannot fork the session.
-- [ ] A storage write failure rejects the command, leaves the previous log intact, and surfaces the error in the panel.
-- [ ] Tests cover startup reconciliation, multi-panel convergence, and storage failure.
-- [ ] The quality gates pass.
+- [x] Browser startup reconciles the persisted log with the actual management state and offers Resume or Restore.
+- [x] Multiple panels show the same session view; commands are serialized and cannot fork the session.
+- [x] A storage write failure rejects the command, leaves the previous log intact, and surfaces the error in the panel.
+- [x] Tests cover startup reconciliation, multi-panel convergence, and storage failure.
+- [x] The quality gates pass.
 
 ### ISS-013: Retire the scaffold and close the loop
 
