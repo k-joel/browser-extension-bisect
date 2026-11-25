@@ -9,6 +9,7 @@ import type {
   EnabledStateMap,
   IneligibleExtension,
   ManualBatch,
+  ReplayResult,
   RestoreResult,
   SessionView,
   Verdict,
@@ -27,6 +28,7 @@ import HostIssueScreen from './components/HostIssueScreen.vue';
 import InconclusiveScreen from './components/InconclusiveScreen.vue';
 import NoSession from './components/NoSession.vue';
 import PreflightConsent from './components/PreflightConsent.vue';
+import ReplayScreen from './components/ReplayScreen.vue';
 import RestoredScreen from './components/RestoredScreen.vue';
 import RestorePanel from './components/RestorePanel.vue';
 import SessionProgress from './components/SessionProgress.vue';
@@ -47,6 +49,15 @@ import {
   selectIncludedCandidates,
   summarizeRestore,
 } from './presentation';
+import {
+  applyReplayEdits,
+  correctionCount,
+  type ReplayEdits,
+  type ReplayRoundRow,
+  renderReplayReport,
+  replayRounds,
+  toggleEdit,
+} from './replay';
 
 type PanelState = 'loading' | 'ready' | 'error';
 
@@ -70,6 +81,11 @@ const restoreAccepted = ref(false);
 const historyOpen = ref(false);
 const historyLog = ref<BisectLog | null>(null);
 const copyStatus = ref<CopyStatus | null>(null);
+const replayOpen = ref(false);
+const replaySource = ref<BisectLog | null>(null);
+const replayEdits = ref<ReplayEdits>({});
+const replayResult = ref<ReplayResult | null>(null);
+const replayCopyStatus = ref<CopyStatus | null>(null);
 
 const excludedIds = computed(() => config.value?.excludedExtensionIds ?? []);
 
@@ -96,8 +112,21 @@ const capabilityNote = computed(() => {
 });
 
 const screen = computed(() =>
-  resolveScreen({ session: session.value, preflightOpen: preflightOpen.value, historyOpen: historyOpen.value }),
+  resolveScreen({
+    session: session.value,
+    preflightOpen: preflightOpen.value,
+    historyOpen: historyOpen.value,
+    replayOpen: replayOpen.value,
+  }),
 );
+
+const replayRows = computed<ReplayRoundRow[]>(() => replayRounds(replaySource.value, replayEdits.value));
+
+const replayCorrections = computed(() => correctionCount(replayEdits.value, replaySource.value));
+
+const replayNameOf = computed(() => (id: string) => findCandidate(culprits.value, id)?.name ?? id);
+
+const replayDifferences = computed(() => replayResult.value?.batchDifferences ?? []);
 
 const historyModel = computed<HistoryModel | null>(() =>
   session.value === null ? null : buildHistory(session.value, historyLog.value),
@@ -160,6 +189,10 @@ const announcement = computed(() => {
       return 'No extension is implicated; this is a browser or machine issue.';
     case 'history':
       return historyAnnouncement.value;
+    case 'replay':
+      return replayResult.value === null
+        ? 'Replay is diagnostic and does not change installed extensions.'
+        : 'Replay result ready. No installed extension was changed.';
     case 'completed':
       return `Culprit identified: ${culprit.value?.name ?? session.value?.culpritId ?? 'unknown'}. It is still disabled.`;
     case 'restored':
@@ -401,6 +434,61 @@ function closeHistory(): void {
   copyStatus.value = null;
 }
 
+/**
+ * Replay works on a copy fetched when the screen opens. The edit lives in panel state
+ * until the user replays, and the copy is sent as a plain object, never a reactive one.
+ */
+async function openReplay(): Promise<void> {
+  replayCopyStatus.value = null;
+  replayEdits.value = {};
+  replayResult.value = null;
+  const log = await run(() => messenger.sendMessage('getLog'));
+  if (log === null) return;
+  replaySource.value = log;
+  historyOpen.value = false;
+  replayOpen.value = true;
+}
+
+function closeReplay(): void {
+  replayOpen.value = false;
+  replaySource.value = null;
+  replayEdits.value = {};
+  replayResult.value = null;
+  replayCopyStatus.value = null;
+}
+
+function correctVerdict(round: number): void {
+  const row = replayRows.value.find((entry) => entry.round === round);
+  if (row === undefined) return;
+  replayEdits.value = toggleEdit(replayEdits.value, round, row.editedVerdict);
+  replayResult.value = null;
+}
+
+function discardReplayEdits(): void {
+  replayEdits.value = {};
+  replayResult.value = null;
+}
+
+async function runReplay(): Promise<void> {
+  const source = replaySource.value;
+  if (source === null) return;
+  const copy = applyReplayEdits(source, { ...replayEdits.value });
+  const result = await run(() => messenger.sendMessage('replayLog', { log: copy }));
+  if (result !== null) replayResult.value = result;
+}
+
+async function copyReplayReport(): Promise<void> {
+  const source = replaySource.value;
+  const result = replayResult.value;
+  if (source === null || result === null || session.value === null) return;
+  const text = renderReplayReport(session.value, result);
+  const outcome = await copyText(text);
+  replayCopyStatus.value =
+    outcome === 'copied'
+      ? { kind: 'copied', message: 'The replay report is on the clipboard.', text: null }
+      : { kind: 'error', message: MANUAL_COPY_MESSAGE, text };
+}
+
 async function publishCopy(label: string, text: string): Promise<void> {
   const outcome = await copyText(text);
   copyStatus.value =
@@ -510,6 +598,23 @@ onMounted(load);
         @back="closeHistory"
         @copy-log="copyLogJson"
         @copy-report="copyReport"
+        @replay="openReplay"
+      />
+
+      <ReplayScreen
+        v-else-if="screen === 'replay'"
+        :rounds="replayRows"
+        :result="replayResult"
+        :differences="replayDifferences"
+        :corrections="replayCorrections"
+        :name-of="replayNameOf"
+        :busy="busy"
+        :copy-status="replayCopyStatus"
+        @correct="correctVerdict"
+        @replay="runReplay"
+        @reset-edits="discardReplayEdits"
+        @copy-report="copyReplayReport"
+        @back="closeReplay"
       />
 
       <InconclusiveScreen
@@ -519,6 +624,7 @@ onMounted(load);
         :restore-summary-headline="restoreSummary?.headline ?? null"
         @restore="restore"
         @history="openHistory"
+        @replay="openReplay"
       />
 
       <HostIssueScreen
@@ -536,6 +642,7 @@ onMounted(load);
         :restore-summary-headline="restoreSummary?.headline ?? null"
         @restore="restore"
         @history="openHistory"
+        @replay="openReplay"
       />
 
       <RestoredScreen v-else-if="screen === 'restored'" :summary="restoreSummary" :busy="busy" @restore="restore" />

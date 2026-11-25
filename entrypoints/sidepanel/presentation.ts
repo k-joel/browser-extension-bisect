@@ -55,6 +55,7 @@ export type PanelScreen =
   | 'assisted-trial'
   | 'trial'
   | 'history'
+  | 'replay'
   | 'host-issue'
   | 'completed'
   | 'inconclusive'
@@ -65,6 +66,7 @@ export interface ScreenInput {
   session: SessionView | null;
   preflightOpen: boolean;
   historyOpen?: boolean;
+  replayOpen?: boolean;
 }
 
 export interface RestoreOutcome {
@@ -233,8 +235,14 @@ export function ambiguityNames(view: SessionView): string[] {
   return view.ambiguityIds.map((id) => findCandidate(view.candidateOrder, id)?.name ?? id);
 }
 
-export function resolveScreen({ session, preflightOpen, historyOpen = false }: ScreenInput): PanelScreen {
+export function resolveScreen({
+  session,
+  preflightOpen,
+  historyOpen = false,
+  replayOpen = false,
+}: ScreenInput): PanelScreen {
   if (session === null) return preflightOpen ? 'preflight' : 'picker';
+  if (replayOpen) return 'replay';
   if (historyOpen) return 'history';
   if (session.status === 'restored') return 'restored';
   if (session.status === 'aborted' && session.abortReason === 'host-issue') return 'host-issue';

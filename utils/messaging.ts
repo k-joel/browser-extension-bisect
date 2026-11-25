@@ -5,6 +5,7 @@ import type {
   CandidateLists,
   CapabilityReport,
   DriftReport,
+  ReplayResult,
   RestoreError,
   RestoreResult,
   SessionView,
@@ -68,6 +69,11 @@ export interface ProtocolMap {
   getSession(): SessionView | null;
   /** The persisted bisect log, or `null` when nothing has been recorded yet. */
   getLog(): BisectLog | null;
+  /**
+   * Recomputes a corrected copy of the log. It is diagnostic: the background writes
+   * nothing, so the live log stays append-only and unchanged.
+   */
+  replayLog(payload: { log: BisectLog }): ReplayResult;
   startSession(request: StartSessionRequest): SessionView;
   applyTrial(): SessionView;
   submitVerdict(payload: { verdict: Verdict }): SessionMutationResult;

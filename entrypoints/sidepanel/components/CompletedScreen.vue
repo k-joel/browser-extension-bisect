@@ -11,6 +11,7 @@ defineProps<{
 const emit = defineEmits<{
   (event: 'restore'): void;
   (event: 'history'): void;
+  (event: 'replay'): void;
 }>();
 </script>
 
@@ -34,12 +35,12 @@ const emit = defineEmits<{
       <button type="button" data-testid="completed-history" :disabled="busy" @click="emit('history')">
         Show the session history
       </button>
-      <button type="button" data-testid="completed-replay" disabled aria-describedby="completed-replay-note">
+      <button type="button" data-testid="completed-replay" :disabled="busy" @click="emit('replay')">
         Correct a verdict and replay
       </button>
     </div>
     <p id="completed-replay-note" class="note" data-testid="completed-replay-note">
-      Replay is not available yet. The history lists every trial so the conclusion is already legible.
+      Replay works on a copy of the log and never changes installed extensions.
     </p>
   </section>
 </template>

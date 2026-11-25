@@ -15,6 +15,7 @@ const emit = defineEmits<{
   (event: 'back'): void;
   (event: 'copy-log'): void;
   (event: 'copy-report'): void;
+  (event: 'replay'): void;
 }>();
 
 const candidates = computed(() => props.model.candidateNames);
@@ -95,12 +96,12 @@ function isBaseline(entry: HistoryEntry): boolean {
       <button type="button" data-testid="history-back" :disabled="busy" @click="emit('back')">
         Back to the session
       </button>
-      <button type="button" data-testid="history-replay" disabled aria-describedby="history-replay-note">
+      <button type="button" data-testid="history-replay" :disabled="busy" @click="emit('replay')">
         Correct a verdict and replay
       </button>
     </div>
     <p id="history-replay-note" class="note" data-testid="history-replay-note">
-      Replay is not available yet, and it will never change installed extensions.
+      Replay works on a copy of the log and never changes installed extensions.
     </p>
   </section>
 </template>

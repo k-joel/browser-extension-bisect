@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (event: 'restore'): void;
   (event: 'history'): void;
+  (event: 'replay'): void;
 }>();
 
 const ambiguity = computed(() => ambiguityNames(props.session));
@@ -58,12 +59,12 @@ const reason = computed(() => describeInconclusiveReason(inconclusiveReasonOf(pr
       <button type="button" data-testid="inconclusive-history" :disabled="busy" @click="emit('history')">
         Show the session history
       </button>
-      <button type="button" data-testid="inconclusive-replay" disabled aria-describedby="inconclusive-replay-note">
+      <button type="button" data-testid="inconclusive-replay" :disabled="busy" @click="emit('replay')">
         Correct a verdict and replay
       </button>
     </div>
     <p id="inconclusive-replay-note" class="note" data-testid="inconclusive-replay-note">
-      Replay is not available yet. The history lists every trial and verdict so a misreported verdict is visible.
+      Replay works on a copy of the log and never changes installed extensions.
     </p>
   </section>
 </template>

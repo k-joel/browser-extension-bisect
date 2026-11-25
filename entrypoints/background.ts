@@ -3,6 +3,7 @@ import { deleteLegacyStorageKeys, readBisectConfig, updateBisectConfig } from '@
 import type { BisectConfig, ManagementPort, RestoreResult, TestTabBinding } from '@/utils/bisect/domain';
 import { readBisectLog } from '@/utils/bisect/events';
 import { createFirefoxPort } from '@/utils/bisect/firefox-port';
+import { replayLog } from '@/utils/bisect/replay';
 import {
   acceptRestore,
   applyTrial,
@@ -152,6 +153,7 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
 
   messenger.onMessage('getSession', () => getSession());
   messenger.onMessage('getLog', () => getLog());
+  messenger.onMessage('replayLog', ({ data }) => replayLog(data.log));
   messenger.onMessage('startSession', ({ data }) => startSession(sessionDependencies(), data));
   messenger.onMessage('applyTrial', () => applyTrial(sessionDependencies()));
   messenger.onMessage('submitVerdict', async ({ data }): Promise<SessionMutationResult> => {

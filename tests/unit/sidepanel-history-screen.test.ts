@@ -336,14 +336,20 @@ describe('history copy actions', () => {
     expect(harness.wrapper.find('[data-testid="copy-fallback-text"]').exists()).toBe(false);
   });
 
-  it('offers replay as a documented, disabled affordance', async () => {
+  it('offers the replay action and states that replay never changes installed extensions', async () => {
     const harness = await mountHarness();
     await startLoop(harness);
     await click(harness.wrapper, 'verdict-gone');
     await click(harness.wrapper, 'trial-history-open');
 
-    expect(harness.wrapper.get('[data-testid="history-replay"]').attributes('disabled')).toBeDefined();
-    expect(harness.wrapper.get('[data-testid="history-replay-note"]').text()).toContain('not available yet');
+    expect(harness.wrapper.get('[data-testid="history-replay"]').attributes('disabled')).toBeUndefined();
+    expect(harness.wrapper.get('[data-testid="history-replay-note"]').text()).toContain(
+      'never changes installed extensions',
+    );
+
+    await click(harness.wrapper, 'history-replay');
+
+    expect(screenOf(harness.wrapper)).toBe('replay');
   });
 });
 
@@ -359,21 +365,23 @@ describe('history links from the terminal screens', () => {
     vi.restoreAllMocks();
   });
 
-  it('links the completed screen to the history and to a disabled replay', async () => {
+  it('links the completed screen to the history and to replay', async () => {
     const harness = await mountHarness();
     await runToCulprit(harness);
 
     expect(screenOf(harness.wrapper)).toBe('completed');
     expect(harness.wrapper.get('[data-testid="completed-history"]').text()).toContain('history');
-    expect(harness.wrapper.get('[data-testid="completed-replay"]').attributes('disabled')).toBeDefined();
-    expect(harness.wrapper.get('[data-testid="completed-replay-note"]').text()).toContain('not available yet');
+    expect(harness.wrapper.get('[data-testid="completed-replay"]').attributes('disabled')).toBeUndefined();
+    expect(harness.wrapper.get('[data-testid="completed-replay-note"]').text()).toContain(
+      'never changes installed extensions',
+    );
 
     await click(harness.wrapper, 'completed-history');
 
     expect(screenOf(harness.wrapper)).toBe('history');
   });
 
-  it('links the inconclusive screen to the history and to a disabled replay', async () => {
+  it('links the inconclusive screen to the history and to replay', async () => {
     const harness = await mountHarness();
     await startLoop(harness);
     await click(harness.wrapper, 'verdict-gone');
@@ -384,7 +392,7 @@ describe('history links from the terminal screens', () => {
 
     expect(screenOf(harness.wrapper)).toBe('inconclusive');
     expect(harness.wrapper.get('[data-testid="inconclusive-history"]').text()).toContain('history');
-    expect(harness.wrapper.get('[data-testid="inconclusive-replay"]').attributes('disabled')).toBeDefined();
+    expect(harness.wrapper.get('[data-testid="inconclusive-replay"]').attributes('disabled')).toBeUndefined();
 
     await click(harness.wrapper, 'inconclusive-history');
 
