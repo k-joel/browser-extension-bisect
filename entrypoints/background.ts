@@ -233,9 +233,19 @@ function watchForBrowserStart(): void {
   });
 }
 
+/**
+ * The popup is gone, so Chrome's toolbar action has to open the panel itself. Firefox has no
+ * `sidePanel` API and opens its generated `sidebar_action` from the sidebar menu instead.
+ */
+function openPanelOnActionClick(): void {
+  if (import.meta.env.FIREFOX) return;
+  void browser.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => undefined);
+}
+
 export default defineBackground(() => {
   attachTestModeErrorLogging();
   registerBackgroundHandlers();
+  openPanelOnActionClick();
   watchForSnapshotChanges(createTestTabSurface());
   watchForBrowserStart();
   console.info('[EXT_BG_READY]');

@@ -8,9 +8,10 @@ export default defineConfig({
   manifest: ({ browser }) => ({
     name: 'Browser Extension Bisect',
     description: 'Binary-search faulty browser extensions across Chrome and Firefox.',
-    permissions: ['storage', 'tabs', 'management', 'sidePanel'],
-    host_permissions: ['<all_urls>'],
-    ...(browser === 'firefox' ? { browser_specific_settings: { gecko: { id: GECKO_ID } } } : {}),
+    permissions: ['storage', 'management'],
+    ...(browser === 'firefox'
+      ? { browser_specific_settings: { gecko: { id: GECKO_ID } } }
+      : { action: { default_title: 'Extension Bisect' } }),
   }),
   vite: () => ({
     define: {
