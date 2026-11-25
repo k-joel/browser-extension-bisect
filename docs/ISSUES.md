@@ -209,15 +209,15 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Edit a verdict on a copy of the log and replay the search. Replay validates the session start, recomputes the baseline and every partition from the verdict sequence, and reports the culprit or ambiguity, batch differences against the recorded log, and a validation error for an invalid edit. Replay never toggles extensions.
 - **Blocked by**: ISS-007.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, dc4c5c2).
 
-- [ ] Editing a verdict creates a copy; the live log remains append-only and unchanged.
-- [ ] Replay validates the session start and returns the first invalid event for a structurally invalid copy.
-- [ ] Replay recomputes the baseline and partitions from the verdict sequence, ignoring recorded trial batches as authoritative.
-- [ ] The result reports the culprit or ambiguity, recomputed trials, and batch differences.
-- [ ] The UI states that replay is diagnostic and does not change installed extensions; copy report is available.
-- [ ] Unit tests cover valid, corrected, invalid, and ignored-recorded-batch logs; component and E2E tests cover edit, replay, and result.
-- [ ] The quality gates pass.
+- [x] Editing a verdict creates a copy; the live log remains append-only and unchanged.
+- [x] Replay validates the session start and returns the first invalid event for a structurally invalid copy.
+- [x] Replay recomputes the baseline and partitions from the verdict sequence, ignoring recorded trial batches as authoritative.
+- [x] The result reports the culprit or ambiguity, recomputed trials, and batch differences.
+- [x] The UI states that replay is diagnostic and does not change installed extensions; copy report is available.
+- [x] Unit tests cover valid, corrected, invalid, and ignored-recorded-batch logs; component and E2E tests cover edit, replay, and result.
+- [x] The quality gates pass.
 
 ### ISS-009: Drift, pause/resume, live undo
 

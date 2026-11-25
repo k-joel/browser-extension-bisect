@@ -151,7 +151,11 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - Firefox E2E scenario `assisted-trials`, which runs the assisted loop to the known culprit through the documented test-mode driver, asserting the verdict buttons are absent before each verification and present after, and that the culprit is left disabled (`firefoxPath: "test-mode-driver"`).
 - Session history screen listing the baseline check first and then every trial in order, each with its enabled and disabled batches, its verdict, any retries, and the session outcome (culprit, inconclusive, aborted, or restored), reachable from the trial, completed, and inconclusive screens.
 - "Copy the bisect log" writes exactly the persisted log as JSON and "Copy the report" writes a human-readable summary naming the session, the candidate snapshot in the captured order, the baseline, every trial with its batches and verdict, the retries, and the outcome, with a success confirmation and a selectable-text fallback when the clipboard is unavailable.
-- Completed and inconclusive screens link to the session history and show replay as a documented, disabled affordance; replay itself arrives in ISS-008.
+- Completed and inconclusive screens link to the session history and to replay.
+- Replay after a corrected verdict: the replay screen lists every recorded verdict with the copy's verdict beside it, and one action per trial flips it. Replay recomputes the baseline and every partition from the verdict sequence alone and shows the culprit or the ambiguity set, the recomputed trials, and every recorded batch that disagrees with the verdicts, or the first invalid event when the edited copy is structurally broken. Replay is diagnostic: the live log stays append-only and unchanged, nothing is toggled, and the screen says so ([ADR-011](DECISIONS.md)).
+- "Copy the replay report" writes the recomputed trials and the differing batches as the same human-readable report the history produces, headed with the diagnostic notice.
+- `utils/bisect/replay.ts`: the pure `replayLog(log)` function, which reuses the engine's partition, suspect-set and outcome decisions so a replayed search cannot diverge from a live one.
+- `replayLog` on the typed messaging protocol; the background computes the result and writes nothing.
 - Popup with an enable/disable switch, an interaction counter, and a persisted batch-size setting, all backed by typed local storage.
 - Content script on all pages that renders a `data-ext-bisect-state` DOM marker and keeps it in sync with stored state.
 - Test-mode builds (`EXT_TEST_MODE=1`) with `?tabId=` popup targeting and `[EXT_BG_ERR]` error logging for automation; production builds strip these hooks.
@@ -164,6 +168,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - `BisectConfig.testTab.url` is `string | null`: without the `tabs` permission neither browser exposes `tab.url`, so the binding records the tab id and the panel shows `Tab #N` when no URL is available ([ADR-017](DECISIONS.md)).
 - `management.verifyState` and `management.watchEvents` are implemented by both adapters: the automated rail compares the expected map against `getAll()`, and the assisted rail splits a mismatch into pending manual toggles and unexpected ones and debounces its event signal.
 - `resolveScreen` accepts an optional `historyOpen` flag, so the session history is a screen derived from panel state rather than a modal, and stays unreachable while no session exists.
+- The replay affordances on the history, completed and inconclusive screens are now functional actions that open the replay screen instead of disabled placeholders.
 
 ### Fixed
 
