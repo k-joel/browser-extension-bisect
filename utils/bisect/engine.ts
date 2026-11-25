@@ -1,4 +1,4 @@
-import type { SessionStatus, TargetState, Verdict } from './domain';
+import type { SessionStatus, SessionView, TargetState, Verdict } from './domain';
 
 export interface TrialPartition {
   enabled: string[];
@@ -42,6 +42,39 @@ export const SESSION_TRANSITIONS: Record<SessionStatus, SessionStatus[]> = {
 
 export function canTransition(from: SessionStatus, to: SessionStatus): boolean {
   return SESSION_TRANSITIONS[from].includes(to);
+}
+
+const UNDO_REFUSED_STATUSES: readonly SessionStatus[] = ['paused', 'completed', 'inconclusive', 'aborted', 'restored'];
+
+export interface UndoEligibility {
+  eligible: boolean;
+  reason: string | null;
+}
+
+/**
+ * Live undo corrects the most recent verdict, so it is only offered while that verdict
+ * is the last thing the search learned. A newer trial, a terminal outcome, or a pause
+ * all mean the batch to return to is no longer the one on screen; the caller then has
+ * to re-sync or restore instead.
+ */
+export function undoEligibilityOf(view: SessionView): UndoEligibility {
+  const trial = view.currentTrial;
+  if (UNDO_REFUSED_STATUSES.includes(view.status)) {
+    return { eligible: false, reason: `The session is ${view.status}, so there is no verdict to undo.` };
+  }
+  if (trial === null || trial.verdict === null) {
+    return { eligible: false, reason: 'No verdict has been recorded yet.' };
+  }
+  if (view.status !== 'awaiting-verdict') {
+    return { eligible: false, reason: `The session is ${view.status}, so the verdict is not the last step.` };
+  }
+  if (trial.round === 0) {
+    return { eligible: false, reason: 'The baseline check is not a partition trial, so its verdict cannot be undone.' };
+  }
+  if (view.trials.at(-1)?.round !== trial.round) {
+    return { eligible: false, reason: 'A newer trial has already started.' };
+  }
+  return { eligible: true, reason: null };
 }
 
 /**

@@ -2,6 +2,8 @@ import type {
   BaselineMode,
   CandidateExtension,
   CapabilityReport,
+  DriftCategory,
+  DriftReport,
   EnabledStateMap,
   IneligibleReason,
   ManualBatch,
@@ -54,6 +56,7 @@ export type PanelScreen =
   | 'assisted-baseline'
   | 'assisted-trial'
   | 'trial'
+  | 'paused'
   | 'history'
   | 'replay'
   | 'host-issue'
@@ -245,6 +248,7 @@ export function resolveScreen({
   if (replayOpen) return 'replay';
   if (historyOpen) return 'history';
   if (session.status === 'restored') return 'restored';
+  if (session.status === 'paused') return 'paused';
   if (session.status === 'aborted' && session.abortReason === 'host-issue') return 'host-issue';
   if (session.status === 'completed' && session.culpritId !== null) return 'completed';
   if (session.status === 'inconclusive') return 'inconclusive';
@@ -417,4 +421,97 @@ export function assistedRestoreSummary(
     rows,
     complete: rows.length > 0 && rows.every((row) => row.done),
   };
+}
+
+export interface DriftCategorySummary {
+  category: DriftCategory;
+  label: string;
+  detail: string;
+  ids: string[];
+  names: string[];
+}
+
+export interface DriftRow {
+  id: string;
+  name: string;
+  expected: 'On' | 'Off' | null;
+  actual: 'On' | 'Off' | null;
+  differs: boolean;
+}
+
+export interface DriftSummary {
+  categories: DriftCategorySummary[];
+  rows: DriftRow[];
+  missing: string[];
+}
+
+const DRIFT_CATEGORY_TEXT: Record<DriftCategory, { label: string; detail: string }> = {
+  pending: {
+    label: 'Still to toggle',
+    detail: 'This trial asked for a state these candidates have not reached yet.',
+  },
+  unexpected: {
+    label: 'Toggled unexpectedly',
+    detail: 'These candidates changed outside the trial, so the batch no longer matches.',
+  },
+  missing: {
+    label: 'No longer installed',
+    detail: 'These candidates disappeared, so no toggle can bring the trial back.',
+  },
+};
+
+export const DRIFT_CATEGORY_ORDER: readonly DriftCategory[] = ['pending', 'unexpected', 'missing'];
+
+function stateLabel(enabled: boolean | undefined): 'On' | 'Off' | null {
+  if (enabled === undefined) return null;
+  return enabled ? 'On' : 'Off';
+}
+
+/**
+ * The drift the paused screen renders: one entry per category so each gets its own
+ * `data-testid`, and one row per candidate that either differs or is missing. A row
+ * with `expected === null` is a candidate the pause has no recorded state for.
+ */
+export function summarizeDriftView(drift: DriftReport, candidates: CandidateExtension[]): DriftSummary {
+  const nameOf = (id: string) => candidates.find((candidate) => candidate.id === id)?.name ?? id;
+  const idsByCategory: Record<DriftCategory, string[]> = {
+    pending: drift.pendingManualToggles,
+    unexpected: drift.unexpectedToggles,
+    missing: drift.missingIds,
+  };
+
+  const categories = DRIFT_CATEGORY_ORDER.map((category) => {
+    const ids = idsByCategory[category];
+    return {
+      category,
+      label: DRIFT_CATEGORY_TEXT[category].label,
+      detail: DRIFT_CATEGORY_TEXT[category].detail,
+      ids,
+      names: ids.map(nameOf),
+    };
+  });
+
+  const ordered = [...new Set([...drift.missingIds, ...drift.unexpectedToggles, ...drift.pendingManualToggles])];
+  const rows = ordered.map((id) => ({
+    id,
+    name: nameOf(id),
+    expected: stateLabel(drift.expected[id]),
+    actual: stateLabel(drift.actual[id]),
+    differs: drift.expected[id] !== drift.actual[id],
+  }));
+
+  return { categories, rows, missing: drift.missingIds.map(nameOf) };
+}
+
+export function describeDriftCause(drift: DriftReport | null): string {
+  if (drift === null) return 'The session paused before it could compare the browser state.';
+  const total = drift.pendingManualToggles.length + drift.unexpectedToggles.length + drift.missingIds.length;
+  return `The browser state no longer matches this trial (${plural(total, 'candidate')}). Choose how to recover.`;
+}
+
+export function formatSyncState(expected: 'On' | 'Off' | null, actual: 'On' | 'Off' | null): string {
+  if (expected === null && actual === null) return 'Not recorded';
+  if (expected === null) return `Expected: unknown · now ${actual}`;
+  if (actual === null) return `Expected: ${expected} · no longer installed`;
+  return `Expected: ${expected} · now ${actual}`;
 }

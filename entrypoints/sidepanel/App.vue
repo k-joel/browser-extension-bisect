@@ -14,6 +14,7 @@ import type {
   SessionView,
   Verdict,
 } from '@/utils/bisect/domain';
+import { undoEligibilityOf } from '@/utils/bisect/engine';
 import { messenger, type SessionMutationResult } from '@/utils/messaging';
 import { type CopyStatus, copyText, MANUAL_COPY_MESSAGE } from './clipboard';
 import AssistedBaseline from './components/AssistedBaseline.vue';
@@ -23,6 +24,7 @@ import BaselineScreen from './components/BaselineScreen.vue';
 import CandidatePicker from './components/CandidatePicker.vue';
 import CapabilityReportView from './components/CapabilityReport.vue';
 import CompletedScreen from './components/CompletedScreen.vue';
+import DriftScreen from './components/DriftScreen.vue';
 import HistoryScreen from './components/HistoryScreen.vue';
 import HostIssueScreen from './components/HostIssueScreen.vue';
 import InconclusiveScreen from './components/InconclusiveScreen.vue';
@@ -142,6 +144,12 @@ const restoreSummary = computed<RestoreSummary | null>(() =>
 
 const restoreAvailable = computed(() => session.value !== null && session.value.status !== 'restored');
 
+const undoEligibility = computed(() => (session.value === null ? null : undoEligibilityOf(session.value)));
+
+const undoBlockedReason = computed(() =>
+  undoEligibility.value?.eligible === true ? null : (undoEligibility.value?.reason ?? null),
+);
+
 const visibleCount = computed(() => {
   const term = query.value.trim();
   if (term.length === 0) return rows.value.length;
@@ -167,6 +175,21 @@ const historyAnnouncement = computed(() => {
   return `${plural(model.entries.length, 'entry', 'entries')} in the history. ${model.outcome.label}.`;
 });
 
+const pausedAnnouncement = computed(() => {
+  const drift = session.value?.pause?.drift ?? null;
+  if (drift === null) return 'Paused. Choose Re-sync or Restore all to continue.';
+  const parts: string[] = [];
+  if (drift.unexpectedToggles.length > 0) {
+    parts.push(`${plural(drift.unexpectedToggles.length, 'extension')} toggled unexpectedly`);
+  }
+  if (drift.pendingManualToggles.length > 0) {
+    parts.push(`${plural(drift.pendingManualToggles.length, 'extension')} still to toggle`);
+  }
+  if (drift.missingIds.length > 0) parts.push(`${plural(drift.missingIds.length, 'extension')} no longer installed`);
+  const undoNote = undoBlockedReason.value === null ? 'Undo last verdict is available.' : 'Undo is unavailable.';
+  return `Paused on drift: ${parts.join(', ')}. Re-sync, Restore all, or undo the last verdict. ${undoNote}`;
+});
+
 const announcement = computed(() => {
   if (state.value === 'loading') return 'Loading extensions…';
   if (state.value === 'error') return 'Extensions could not be loaded';
@@ -181,6 +204,8 @@ const announcement = computed(() => {
       return manualProgressAnnouncement.value;
     case 'baseline':
       return 'Baseline ready. Answer whether the problem persists.';
+    case 'paused':
+      return pausedAnnouncement.value;
     case 'trial':
       return session.value === null ? '' : describeProgress(session.value);
     case 'inconclusive':
@@ -232,6 +257,17 @@ async function load(): Promise<void> {
   }
 }
 
+/**
+ * A refused session command still wrote to the log: drift pauses before the command
+ * runs, so the refusal is the only signal the panel gets. Re-reading the session turns
+ * that into the paused screen instead of a bare error string.
+ */
+async function refreshSessionAfterRefusal(): Promise<void> {
+  if (session.value === null) return;
+  const current = await messenger.sendMessage('getSession').catch(() => null);
+  if (current !== null) session.value = current;
+}
+
 async function run<T>(command: () => Promise<T>): Promise<T | null> {
   busy.value = true;
   try {
@@ -240,6 +276,7 @@ async function run<T>(command: () => Promise<T>): Promise<T | null> {
     return result;
   } catch (error) {
     errorMessage.value = describeError(error);
+    await refreshSessionAfterRefusal();
     return null;
   } finally {
     busy.value = false;
@@ -399,6 +436,20 @@ async function applyTrial(): Promise<void> {
 
 async function retryTrial(): Promise<void> {
   const result = await run(() => messenger.sendMessage('retryTrial', {}));
+  if (result === null) return;
+  await applyMutation(result);
+  await refreshManualState();
+}
+
+async function resync(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('resyncSession'));
+  if (result === null) return;
+  await applyMutation(result);
+  await refreshManualState();
+}
+
+async function undoLastVerdict(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('undoLastVerdict'));
   if (result === null) return;
   await applyMutation(result);
   await refreshManualState();
@@ -583,11 +634,23 @@ onMounted(load);
         :session="session"
         :busy="busy"
         :reload-message="reloadMessage"
+        :undo-blocked-reason="undoBlockedReason"
         @apply-trial="applyTrial"
         @retry-trial="retryTrial"
+        @undo-verdict="undoLastVerdict"
         @verdict="submitVerdict"
         @reload="reloadTestTab"
         @history="openHistory"
+      />
+
+      <DriftScreen
+        v-else-if="screen === 'paused' && session !== null"
+        :session="session"
+        :busy="busy"
+        :undo-blocked-reason="undoBlockedReason"
+        @resync="resync"
+        @undo="undoLastVerdict"
+        @restore="restore"
       />
 
       <HistoryScreen

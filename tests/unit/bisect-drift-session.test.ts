@@ -134,7 +134,7 @@ describe('drift pauses before applying a trial', () => {
 
     const paused = (await readBisectLog())?.events.at(-1);
     expect(paused?.type).toBe('session-paused');
-    const drift = (paused?.payload as unknown as { drift: DriftReport }).drift;
+    const drift = ((paused?.payload ?? {}) as { drift: DriftReport }).drift;
     expect(drift.expected).toEqual({
       dddd: true,
       eeee: true,

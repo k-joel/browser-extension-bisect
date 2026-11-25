@@ -17,7 +17,7 @@ import type {
   TestTabBinding,
   Verdict,
 } from './domain';
-import { type AnsweredTrial, buildTargetState, partitionSuspects } from './engine';
+import { type AnsweredTrial, buildTargetState, partitionSuspects, undoEligibilityOf } from './engine';
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
 import { isManualBatch } from './management-port';
 
@@ -200,45 +200,6 @@ async function restoreTouched(dependencies: ResolvedDependencies, view: SessionV
 
 function isBaselineQuestion(view: SessionView): boolean {
   return view.status === 'awaiting-verdict' && view.currentTrial?.round === 0 && view.currentTrial.verdict === null;
-}
-
-const UNDO_REFUSED_STATUSES: readonly SessionView['status'][] = [
-  'paused',
-  'completed',
-  'inconclusive',
-  'aborted',
-  'restored',
-];
-
-export interface UndoEligibility {
-  eligible: boolean;
-  reason: string | null;
-}
-
-/**
- * Live undo is a correction of the most recent verdict, so it is only offered while
- * that verdict is the last thing the search learned. A newer trial, a terminal
- * outcome, or an unfinished manual batch all mean the batch to return to is no longer
- * the one on screen; the caller then has to re-sync or restore instead.
- */
-export function undoEligibilityOf(view: SessionView): UndoEligibility {
-  const trial = view.currentTrial;
-  if (UNDO_REFUSED_STATUSES.includes(view.status)) {
-    return { eligible: false, reason: `The session is ${view.status}, so there is no verdict to undo.` };
-  }
-  if (trial === null || trial.verdict === null) {
-    return { eligible: false, reason: 'No verdict has been recorded yet.' };
-  }
-  if (view.status !== 'awaiting-verdict') {
-    return { eligible: false, reason: `The session is ${view.status}, so the verdict is not the last step.` };
-  }
-  if (trial.round === 0) {
-    return { eligible: false, reason: 'The baseline check is not a partition trial, so its verdict cannot be undone.' };
-  }
-  if (view.trials.at(-1)?.round !== trial.round) {
-    return { eligible: false, reason: 'A newer trial has already started.' };
-  }
-  return { eligible: true, reason: null };
 }
 
 /**

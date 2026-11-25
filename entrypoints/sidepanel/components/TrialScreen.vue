@@ -17,11 +17,14 @@ const props = defineProps<{
   session: SessionView;
   busy: boolean;
   reloadMessage: string | null;
+  /** Why Undo is not offered right now; `null` means the last verdict is undoable. */
+  undoBlockedReason: string | null;
 }>();
 
 const emit = defineEmits<{
   (event: 'apply-trial'): void;
   (event: 'retry-trial'): void;
+  (event: 'undo-verdict'): void;
   (event: 'verdict', verdict: Verdict): void;
   (event: 'reload'): void;
   (event: 'history'): void;
@@ -59,6 +62,14 @@ const isFinalConfirmation = computed(() => {
   return disabled.length === 1 && disabled[0] === suspects[0];
 });
 
+const undoAvailable = computed(() => props.undoBlockedReason === null);
+const undoDisabled = computed(() => props.busy || !undoAvailable.value);
+
+const undoLabel = computed(() => {
+  const round = props.session.currentTrial?.round ?? null;
+  return round === null ? 'Undo last verdict' : `Undo the verdict on trial ${round}`;
+});
+
 const question = computed(() => {
   if (!asking.value) {
     return isFinalConfirmation.value
@@ -94,7 +105,22 @@ const question = computed(() => {
         <button type="button" class="primary" data-testid="trial-apply" :disabled="busy" @click="emit('apply-trial')">
           Apply trial {{ nextRound }}
         </button>
+        <button
+          type="button"
+          data-testid="trial-undo-verdict"
+          :disabled="undoDisabled"
+          :aria-disabled="undoDisabled"
+          :data-eligible="undoAvailable"
+          :title="undoBlockedReason ?? undoLabel"
+          @click="emit('undo-verdict')"
+        >
+          {{ undoLabel }}
+        </button>
       </div>
+      <p v-if="!undoAvailable" class="note" data-testid="trial-undo-blocked">{{ undoBlockedReason }}</p>
+      <p v-else class="note" data-testid="trial-undo-note">
+        Undo re-opens the last trial without starting a new session. The browser already holds its batch.
+      </p>
     </template>
 
     <template v-else-if="asking">

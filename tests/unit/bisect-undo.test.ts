@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fakeBrowser } from 'wxt/testing/fake-browser';
 import { createChromePort } from '@/utils/bisect/chrome-port';
 import type { BisectLog, ManagementPort, SessionView, TargetState } from '@/utils/bisect/domain';
+import { undoEligibilityOf } from '@/utils/bisect/engine';
 import { readBisectLog } from '@/utils/bisect/events';
 import { createFirefoxPort } from '@/utils/bisect/firefox-port';
 import { replayLog } from '@/utils/bisect/replay';
@@ -16,7 +17,6 @@ import {
   type SessionDependencies,
   startSession,
   submitVerdict,
-  undoEligibilityOf,
   undoLastVerdict,
 } from '@/utils/bisect/session';
 import { createFakeManagement, type FakeManagement, makeExtensionInfo } from './helpers/fake-management';
