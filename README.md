@@ -1,6 +1,6 @@
 <img src="public/icon/128.png" width="88" alt="Browser Extension Bisect icon" align="right">
 
-# Browser Extension Bisect 🔍 — twenty extensions, six questions, one culprit
+# Browser Extension Bisect 🔍 
 
 [![CI](https://img.shields.io/github/actions/workflow/status/k-joel/browser-extension-bisect/ci.yml?branch=main&style=flat-square&label=ci)](https://github.com/k-joel/browser-extension-bisect/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-chrome%20%7C%20firefox-blue?style=flat-square)](#platforms-permissions-and-privacy)
