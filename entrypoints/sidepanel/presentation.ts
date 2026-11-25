@@ -13,6 +13,7 @@ import type {
   SessionView,
   SnapshotChange,
   SnapshotChangeKind,
+  StartupReconciliation,
   TestTabBinding,
   ToggleErrorCode,
   Verdict,
@@ -294,6 +295,44 @@ export function isAssistedTrial(view: SessionView): boolean {
 
 export function describeSessionStatus(status: SessionStatus): string {
   return STATUS_TEXT[status];
+}
+
+/**
+ * What the Resume/Restore offer means for this session. The wording stays on the drift
+ * vocabulary the rest of the panel uses: a restore is still pending until
+ * `session-reset` is recorded, and an in-flight session is one the search has not
+ * finished with.
+ */
+export function describeStartupOffer(reconciliation: StartupReconciliation): string {
+  const touched = plural(reconciliation.touchedCount, 'extension');
+  if (reconciliation.inFlight) {
+    return `Resume puts ${touched} back to the batch this session was asking about, and you keep every recorded verdict. Restore re-enables ${touched} now and ends the session.`;
+  }
+  if (reconciliation.restorePending) {
+    return `The session is ${describeSessionStatus(reconciliation.status).toLowerCase()} No restore is recorded yet, so Restore re-enables the ${touched} this session changed.`;
+  }
+  return 'Nothing needs attention: the session already reached a settled state.';
+}
+
+/**
+ * The browser-versus-log difference in the drift vocabulary. `null` means the browser
+ * matches the last applied batch, which is also what a session with no recorded drift
+ * says; the two are kept apart so an in-sync restart does not read like a warning.
+ */
+export function describeStartupDifference(reconciliation: StartupReconciliation): string | null {
+  const drift = reconciliation.drift;
+  if (drift === null || drift.inSync) return null;
+  const parts: string[] = [];
+  if (drift.pendingManualToggles.length > 0) {
+    parts.push(`${plural(drift.pendingManualToggles.length, 'extension')} not in the expected state`);
+  }
+  if (drift.unexpectedToggles.length > 0) {
+    parts.push(`${plural(drift.unexpectedToggles.length, 'extension')} changed outside the batch`);
+  }
+  if (drift.missingIds.length > 0) {
+    parts.push(`${plural(drift.missingIds.length, 'extension')} no longer installed`);
+  }
+  return `The browser came back with ${parts.join(', ')}.`;
 }
 
 export function summarizeRestore(outcome: RestoreOutcome, candidates: CandidateExtension[]): RestoreSummary {

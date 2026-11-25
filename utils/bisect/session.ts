@@ -12,8 +12,11 @@ import type {
   ManagementPort,
   ManualBatch,
   RestoreResult,
+  SessionStatus,
   SessionView,
   SnapshotChange,
+  StartupOffer,
+  StartupReconciliation,
   TargetState,
   TestTabBinding,
   TestTabOutcome,
@@ -25,6 +28,7 @@ import { type AnsweredTrial, buildTargetState, partitionSuspects, undoEligibilit
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
 import { isManualBatch, mapToggleError, rollbackTarget } from './management-port';
 import { describeSnapshotChanges, pausingChanges, snapshotChanges } from './snapshot';
+import { readStartupSignal, signalMatches } from './startup';
 
 export const TEST_TAB_SETTLE_TIMEOUT_MS = 15_000;
 
@@ -1068,6 +1072,107 @@ export function reloadTestTab(rawDependencies: SessionDependencies): Promise<Rel
     }
     await dependencies.tabs.waitForComplete(config.testTab.tabId);
     return { ok: true };
+  });
+}
+
+/** The statuses a browser restart may interrupt: everything before a terminal audit state. */
+const RESUMABLE_STATUSES: readonly SessionStatus[] = [
+  'preparing',
+  'baseline',
+  'trial',
+  'applying',
+  'awaiting-verdict',
+  'awaiting-manual-toggle',
+  'paused',
+];
+
+/**
+ * The state the log last asked the browser to be in. A session that never applied a
+ * round — a crash between `session-started` and the baseline — still expects all-off,
+ * because that is what `startSession` was about to apply.
+ */
+function expectedTargetOf(view: SessionView): TargetState {
+  if (view.currentTrial !== null) return view.currentTrial.targetState;
+  return allOffTarget(view.candidateOrder);
+}
+
+function restoreRecorded(log: BisectLog): boolean {
+  return log.events.some((event) => event.type === 'session-reset');
+}
+
+/**
+ * Startup reconciliation: derive the session from the log, ask the browser what it
+ * actually came back as, and say which actions apply. It writes nothing and toggles
+ * nothing — a reconcile that moved extensions by itself would be a second writer of
+ * the browser state, and the user has not been asked yet.
+ */
+export function reconcileStartup(rawDependencies: SessionDependencies): Promise<StartupReconciliation | null> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await readBisectLog();
+    const view = reduceLog(log);
+    if (log === null || view === null) return null;
+
+    const touchedCount = touchedIdsOf(view).length;
+    const inFlight = RESUMABLE_STATUSES.includes(view.status);
+    const restorePending = !restoreRecorded(log) && touchedCount > 0;
+    const signal = await readStartupSignal();
+    const restarted = signalMatches(signal, log.sessionId, log.events.length);
+    const offers: StartupOffer[] = inFlight ? ['resume', 'restore'] : restorePending ? ['restore'] : [];
+
+    const drift = await dependencies.port.verifyState(expectedTargetOf(view)).catch(() => null);
+
+    return {
+      sessionId: log.sessionId,
+      status: view.status,
+      restarted,
+      offers,
+      inFlight,
+      restorePending,
+      touchedCount,
+      drift,
+    };
+  });
+}
+
+/**
+ * The explicit Resume a restarting browser offers. It re-applies the state the log
+ * expects, which is what makes the session answerable again, and records that it did
+ * so; a batch it cannot apply parks or pauses exactly like any other failed apply.
+ * Resume is refused for a terminal session, because there is no question left to ask.
+ */
+export function resumeSession(rawDependencies: SessionDependencies): Promise<SessionView> {
+  const dependencies = resolveDependencies(rawDependencies);
+  return serialize(async () => {
+    const log = await requireLog();
+    const view = viewOf(log);
+    if (!RESUMABLE_STATUSES.includes(view.status)) {
+      throw new SessionError(`Nothing is left to resume: the session is ${view.status}`);
+    }
+
+    const target = expectedTargetOf(view);
+    const round = view.currentTrial?.round ?? 0;
+    const result = await dependencies.port.applyTargetState(target);
+    const resumed = await appendAndPersist(log, 'session-resumed', dependencies.now(), { reason: 'restarted' });
+
+    if (isManualBatch(result)) {
+      return viewOf(
+        await appendAndPersist(resumed, 'trial-applied', dependencies.now(), {
+          round,
+          errors: [],
+          manual: true,
+          manualBatch: targetBatchOf(target),
+        }),
+      );
+    }
+    if (!result.ok) {
+      const aborted = await appendAndPersist(resumed, 'trial-applied', dependencies.now(), {
+        round,
+        errors: result.errors,
+      });
+      return viewOf(await rollbackAndPause(dependencies, aborted, target, result));
+    }
+    return viewOf(resumed);
   });
 }
 

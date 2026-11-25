@@ -317,6 +317,31 @@ export interface SessionView {
   updatedAt: number;
 }
 
+export type StartupOffer = 'resume' | 'restore';
+
+/**
+ * What a browser restart left behind: the log's own view of the session, the state the
+ * browser actually came back in, and the two actions the panel may offer. Deriving it
+ * never writes and never toggles, because a reconcile that moved extensions on its own
+ * would be a second writer of the browser state.
+ */
+export interface StartupReconciliation {
+  sessionId: string;
+  status: SessionStatus;
+  /** True when the background recorded a browser start that this log has not moved past. */
+  restarted: boolean;
+  /** The actions to offer, `resume` before `restore`. Empty means nothing needs attention. */
+  offers: StartupOffer[];
+  /** True while the log's session still has steps left. */
+  inFlight: boolean;
+  /** True when no `session-reset` was recorded, so touched candidates may still be off. */
+  restorePending: boolean;
+  /** How many candidates the session touched, which is what Restore would re-enable. */
+  touchedCount: number;
+  /** What the browser reports versus the state the log last asked for. */
+  drift: DriftReport | null;
+}
+
 export interface BatchDifference {
   round: number;
   recordedEnabledIds: string[];

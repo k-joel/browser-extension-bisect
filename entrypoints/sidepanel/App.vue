@@ -12,6 +12,7 @@ import type {
   ReplayResult,
   RestoreResult,
   SessionView,
+  StartupReconciliation,
   Verdict,
 } from '@/utils/bisect/domain';
 import { undoEligibilityOf } from '@/utils/bisect/engine';
@@ -36,6 +37,7 @@ import RestorePanel from './components/RestorePanel.vue';
 import SessionProgress from './components/SessionProgress.vue';
 import SnapshotChangeScreen from './components/SnapshotChangeScreen.vue';
 import SnapshotWarning from './components/SnapshotWarning.vue';
+import StartupReconciliationView from './components/StartupReconciliation.vue';
 import ToggleFailurePanel from './components/ToggleFailurePanel.vue';
 import TrialScreen from './components/TrialScreen.vue';
 import { enableExtensionWithClick } from './escalation';
@@ -94,6 +96,8 @@ const replayEdits = ref<ReplayEdits>({});
 const replayResult = ref<ReplayResult | null>(null);
 const replayCopyStatus = ref<CopyStatus | null>(null);
 const dismissedSnapshotKeys = ref<string[]>([]);
+const startupReconciliation = ref<StartupReconciliation | null>(null);
+const startupDismissed = ref(false);
 
 const excludedIds = computed(() => config.value?.excludedExtensionIds ?? []);
 
@@ -246,6 +250,8 @@ function dismissSnapshotWarning(): void {
   dismissedSnapshotKeys.value = [...seen];
 }
 
+const startupOfferVisible = computed(() => startupReconciliation.value !== null && !startupDismissed.value);
+
 const announcement = computed(() => {
   if (state.value === 'loading') return 'Loading extensions…';
   if (state.value === 'error') return 'Extensions could not be loaded';
@@ -311,10 +317,39 @@ async function load(): Promise<void> {
     session.value = nextSession;
     errorMessage.value = null;
     state.value = 'ready';
+    await refreshStartupOffer();
   } catch (error) {
     errorMessage.value = describeError(error);
     state.value = 'error';
   }
+}
+
+/**
+ * The startup offer is derived, not broadcast: a panel that opens long after the restart
+ * still sees it, because the signal lives in storage beside the log. Only a real browser
+ * start surfaces it — the ordinary mid-session screens already carry Restore, and
+ * repeating the offer after every command would keep interrupting a session in progress.
+ * Dismissing hides it for this panel only, so a user cannot lose the only way back to a
+ * browser whose extensions are still disabled.
+ */
+async function refreshStartupOffer(): Promise<void> {
+  const offer = await messenger.sendMessage('getStartupReconciliation').catch(() => null);
+  const worthShowing = offer !== null && offer.offers.length > 0 && offer.restarted;
+  startupReconciliation.value = worthShowing ? offer : null;
+  if (!worthShowing) startupDismissed.value = false;
+}
+
+function dismissStartupOffer(): void {
+  startupDismissed.value = true;
+}
+
+async function resumeFromStartup(): Promise<void> {
+  const result = await run(() => messenger.sendMessage('resumeSession'));
+  if (result === null) return;
+  startupReconciliation.value = null;
+  startupDismissed.value = false;
+  await applyMutation(result);
+  await refreshManualState();
 }
 
 /**
@@ -494,6 +529,7 @@ async function applyMutation(result: SessionMutationResult): Promise<void> {
   restoreAccepted.value = false;
   await refreshSession();
   await refreshHistoryIfOpen();
+  await refreshStartupOffer();
 }
 
 async function applyTrial(): Promise<void> {
@@ -713,6 +749,15 @@ onMounted(load);
         v-if="session !== null && snapshotWarningVisible"
         :session="session"
         @dismiss="dismissSnapshotWarning"
+      />
+
+      <StartupReconciliationView
+        v-if="startupOfferVisible && startupReconciliation !== null"
+        :reconciliation="startupReconciliation"
+        :busy="busy"
+        @resume="resumeFromStartup"
+        @restore="restore"
+        @dismiss="dismissStartupOffer"
       />
 
       <PreflightConsent

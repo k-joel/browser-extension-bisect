@@ -9,6 +9,7 @@ import type {
   RestoreError,
   RestoreResult,
   SessionView,
+  StartupReconciliation,
   Verdict,
 } from './bisect/domain';
 import type { ReloadTestTabResult, StartSessionRequest } from './bisect/session';
@@ -67,6 +68,13 @@ export interface ProtocolMap {
   getConfig(): BisectConfig;
   updateConfig(changes: Partial<BisectConfig>): BisectConfig;
   getSession(): SessionView | null;
+  /**
+   * What a browser restart left to decide, or `null` when there is nothing to offer.
+   * Deriving it writes nothing and toggles nothing.
+   */
+  getStartupReconciliation(): StartupReconciliation | null;
+  /** The explicit Resume: re-applies the state the log expects and records the resumption. */
+  resumeSession(): SessionMutationResult;
   /** The persisted bisect log, or `null` when nothing has been recorded yet. */
   getLog(): BisectLog | null;
   /**

@@ -1,7 +1,7 @@
 import { createChromePort } from '@/utils/bisect/chrome-port';
 import { deleteLegacyStorageKeys, readBisectConfig, updateBisectConfig } from '@/utils/bisect/config';
 import type { BisectConfig, ManagementPort, RestoreResult, TestTabBinding } from '@/utils/bisect/domain';
-import { readBisectLog } from '@/utils/bisect/events';
+import { readBisectLog, reduceLog } from '@/utils/bisect/events';
 import { createFirefoxPort } from '@/utils/bisect/firefox-port';
 import { replayLog } from '@/utils/bisect/replay';
 import {
@@ -13,12 +13,14 @@ import {
   declineEscalation,
   getLog,
   readSessionView,
+  reconcileStartup,
   recordEscalationResult,
   recordExternalBaseline,
   recordSnapshotPause,
   reloadTestTab,
   resetSession,
   restartSession,
+  resumeSession,
   resyncSession,
   retryTrial,
   type SessionDependencies,
@@ -31,6 +33,7 @@ import {
   verifyManualState,
   verifyRestore,
 } from '@/utils/bisect/session';
+import { raiseStartupSignal } from '@/utils/bisect/startup';
 import { withTestDriverOverlay } from '@/utils/bisect/test-driver';
 import type { AddonManagerResult, ContentStatus, SessionMutationResult } from '@/utils/messaging';
 import { messenger } from '@/utils/messaging';
@@ -159,6 +162,11 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('updateConfig', ({ data }) => updateBisectConfig(data));
 
   messenger.onMessage('getSession', () => readSessionView(sessionDependencies()));
+  messenger.onMessage('getStartupReconciliation', () => reconcileStartup(sessionDependencies()));
+  messenger.onMessage('resumeSession', async (): Promise<SessionMutationResult> => {
+    const session = await resumeSession(sessionDependencies());
+    return { session, restore: null };
+  });
   messenger.onMessage('getLog', () => getLog());
   messenger.onMessage('replayLog', ({ data }) => replayLog(data.log));
   messenger.onMessage('startSession', ({ data }) => startSession(sessionDependencies(), data));
@@ -228,9 +236,30 @@ function watchForSnapshotChanges(tabs: TestTabSurface): void {
   });
 }
 
+/**
+ * `runtime.onStartup` fires only for a real browser start, never for a service-worker
+ * revival, which is exactly the distinction the Resume/Restore offer needs: a worker that
+ * woke up to answer a message must not interrupt the user. Reconciliation itself is
+ * derived on demand, so this only records that a start happened.
+ */
+async function recordBrowserStart(): Promise<void> {
+  const log = await readBisectLog();
+  const view = reduceLog(log);
+  const needsAttention = view !== null && view.status !== 'restored' && view.originalEnabledIds.length > 0;
+  if (!needsAttention) return;
+  await raiseStartupSignal({ sessionId: log?.sessionId ?? null, eventCount: log?.events.length ?? 0 });
+}
+
+function watchForBrowserStart(): void {
+  browser.runtime.onStartup.addListener(() => {
+    void recordBrowserStart().catch(() => undefined);
+  });
+}
+
 export default defineBackground(() => {
   attachTestModeErrorLogging();
   registerBackgroundHandlers();
   watchForSnapshotChanges(createTestTabSurface());
+  watchForBrowserStart();
   console.info('[EXT_BG_READY]');
 });

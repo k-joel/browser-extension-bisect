@@ -62,8 +62,27 @@ export async function readBisectLog(): Promise<BisectLog | null> {
   return normalizeBisectLog(await bisectLogItem.getValue());
 }
 
+/**
+ * A rejected write must be distinguishable from every other failure, because the caller
+ * replays the previous log and reports the storage problem rather than blaming the
+ * command. The message is what the panel shows, so it names the log and the consequence.
+ */
 export async function writeBisectLog(log: BisectLog): Promise<void> {
-  await bisectLogItem.setValue(log);
+  try {
+    await bisectLogItem.setValue(log);
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new BisectLogWriteError(`The bisect log could not be saved (${reason}). The previous log is unchanged.`);
+  }
+}
+
+/**
+ * The panel's convergence seam: every browser context that owns a side panel hears the
+ * same `storage.onChanged`, so one panel's mutation refreshes the others without the
+ * background having to broadcast a message nobody may be listening for.
+ */
+export function watchBisectLog(listener: (log: BisectLog | null) => void): () => void {
+  return bisectLogItem.watch((value) => listener(normalizeBisectLog(value)));
 }
 
 export function createEmptyLog(sessionId: string): BisectLog {
