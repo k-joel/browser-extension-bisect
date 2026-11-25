@@ -238,13 +238,13 @@ is complete and verified. All tickets are `ready-for-agent`.
 - **Spec**: [SPEC.md](SPEC.md)
 - **What to build**: Handle per-extension management failures without leaving the browser half-changed. A failed toggle aborts the trial, restores the previous target state, and reports the failing extension and mapped error. A permission escalation offers one "Enable with click" action in the side panel; declining leads to restore or an inconclusive result. A greylisted or policy-locked re-enable is marked manual-recovery-required and makes restore report incomplete.
 - **Blocked by**: ISS-004.
-- **Status**: ready-for-agent
+- **Status**: done-verified (2026-11-26, 86289c5). The Chrome `toggle-failure` scenario covers abort/rollback, policy, escalation, decline, and greylist.
 
-- [ ] A failed toggle aborts the trial, re-applies the previous target state, and reports the failing extension with a mapped error code.
-- [ ] Permission escalation shows "Enable with click"; the side panel performs the gesture-bound call and reports the outcome; declining leads to restore or inconclusive.
-- [ ] Greylist and policy failures are marked manual-recovery-required with instructions for the browser's extension manager; restore does not claim success.
-- [ ] Unit, component, and E2E tests cover the failure, escalation, decline, greylist, and policy paths.
-- [ ] The quality gates pass.
+- [x] A failed toggle aborts the trial, re-applies the previous target state, and reports the failing extension with a mapped error code.
+- [x] Permission escalation shows "Enable with click"; the side panel performs the gesture-bound call and reports the outcome; declining leads to restore or inconclusive.
+- [x] Greylist and policy failures are marked manual-recovery-required with instructions for the browser's extension manager; restore does not claim success.
+- [x] Unit, component, and E2E tests cover the failure, escalation, decline, greylist, and policy paths.
+- [x] The quality gates pass.
 
 ### ISS-011: Mid-session extension and test-tab changes
 
