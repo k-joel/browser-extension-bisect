@@ -618,7 +618,7 @@ The completion gate (`npm run agent:verify`: Biome, `vue-tsc`, Vitest, both test
 
 ### Decision
 
-Run the existing gate unchanged in GitHub Actions (`.github/workflows/ci.yml`) on `ubuntu-latest` with Node 22: `npm ci`, install the puppeteer-pinned browsers with `npx puppeteer browsers install chrome --install-deps` and `firefox --install-deps` under `sudo` while preserving the runner's `HOME`, then `npm run agent:verify` on every push and pull request. Add a minimal `.github/CODEOWNERS` naming `@k-joel`. Do not split the gate into parallel jobs or cache browser downloads in v1.
+Run the existing gate unchanged in GitHub Actions (`.github/workflows/ci.yml`) on `ubuntu-latest` with Node 22: `npm ci`, install the puppeteer-pinned browsers with `npx puppeteer browsers install chrome --install-deps` and `firefox --install-deps` under `sudo` while preserving the runner's `HOME`, then `npm run agent:verify` on every push, pull request, and manual dispatch. Add a minimal `.github/CODEOWNERS` naming `@k-joel`. Do not split the gate into parallel jobs or cache browser downloads in v1.
 
 ### Consequences
 

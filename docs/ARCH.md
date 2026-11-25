@@ -897,7 +897,7 @@ npm run lint && npm run typecheck && npm run test:unit   # fast inner loop
 npm run agent:verify                                     # full gate: lint, typecheck, unit, build:all, E2E both browsers
 ```
 
-The completion gate is `npm run agent:verify` exiting 0 with zero `pageErrors` and zero `[EXT_BG_ERR]` entries across both browsers. CI (`.github/workflows/ci.yml`) runs that same gate on Ubuntu for every push and pull request, after installing the puppeteer-pinned Chrome and Firefox with `npx puppeteer browsers install chrome --install-deps` / `firefox --install-deps`.
+The completion gate is `npm run agent:verify` exiting 0 with zero `pageErrors` and zero `[EXT_BG_ERR]` entries across both browsers. CI (`.github/workflows/ci.yml`) runs that same gate on Ubuntu for every push and pull request (and on manual dispatch), after installing the puppeteer-pinned Chrome and Firefox with `npx puppeteer browsers install chrome --install-deps` / `firefox --install-deps`.
 
 ---
 
