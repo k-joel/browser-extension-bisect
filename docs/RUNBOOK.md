@@ -148,7 +148,7 @@ Runs Biome, the Vue/TS typecheck, and the Vitest suite — the check to run afte
    npm run lint && npm run typecheck && npm run test:unit
    ```
 
-   Expected: Biome reports `Checked 26 files ... No fixes applied.` (count varies with repo contents); `vue-tsc` emits nothing; Vitest reports `3 passed (3)` test files and `17 passed (17)` tests (as of 2026-11-23); exit code 0.
+   Expected: Biome reports `Checked N files ... No fixes applied.` (count varies with repo contents); `vue-tsc` emits nothing; Vitest reports 35 passed test files and 684 passed tests (as of 2026-11-26); exit code 0.
 
 **Troubleshooting**
 
@@ -174,8 +174,8 @@ Runs the complete gate: lint, typecheck, unit tests, both test-mode builds, and 
 - **`Extension build missing at ...\.output\chrome-mv3. Run "npm run build:chrome" first.`**: E2E was invoked without builds. Fix: run `npm run agent:verify` (which builds first) or `npm run build:all` before `npm run test:e2e`.
 - **Chrome aborts with `Extensions.loadUnpacked: Target closed` on launch**: an extension path was passed via `enableExtensions: [path]` (or `--load-extension`) at launch. Fix: keep the harness's post-launch `browser.installExtension(extPath)` and launch only with `enableExtensions: true` + `pipe: true` + `--enable-unsafe-extension-debugging`.
 - **A browser's steps time out or the background never logs `[EXT_BG_READY]`**: capture state per browser with RUN-005 before changing any code.
-- **`candidate-list-matches-fixtures` fails on only one browser**: fixture names must stay identical across `tests/e2e/fixtures/extensions/chrome/**` and `.../firefox/**`, because `expectedEligibleNames()` in `tests/e2e/fixtures/fixtures.mjs` derives the expectation from the fixture catalog. Compare the fixture manifests first.
-- **`disabled-fixture-reported-disabled-at-start` fails on Firefox**: expected. Firefox BiDi can only install temporary, always-enabled add-ons, so the step asserts the *absence* of a `Disabled at start` row there; the reason is only exercised on Chrome (ISS-014).
+- **`candidate-list-matches-fixtures` fails on only one browser**: fixture names must stay identical across `tests/e2e/fixtures/extensions/chrome/**` and `.../firefox/**`, because `ELIGIBLE_FIXTURES` in `tests/e2e/fixtures/fixtures.mjs` is the single expectation for both. Compare the fixture manifests first.
+- **`disabled-fixture-reported-disabled-at-start` fails**: Firefox temporary add-ons are always enabled, so the Firefox run seeds the dormant fixture through the test-mode driver (`setManualExtensionState`) before each scenario. If the step fails there, the driver overlay is missing — check `hasTestDriverGlobal()` and that the build ran with `EXT_TEST_MODE=1`.
 
 ---
 
@@ -202,12 +202,12 @@ Shortens the feedback loop to one browser while iterating. Does not replace the 
 
 ## RUN-005 (SAFE): Capture ad-hoc debug state with the inspect CLI
 
-Launches one browser with the extension, opens a fixture (or absolute) URL, optionally opens the popup, and dumps console, DOM, and storage state as JSON. Does not run assertions or produce verdicts. Rollback: none; screenshots go only to the path you pass.
+Launches one browser with the extension, opens a fixture (or absolute) URL, optionally opens the side panel, and dumps console, DOM, and storage state as JSON. Does not run assertions or produce verdicts. Rollback: none; screenshots go only to the path you pass.
 
-1. Capture a popup inspection against the home fixture:
+1. Capture a side panel inspection against the home fixture:
 
    ```
-   npm run agent:inspect -- --browser=chrome --url=/ --action=popup --screenshot=.agent-artifacts/debug.png
+   npm run agent:inspect -- --browser=chrome --url=/ --action=sidepanel --screenshot=.agent-artifacts/debug.png
    ```
 
    Expected: JSON on stdout with `"ok": true`, the resolved `url`, the `dom` summary, the `storage` dump, the console/page/background error arrays, and the screenshot path; exit code 0.
@@ -217,4 +217,4 @@ Launches one browser with the extension, opens a fixture (or absolute) URL, opti
    npm run agent:inspect -- --browser=firefox --url=/dynamic --action=none --headed --settle=1500
    ```
 
-   Expected: JSON as above with `"browser": "firefox"`; `--url` accepts `/`, `/form`, `/dynamic` or an absolute URL; `--action` accepts `popup` or `none`.
+   Expected: JSON as above with `"browser": "firefox"`; `--url` accepts `/`, `/form`, `/dynamic` or an absolute URL; `--action` accepts `sidepanel` or `none`.

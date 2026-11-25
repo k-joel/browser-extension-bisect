@@ -179,15 +179,15 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ## Summary
 
-- **Last Updated:** 2026-11-25
+- **Last Updated:** 2026-11-26
 - **Last Full Audit:** 2026-11-23 | **Stacks:** Node/TypeScript | **Audit Checks:** 4 PASS / 3 FAIL / 5 N/A
-- **Open Debt:** 6 total (P0: 0, P1: 0, P2: 1, P3: 5)
-- **Trend:** Baseline
-- **Open by Category:** dependency: 1, code: 3, infrastructure: 2
+- **Open Debt:** 5 total (P0: 0, P1: 0, P2: 1, P3: 4)
+- **Trend:** Improving (Resolved since last audit: 2)
+- **Open by Category:** dependency: 1, code: 2, infrastructure: 2
 - **Top 3 to Pay Down First:**
   1. `DEBT-2026-004` — 16 dev-tree CVEs (5 moderate, 11 high); `npm audit fix` clears part without breaking, the rest needs two major bumps.
-  2. `DEBT-2026-002` — unused `getContentStatus` surface misleads callers; wire it in or delete it (XS).
-  3. `DEBT-2026-001` — marker constants duplicated between TS and harness; a guard test pins the contract (XS).
+  2. `DEBT-2026-007` — two hand-rolled `startSessionAndBind` copies in `verify.mjs`; a shared helper removes the drift (XS).
+  3. `DEBT-2026-005` — Firefox build warns about missing `data_collection_permissions`; one manifest key closes it (XS).
 
 Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit suite 17/17, zero `TODO`/`FIXME`/`HACK` in code. FAIL — `npm audit --quiet` (16 vulnerabilities), CI-config scan (none exist), `build:firefox` emits a `data_collection_permissions` warning. N/A — `npm outdated`, unused-dependency scan, coverage, secret scan, circular-dependency scan (not run).
 
@@ -196,8 +196,7 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 | ID | Priority | Status | Category | Subcategory | Item | Location | Effort | Impact | Updated |
 | :- | :- | :- | :- | :- | :- | :- | :- | :- | :- |
 | DEBT-2026-004 | P2 | Identified | dependency | vulnerable_dependencies | 16 dev-toolchain CVEs (5 moderate, 11 high) from `npm audit` | `package-lock.json` (puppeteer, happy-dom, @vue/test-utils chains) | S | MEDIUM | 2026-11-23 |
-| DEBT-2026-001 | P3 | Identified | code | duplicate_code | E2E harness re-declares the content-marker attribute constants | `tests/e2e/harness.mjs:5-6` (dup of `utils/content-marker.ts:1-2`) | XS | LOW | 2026-11-23 |
-| DEBT-2026-002 | P3 | Identified | code | dead_code | `getContentStatus` message surface has no sender (dead code) | `entrypoints/background.ts:16-38`, `utils/messaging.ts:10-19` | XS | LOW | 2026-11-23 |
+| DEBT-2026-007 | P3 | Identified | code | duplicate_code | Two hand-rolled `startSessionAndBind` copies in the E2E scenarios | `tests/e2e/verify.mjs:1622-1636`, `tests/e2e/verify.mjs:1929-1943` | XS | LOW | 2026-11-26 |
 | DEBT-2026-005 | P3 | Identified | infrastructure | build_warnings | Firefox build warns about missing `data_collection_permissions` | `wxt.config.ts` (Firefox manifest branch) | XS | LOW | 2026-11-23 |
 | DEBT-2026-003 | P3 | Identified | infrastructure | missing_pipeline | No CI pipeline or CODEOWNERS; the gate runs only locally | repo root (no `.github/`, no `CODEOWNERS`) | S | LOW | 2026-11-23 |
 
@@ -213,25 +212,15 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 - **Impact Rationale:** Dev-machine supply-chain and DoS exposure (browser downloads, HTML parsing of trusted fixture pages, BiDi payloads); zero end-user impact — MEDIUM (5/10).
 - **Remediation Target:** Run `npm audit fix` (clears the glob/minimatch/editorconfig chain without breaking changes) and bump `puppeteer` to ≥25.18.1 and `happy-dom` to ≥21.0.4; verify `npm audit` reports no high/moderate and `npm run agent:verify` still exits 0.
 
-### DEBT-2026-001: E2E harness re-declares the content-marker attribute constants
+### DEBT-2026-007: Two hand-rolled `startSessionAndBind` copies in the E2E scenarios
 
 - **Category / Subcategory:** code / duplicate_code
 - **Status / Priority:** Identified / P3 (Impact: LOW, Effort: XS)
-- **Location:** `tests/e2e/harness.mjs:5-6` (duplicates `utils/content-marker.ts:1-2`)
-- **Dates:** Created 2026-11-23 | Updated 2026-11-23
-- **Evidence:** The harness re-declares `data-ext-bisect-state` / `data-ext-bisect-tab-id` as `EXTENSION_MARKER_ATTRIBUTE` / `EXTENSION_TAB_ID_ATTRIBUTE` instead of importing the TS constants (a plain `.mjs` cannot import TS directly).
-- **Impact Rationale:** Renaming either copy desyncs the E2E DOM contract, and the failure surfaces only as opaque E2E timeouts — LOW (3/10).
-- **Remediation Target:** Assert equality between the TS constants and the harness constants in a unit test (Vitest can import the `.mjs`), or extract a shared `.mjs` constants module both sides import.
-
-### DEBT-2026-002: `getContentStatus` message surface has no sender (dead code)
-
-- **Category / Subcategory:** code / dead_code
-- **Status / Priority:** Identified / P3 (Impact: LOW, Effort: XS)
-- **Location:** `entrypoints/background.ts:16-38`, `utils/messaging.ts:10-19`
-- **Dates:** Created 2026-11-23 | Updated 2026-11-23
-- **Evidence:** Grep (2026-11-23): the `getContentStatus` handler, `ContentStatus` interface, and `readContentStatus`/`resolveContentStatus` helpers have no sender in `entrypoints/popup/App.vue`, `tests/e2e/verify.mjs`, `tests/e2e/inspect.mjs`, or `tests/unit/`.
-- **Impact Rationale:** Misleading API surface plus an untested code path that rots silently — LOW (3/10).
-- **Remediation Target:** Either wire content status into the popup or delete the message, interface, and helpers until the bisect engine needs them; re-run `npm run agent:verify`.
+- **Location:** `tests/e2e/verify.mjs:1622-1636` (`toggle-failure`), `tests/e2e/verify.mjs:1929-1943` (`mid-session-changes`)
+- **Dates:** Created 2026-11-26 | Updated 2026-11-26
+- **Evidence:** Both scenarios declare a local `startSessionAndBind()` that presses `picker-start`, waits for `preflight`, calls `focusTestTab`, binds, and starts. The two bodies are identical apart from whitespace, and four other scenarios repeat those six steps inline.
+- **Impact Rationale:** A change to the bind flow has to be made in six places, and the copies already differ from the inline versions in whether they read the bound tab id back — LOW (2/10).
+- **Remediation Target:** Extract one `startSessionAndBind(surface, testPage)` helper beside `waitForScreen`, returning the tab id from `focusTestTab`, and call it from all six scenarios; re-run `npm run agent:verify`.
 
 ### DEBT-2026-005: Firefox build warns about missing `data_collection_permissions`
 
@@ -255,5 +244,9 @@ Audit evidence (2026-11-23): PASS — `biome check` clean, `vue-tsc` clean, unit
 
 ## Resolved & Retired Log
 
-- `DEBT-2026-006` (2026-11-25, ISS-016): The `user-excluded` contract was encoded twice — in `resolveIneligibleReason` and again in `buildPickerRows`. Resolved by removing `user-excluded` from `IneligibleReason` so exclusions stay purely in `BisectConfig.excludedExtensionIds`; `buildPickerRows(eligible, excludedIds)` no longer re-merges from `ineligible`, and `intrinsicIneligible` is deleted.
+| ID | Category | Item | Final Status | Resolution & Verification Evidence | Closed |
+| :- | :- | :- | :- | :- | :- |
+| DEBT-2026-001 | code | E2E harness re-declares the content-marker attribute constants | Done | Component deleted: `utils/content-marker.ts` and the `EXTENSION_MARKER_ATTRIBUTE`/`EXTENSION_TAB_ID_ATTRIBUTE` constants in `tests/e2e/harness.mjs` went with the content script (ISS-013); no duplicated attribute name remains, `npm run agent:verify` green on both browsers | 2026-11-26 |
+| DEBT-2026-002 | code | `getContentStatus` message surface has no sender (dead code) | Done | Component deleted: `getContentStatus`, `getContentMarker`, `getTabId`, `ContentStatus`, `readContentStatus`/`resolveContentStatus` and the popup/content script that could have sent them are gone (ISS-013); `ProtocolMap` carries only bisect messages | 2026-11-26 |
+| DEBT-2026-006 | code | `user-excluded` eligibility contract encoded twice | Done | `user-excluded` removed from `IneligibleReason` so exclusions stay purely in `BisectConfig.excludedExtensionIds`; `buildPickerRows(eligible, excludedIds)` no longer re-merges from `ineligible`, and `intrinsicIneligible` is deleted (ISS-016) | 2026-11-25 |
 

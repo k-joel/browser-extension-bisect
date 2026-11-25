@@ -926,14 +926,6 @@ export async function restoreFixtureState(page, { candidates, dormant }) {
 }
 
 /**
- * `browser.tabs.query({ active: true })` resolves the focused tab, so the test
- * tab must be in front before the panel binds it.
- */
-export async function focusPage(page) {
-  await page.bringToFront();
-}
-
-/**
  * Reads the immutable snapshot out of the persisted `session-started` event. The
  * mid-session-change scenario asserts on this directly: the point of the slice is that
  * the snapshot does not move, which no rendered test id can prove on its own.

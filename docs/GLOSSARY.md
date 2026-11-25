@@ -1,6 +1,6 @@
 # Browser Extension Bisect
 
-A WXT browser extension that binary-searches faulty installed extensions across Chrome and Firefox, built on a popup-driven state model, a per-page DOM marker, and a local automated verification harness.
+A WXT browser extension that binary-searches faulty installed extensions across Chrome and Firefox, built on a side panel UI, an append-only bisect log, and a local automated verification harness.
 
 <!--
 GLOSSARY.md MAINTENANCE GUIDE (FOR AGENTS & CONTRIBUTORS)
@@ -79,33 +79,9 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 The canonical unit of the product: an installed WebExtension that can be enabled or disabled as a whole; themes and apps are not extensions in this sense.
 _Avoid_: plugin, addon (in prose), add-on (except Firefox UI)
 
-**ExtensionState**:
-The aggregate value object returned by every state message — `enabled`, `interactionCount`, and `settings` — assembled on demand by `readState()` in `utils/state.ts` and never persisted as one blob.
-_Avoid_: app state, global state
-
-**BisectSettings**:
-The persisted settings object (`batchSize`, `enabledExtensions`) stored under `local:settings` with defaults from `BISECT_SETTINGS_DEFAULTS`.
-_Avoid_: settings blob, preferences object
-
-**Content marker**:
-The `data-ext-bisect-state` attribute the content script writes on `document.documentElement`, holding `enabled` or `disabled` and kept in sync via a storage watch.
-_Avoid_: DOM flag, badge
-
-**Tab-id marker**:
-The `data-ext-bisect-tab-id` attribute written in test builds only, letting the Firefox E2E path target a specific tab's popup via `?tabId=`.
-_Avoid_: tab marker
-
 **Test mode**:
-The compiled-in build flavor gated by the `__EXT_TEST_MODE__` define (`EXT_TEST_MODE=1`); adds `?tabId=` handling, the tab-id marker, and `[EXT_BG_ERR]` logging that production builds strip.
+The compiled-in build flavor gated by the `__EXT_TEST_MODE__` define (`EXT_TEST_MODE=1`); adds the `[EXT_BG_ERR]` logging and the assisted Firefox test driver that production builds strip.
 _Avoid_: debug mode, dev mode
-
-**Interaction count**:
-The `local:interactionCount` counter incremented by the `recordInteraction` message and shown in the popup status line.
-_Avoid_: click counter
-
-**Batch size**:
-The `batchSize` setting (1 by default, 1–100 in the popup input) naming how many extensions a bisect round toggles; not yet consumed by runtime logic.
-_Avoid_: chunk size
 
 **Gecko id**:
 The `browser_specific_settings.gecko.id` value (`dev-test@my-browser-extension.local`) declared for Firefox builds in `wxt.config.ts` and asserted by `installExtension()` in the E2E harness.
@@ -178,7 +154,7 @@ The source of a verdict; v1 uses a human oracle, and a future automated oracle m
 _Avoid_: tester, checker
 
 **Bisect config**:
-The versioned non-session preferences under `local:bisectConfig` — excluded candidate ids, the bound test tab, and UI preferences; the scaffold `BisectSettings` is retired on implementation.
+The versioned non-session preferences under `local:bisectConfig` — the excluded candidate ids and the bound test tab.
 _Avoid_: settings (in prose), preferences
 
 ## Platform
@@ -228,7 +204,7 @@ The local HTTP server (`tests/e2e/fixture-server.mjs`) bound to `127.0.0.1:0` se
 _Avoid_: mock server
 
 **Verify gate**:
-The `tests/e2e/verify.mjs` scenario suite (via `npm run test:e2e` or `npm run agent:verify`) that asserts popup and content behavior on both browsers and exits non-zero with failure screenshots on any failed step.
+The `tests/e2e/verify.mjs` scenario suite (via `npm run test:e2e` or `npm run agent:verify`) that drives the side panel and the fixture extensions on both browsers and exits non-zero with failure screenshots on any failed step.
 _Avoid_: CI gate, e2e suite
 
 **Messaging bridge**:
@@ -240,11 +216,11 @@ The `FIXED_FIREFOX_UUID` constant in `tests/e2e/harness.mjs` pinned via the `ext
 _Avoid_: extension uuid (in prose)
 
 **Management port**:
-The injectable adapter interface that wraps `browser.management` and supplies candidates, target-state application, verification, restore, and events to the engine.
+The injectable boundary over `browser.management` that supplies candidates, target-state application, verification, restore, and events to the engine; the Chrome adapter toggles automatically and the Firefox adapter falls back to assisted batches.
 _Avoid_: management wrapper, browser port
 
 **Fixture extension**:
-A minimal unpacked extension installed by E2E to act as a candidate or culprit; it injects a unique marker on the fixture page.
+A minimal unpacked extension installed by E2E from `tests/e2e/fixtures/extensions/<browser>/` to act as a candidate, a non-candidate, or a culprit.
 _Avoid_: mock extension, test plugin
 
 **Replay test**:

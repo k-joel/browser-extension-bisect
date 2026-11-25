@@ -159,21 +159,35 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 - `utils/bisect/snapshot.ts`: the pure snapshot comparison, which reports `installed`, `updated` and `removed` changes against the immutable session start and can never write back to it.
 - `utils/bisect/replay.ts`: the pure `replayLog(log)` function, which reuses the engine's partition, suspect-set and outcome decisions so a replayed search cannot diverge from a live one.
 - `replayLog` on the typed messaging protocol; the background computes the result and writes nothing.
-- Popup with an enable/disable switch, an interaction counter, and a persisted batch-size setting, all backed by typed local storage.
-- Content script on all pages that renders a `data-ext-bisect-state` DOM marker and keeps it in sync with stored state.
-- Test-mode builds (`EXT_TEST_MODE=1`) with `?tabId=` popup targeting and `[EXT_BG_ERR]` error logging for automation; production builds strip these hooks.
 - Zero-HITL verification suite: Vitest unit/component tests plus a Puppeteer E2E gate (`npm run agent:verify`) covering Chrome over CDP and Firefox over WebDriver BiDi, with JSON verdicts and failure screenshots.
+- Drift detection with a paused screen that shows expected versus actual per candidate, and Re-sync, Undo last verdict, and Restore actions; a drift pause refuses the command that hit it rather than silently applying a stale batch.
+- Live undo reopens the last answered trial from the plan screen, refused while the session is paused or the verdict is no longer the last step.
+- Toggle-failure handling with the five documented error codes, a per-extension failure panel naming the browser's own error, automatic rollback to the previous state, and an "Enable with click" escalation for gesture-bound re-enables; declining an escalation ends in a restore.
+- Greylist recovery: a re-enable the browser refuses is reported as `manual-recovery-required` with a link to the extension manager, and Restore reports an incomplete restore instead of claiming success.
+- Startup reconciliation: a browser restart during an unfinished session offers Resume or Restore without writing anything, and Resume re-applies the expected batch and records the resumption.
+- Multi-panel convergence: every window's panel derives the same session from the persisted log and converges on every write, with commands serialized in the background.
+- A rejected storage write fails the command, keeps the previous log, and surfaces the error in the panel.
+- Chrome E2E scenarios `drift`, `toggle-failure`, `startup-convergence`, and `mid-session-changes`, and the earlier `session-baseline` and `partition-loop`, so the full automated flow is covered end to end.
 - Nine-document agent documentation set under `docs/` (architecture, decision records, glossary, issues, notes, runbook, tech-debt ledger, tools inventory, changelog), each with an embedded maintenance guide and registered in `AGENTS.md`.
 - The v1 bisect specification (`docs/SPEC.md`) and the twelve implementation tickets in `docs/ISSUES.md`.
 
 ### Changed
 
+- The extension requests only `storage` and `management`, plus Chrome's `sidePanel`; the `tabs` permission and the `<all_urls>` host permission are gone, so the add-on cannot see page content, URLs, or tab titles ([ADR-012](DECISIONS.md)).
+- Chrome's toolbar action now opens the side panel (`sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`), which the retired popup used to occupy ([ADR-009](DECISIONS.md)).
 - `BisectConfig.testTab.url` is `string | null`: without the `tabs` permission neither browser exposes `tab.url`, so the binding records the tab id and the panel shows `Tab #N` when no URL is available ([ADR-017](DECISIONS.md)).
 - `management.verifyState` and `management.watchEvents` are implemented by both adapters: the automated rail compares the expected map against `getAll()`, and the assisted rail splits a mismatch into pending manual toggles and unexpected ones and debounces its event signal.
 - `resolveScreen` accepts an optional `historyOpen` flag, so the session history is a screen derived from panel state rather than a modal, and stays unreachable while no session exists.
 - The replay affordances on the history, completed and inconclusive screens are now functional actions that open the replay screen instead of disabled placeholders.
 - `ManagementPort` gains `listInstalled`, the unfiltered `getAll()` mirror the snapshot comparison needs: `listCandidates` reports the session's own toggles as `disabled-at-start` and omits a mid-session install entirely.
 - `session-paused` carries the mid-session changes it detected and `trial-applied` carries the test-tab outcome, so both survive a worker restart without new event types.
+
+### Removed
+
+- **BREAKING:** The scaffold popup and its enable switch, interaction counter, and batch-size setting. The side panel is the only product UI ([ADR-009](DECISIONS.md), [ADR-012](DECISIONS.md)).
+- **BREAKING:** The `<all_urls>` content script and its `data-ext-bisect-state` and `data-ext-bisect-tab-id` DOM markers; the add-on no longer runs on any page.
+- **BREAKING:** The six scaffold messages (`getState`, `updateState`, `recordInteraction`, `getContentStatus`, `getContentMarker`, `getTabId`) with their background handlers and tests.
+- The `tabs` permission, the `<all_urls>` host permission, and the `?tabId=` test hook; the legacy `local:enabled`, `local:interactionCount`, and `local:settings` keys are deleted on first start.
 
 ### Fixed
 
