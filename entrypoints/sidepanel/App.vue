@@ -17,6 +17,7 @@ import type {
 } from '@/utils/bisect/domain';
 import { undoEligibilityOf } from '@/utils/bisect/engine';
 import { watchBisectLog } from '@/utils/bisect/events';
+import { type ManualStateReport, watchManualState } from '@/utils/bisect/manual-state';
 import { messenger, type SessionMutationResult } from '@/utils/messaging';
 import { type CopyStatus, copyText, MANUAL_COPY_MESSAGE } from './clipboard';
 import AssistedBaseline from './components/AssistedBaseline.vue';
@@ -501,6 +502,29 @@ async function refreshManualState(): Promise<void> {
   manualBatch.value = current.manualBatch ?? { enableIds: trial.enabledIds, disableIds: trial.disabledIds };
 }
 
+/**
+ * The live progress the background publishes after it debounces the user's own
+ * `management` toggles. The panel only adopts a report that matches the session and round
+ * it is showing, so a late write can never move the counter for a batch the user already
+ * left — and it never invents a batch, because `refreshManualState` owns the batch shape.
+ * The report refreshes `manualDrift`, which is the only state `manualProgress` reads.
+ */
+function adoptManualState(report: ManualStateReport | null): void {
+  const current = session.value;
+  const trial = current?.currentTrial ?? null;
+  if (current === null || trial === null) return;
+  if (current.status !== 'awaiting-manual-toggle') return;
+  if (report === null || report.sessionId !== current.sessionId || report.round !== trial.round) return;
+  manualDrift.value = report.drift;
+  manualBatch.value = current.manualBatch ?? { enableIds: trial.enabledIds, disableIds: trial.disabledIds };
+}
+
+let stopWatchingManualState: (() => void) | null = null;
+
+function watchForManualStateChanges(): void {
+  stopWatchingManualState = watchManualState(adoptManualState);
+}
+
 async function openAddonManager(): Promise<void> {
   addonManagerMessage.value = null;
   const result = await run(() => messenger.sendMessage('openAddonManager'));
@@ -845,9 +869,13 @@ onMounted(load);
 
 onMounted(watchForSessionChanges);
 
+onMounted(watchForManualStateChanges);
+
 onUnmounted(() => {
   stopWatchingLog?.();
   stopWatchingLog = null;
+  stopWatchingManualState?.();
+  stopWatchingManualState = null;
 });
 </script>
 

@@ -27,6 +27,7 @@ import type {
 import { type AnsweredTrial, buildTargetState, partitionSuspects, undoEligibilityOf } from './engine';
 import { appendEvent, BisectLogWriteError, createEmptyLog, readBisectLog, reduceLog, writeBisectLog } from './events';
 import { isManualBatch, mapToggleError, rollbackTarget } from './management-port';
+import { writeManualState } from './manual-state';
 import { describeSnapshotChanges, pausingChanges, snapshotChanges } from './snapshot';
 import { readStartupSignal, signalMatches } from './startup';
 
@@ -601,7 +602,13 @@ export interface ManualStateWatcherOptions {
   dependencies: SessionDependencies;
   /** Coalesces a burst of `onEnabled`/`onDisabled` events into one re-verify. */
   debounceMs?: number;
-  onDrift(drift: DriftReport): void;
+  onDrift(drift: DriftReport, context: ManualVerifyContext): void;
+}
+
+/** Which assisted batch the drift belongs to, so a report cannot land on another trial. */
+export interface ManualVerifyContext {
+  sessionId: string;
+  round: number;
 }
 
 export const MANUAL_STATE_DEBOUNCE_MS = 150;
@@ -623,10 +630,12 @@ export function createManualStateWatcher({
   const reverify = async (): Promise<void> => {
     timer = null;
     try {
-      const view = viewOf(await requireLog());
+      const log = await requireLog();
+      const view = viewOf(log);
       const trial = view.currentTrial;
       if (trial === null || view.status !== 'awaiting-manual-toggle') return;
-      onDrift(await resolved.port.verifyState(trial.targetState));
+      const drift = await resolved.port.verifyState(trial.targetState);
+      onDrift(drift, { sessionId: log.sessionId, round: trial.round });
     } catch {
       // A closed session or an unreadable log simply stops the watcher's work.
     }
@@ -646,6 +655,43 @@ export function createManualStateWatcher({
     timer = null;
     unsubscribe();
   };
+}
+
+/**
+ * The live half of assisted progress: the background installs the watcher while an
+ * assisted session is live, and every debounced re-verify publishes the drift so the
+ * panel's counter and checklist move without a Verify press (SPEC §Management port,
+ * user story 30).
+ *
+ * It publishes a *report*, never state. The expected map still comes from the log's own
+ * trial and the actual map from `management.getAll()`, so the item is a cache of the last
+ * comparison rather than a second source of truth: a panel that misses the write, or a
+ * worker that was terminated between two toggles, still gets the same answer from
+ * `getDrift`. The single writer rule holds — only the background calls this, from the
+ * watcher it owns, and the write is a plain report with no log event behind it.
+ */
+export async function publishManualState(
+  rawDependencies: SessionDependencies,
+  drift: DriftReport,
+  context: ManualVerifyContext,
+): Promise<void> {
+  const dependencies = resolveDependencies(rawDependencies);
+  await writeManualState({
+    sessionId: context.sessionId,
+    round: context.round,
+    drift,
+    at: dependencies.now(),
+  });
+}
+
+/**
+ * The background's install condition for the watcher: true only while the session on
+ * disk is an assisted batch the user still has to apply. A session that ends, restarts
+ * or reaches a verdict therefore uninstalls the watcher, and a worker that wakes up to an
+ * assisted session installs it again from the log alone, with no module-level state.
+ */
+export function assistedSessionIsWaiting(view: SessionView | null): boolean {
+  return view !== null && view.status === 'awaiting-manual-toggle' && view.currentTrial?.manual === true;
 }
 
 export function startSession(rawDependencies: SessionDependencies, request: StartSessionRequest): Promise<SessionView> {

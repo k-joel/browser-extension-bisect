@@ -7,11 +7,14 @@ import { replayLog } from '@/utils/bisect/replay';
 import {
   acceptRestore,
   applyTrial,
+  assistedSessionIsWaiting,
   bindTestTab,
   confirmManualState,
+  createManualStateWatcher,
   createSnapshotWatcher,
   declineEscalation,
   getLog,
+  publishManualState,
   readSessionView,
   reconcileStartup,
   recordEscalationResult,
@@ -124,6 +127,56 @@ async function openAddonManager(): Promise<AddonManagerResult> {
   }
 }
 
+/**
+ * Assisted mode's live progress. Nothing in the panel can see `management.onEnabled`, so
+ * without a background watcher the counter and the checklist only move when the user
+ * presses Verify — which is exactly what SPEC §Management port forbids: the events must
+ * debounce a re-verify and the panel must update from its result (user story 30).
+ *
+ * The watcher is installed and removed from the log rather than from a module-level flag,
+ * so it follows the session: `refresh()` runs after every command that could have changed
+ * the status, and the same `refresh()` on startup re-installs it for a worker that was
+ * terminated mid-session. What it publishes is a *derived* comparison — the expected map
+ * from the log's own trial, the actual one from `management.getAll()` — so the stored
+ * report is a cache the panel converges on, never a second source of truth: a panel that
+ * misses the write still gets the same answer from `getDrift`, and the background stays
+ * the only writer.
+ */
+export interface ManualStatePublisher {
+  refresh(): Promise<void>;
+  stop(): void;
+}
+
+export function createManualStatePublisher(sessionDependencies: () => SessionDependencies): ManualStatePublisher {
+  let stop: (() => void) | null = null;
+
+  const teardown = (): void => {
+    stop?.();
+    stop = null;
+  };
+
+  const refresh = async (): Promise<void> => {
+    try {
+      const view = await readSessionView(sessionDependencies());
+      if (!assistedSessionIsWaiting(view)) {
+        teardown();
+        return;
+      }
+      if (stop !== null) return;
+      stop = createManualStateWatcher({
+        dependencies: sessionDependencies(),
+        onDrift: (drift, context) => {
+          void publishManualState(sessionDependencies(), drift, context).catch(() => undefined);
+        },
+      });
+    } catch {
+      // A read failure leaves the watcher as it was; the next command retries.
+    }
+  };
+
+  return { refresh, stop: teardown };
+}
+
 export interface BackgroundDependencies {
   managementPort?: ManagementPort;
   tabs?: TestTabSurface;
@@ -134,6 +187,14 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   const tabs = dependencies.tabs ?? createTestTabSurface();
   const sessionDependencies = (): SessionDependencies => ({ port, tabs });
 
+  /**
+   * The watcher has to follow whatever status a command left behind, and every mutating
+   * command changes it, so the refresh is attached once here instead of at each handler.
+   */
+  const manualState = createManualStatePublisher(sessionDependencies);
+  const tracked = <Result>(command: () => Promise<Result>): Promise<Result> =>
+    command().finally(() => void manualState.refresh());
+
   messenger.onMessage('getCapabilities', () => port.getCapabilities());
   messenger.onMessage('listCandidates', () => port.listCandidates());
   messenger.onMessage('getConfig', () => readBisectConfig());
@@ -141,34 +202,46 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
 
   messenger.onMessage('getSession', () => readSessionView(sessionDependencies()));
   messenger.onMessage('getStartupReconciliation', () => reconcileStartup(sessionDependencies()));
-  messenger.onMessage('resumeSession', async (): Promise<SessionMutationResult> => {
-    const session = await resumeSession(sessionDependencies());
-    return { session, restore: null };
-  });
+  messenger.onMessage(
+    'resumeSession',
+    (): Promise<SessionMutationResult> =>
+      tracked(async () => ({ session: await resumeSession(sessionDependencies()), restore: null })),
+  );
   messenger.onMessage('getLog', () => getLog());
   messenger.onMessage('replayLog', ({ data }) => replayLog(data.log));
-  messenger.onMessage('startSession', ({ data }) => startSession(sessionDependencies(), data));
-  messenger.onMessage('applyTrial', () => applyTrial(sessionDependencies()));
-  messenger.onMessage('submitVerdict', async ({ data }): Promise<SessionMutationResult> => {
-    const session = await submitVerdict(sessionDependencies(), data);
-    return { session, restore: await readRestoreOutcome() };
-  });
-  messenger.onMessage('retryTrial', async ({ data }): Promise<SessionMutationResult> => {
-    const session = await retryTrial(sessionDependencies(), data ?? {});
-    return { session, restore: null };
-  });
-  messenger.onMessage('resetSession', async ({ data }): Promise<SessionMutationResult> => {
-    const session = await resetSession(sessionDependencies(), data);
-    return { session, restore: data.restore ? await readRestoreOutcome() : null };
-  });
-  messenger.onMessage('resyncSession', async (): Promise<SessionMutationResult> => {
-    const session = await resyncSession(sessionDependencies());
-    return { session, restore: null };
-  });
-  messenger.onMessage('undoLastVerdict', async (): Promise<SessionMutationResult> => {
-    const session = await undoLastVerdict(sessionDependencies());
-    return { session, restore: null };
-  });
+  messenger.onMessage('startSession', ({ data }) => tracked(() => startSession(sessionDependencies(), data)));
+  messenger.onMessage('applyTrial', () => tracked(() => applyTrial(sessionDependencies())));
+  messenger.onMessage(
+    'submitVerdict',
+    ({ data }): Promise<SessionMutationResult> =>
+      tracked(async () => {
+        const session = await submitVerdict(sessionDependencies(), data);
+        return { session, restore: await readRestoreOutcome() };
+      }),
+  );
+  messenger.onMessage(
+    'retryTrial',
+    ({ data }): Promise<SessionMutationResult> =>
+      tracked(async () => ({ session: await retryTrial(sessionDependencies(), data ?? {}), restore: null })),
+  );
+  messenger.onMessage(
+    'resetSession',
+    ({ data }): Promise<SessionMutationResult> =>
+      tracked(async () => {
+        const session = await resetSession(sessionDependencies(), data);
+        return { session, restore: data.restore ? await readRestoreOutcome() : null };
+      }),
+  );
+  messenger.onMessage(
+    'resyncSession',
+    (): Promise<SessionMutationResult> =>
+      tracked(async () => ({ session: await resyncSession(sessionDependencies()), restore: null })),
+  );
+  messenger.onMessage(
+    'undoLastVerdict',
+    (): Promise<SessionMutationResult> =>
+      tracked(async () => ({ session: await undoLastVerdict(sessionDependencies()), restore: null })),
+  );
   messenger.onMessage('bindTestTab', async ({ data }): Promise<BisectConfig> => {
     const binding = await resolveTestTab(data?.tabId);
     return bindTestTab(sessionDependencies(), binding);
@@ -176,26 +249,42 @@ export function registerBackgroundHandlers(dependencies: BackgroundDependencies 
   messenger.onMessage('reloadTestTab', () => reloadTestTab(sessionDependencies()));
 
   messenger.onMessage('getDrift', () => verifyManualState(sessionDependencies()));
-  messenger.onMessage('recordEscalationResult', async ({ data }): Promise<SessionMutationResult> => {
-    const session = await recordEscalationResult(sessionDependencies(), data);
-    return { session, restore: await readRestoreOutcome() };
-  });
-  messenger.onMessage('declineEscalation', async (): Promise<SessionMutationResult> => {
-    const session = await declineEscalation(sessionDependencies());
-    return { session, restore: await readRestoreOutcome() };
-  });
-  messenger.onMessage('restartSession', async (): Promise<SessionMutationResult> => {
-    const session = await restartSession(sessionDependencies());
-    return { session, restore: await readRestoreOutcome() };
-  });
-  messenger.onMessage('startNewSession', () => startNewSession(sessionDependencies()));
-  messenger.onMessage('confirmManualState', () => confirmManualState(sessionDependencies()));
-  messenger.onMessage('recordExternalBaseline', () => recordExternalBaseline(sessionDependencies()));
-  messenger.onMessage('verifyRestore', (): Promise<RestoreResult> => verifyRestore(sessionDependencies()));
-  messenger.onMessage('acceptRestore', () => acceptRestore(sessionDependencies()));
+  messenger.onMessage(
+    'recordEscalationResult',
+    ({ data }): Promise<SessionMutationResult> =>
+      tracked(async () => {
+        const session = await recordEscalationResult(sessionDependencies(), data);
+        return { session, restore: await readRestoreOutcome() };
+      }),
+  );
+  messenger.onMessage(
+    'declineEscalation',
+    (): Promise<SessionMutationResult> =>
+      tracked(async () => ({
+        session: await declineEscalation(sessionDependencies()),
+        restore: await readRestoreOutcome(),
+      })),
+  );
+  messenger.onMessage(
+    'restartSession',
+    (): Promise<SessionMutationResult> =>
+      tracked(async () => ({
+        session: await restartSession(sessionDependencies()),
+        restore: await readRestoreOutcome(),
+      })),
+  );
+  messenger.onMessage('startNewSession', () => tracked(() => startNewSession(sessionDependencies())));
+  messenger.onMessage('confirmManualState', () => tracked(() => confirmManualState(sessionDependencies())));
+  messenger.onMessage('recordExternalBaseline', () => tracked(() => recordExternalBaseline(sessionDependencies())));
+  messenger.onMessage(
+    'verifyRestore',
+    (): Promise<RestoreResult> => tracked(() => verifyRestore(sessionDependencies())),
+  );
+  messenger.onMessage('acceptRestore', () => tracked(() => acceptRestore(sessionDependencies())));
   messenger.onMessage('openAddonManager', () => openAddonManager());
 
   void deleteLegacyStorageKeys();
+  void manualState.refresh();
 }
 
 /**

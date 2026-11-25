@@ -65,6 +65,20 @@ function screenOf(wrapper: Harness['wrapper']): string | undefined {
   return wrapper.get('[data-testid="sidepanel-root"]').attributes('data-screen');
 }
 
+/**
+ * The background publishes its debounced re-verify asynchronously, so a component test
+ * has to let the promise chain settle before reading the refreshed counter. Each turn
+ * yields to the macrotask queue, which is where the debounce timer lands.
+ */
+async function waitUntil(predicate: () => boolean, turns = 40): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) {
+    await flushPromises();
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error('waitUntil timed out');
+}
+
 async function openPreflight(wrapper: Harness['wrapper']): Promise<void> {
   await wrapper.get('[data-testid="picker-start"]').trigger('click');
   await flushPromises();
@@ -173,6 +187,62 @@ describe('assisted baseline screen', () => {
 
     expect(screenOf(harness.wrapper)).toBe('assisted-baseline');
     expect(harness.wrapper.get('[data-testid="sidepanel-live"]').text()).toContain('1 of 2 done');
+  });
+
+  /**
+   * SPEC §Management port: `onEnabled`/`onDisabled` must debounce a re-verify, and the
+   * progress must follow it. Before this, the counter only moved when the user pressed
+   * Verify, so a user who disabled every extension by hand still read "0 of 2 done".
+   */
+  it('moves the progress counter on the management events alone, without a Verify press', async () => {
+    const harness = mountAssisted();
+    await flushPromises();
+    await startAssistedBaseline(harness);
+    expect(harness.wrapper.get('[data-testid="assisted-progress"]').text()).toContain('0 of 2 done');
+
+    await userToggles(harness.surface, { aaaa: false });
+    await harness.surface.emitDisabled(makeExtensionInfo({ id: 'aaaa', name: 'Alpha Blocker', enabled: false }));
+
+    // The panel never pressed Verify; only the background's debounced re-verify ran.
+    await waitUntil(() => harness.wrapper.get('[data-testid="assisted-progress"]').text().includes('1 of 2 done'));
+
+    expect(screenOf(harness.wrapper)).toBe('assisted-baseline');
+    expect(harness.wrapper.get('[data-testid="sidepanel-live"]').text()).toContain('1 of 2 done');
+  });
+
+  it('completes the progress from the events alone when the last extension is turned off', async () => {
+    const harness = mountAssisted();
+    await flushPromises();
+    await startAssistedBaseline(harness);
+
+    await userToggles(harness.surface, { aaaa: false, bbbb: false });
+    harness.surface.emitDisabled(makeExtensionInfo({ id: 'aaaa', name: 'Alpha Blocker', enabled: false }));
+    harness.surface.emitDisabled(makeExtensionInfo({ id: 'bbbb', name: 'Bravo Reader', enabled: false }));
+
+    await waitUntil(() => harness.wrapper.get('[data-testid="assisted-progress"]').text().includes('2 of 2 done'));
+
+    // The verdict is still withheld: the state was observed, never confirmed.
+    expect(screenOf(harness.wrapper)).toBe('assisted-baseline');
+    expect(harness.wrapper.find('[data-testid="verdict-gone"]').exists()).toBe(false);
+  });
+
+  it('keeps the checklist rows in step with the live counter', async () => {
+    const harness = mountAssisted();
+    await flushPromises();
+    await startAssistedBaseline(harness);
+
+    await userToggles(harness.surface, { bbbb: false });
+    await harness.surface.emitDisabled(makeExtensionInfo({ id: 'bbbb', name: 'Bravo Reader', enabled: false }));
+
+    await waitUntil(() => {
+      const rows = harness.wrapper.findAll('[data-testid="assisted-checklist-row"]');
+      return rows.some((row) => row.get('[data-testid="assisted-checklist-done"]').attributes('data-done') === 'true');
+    });
+
+    const done = harness.wrapper
+      .findAll('[data-testid="assisted-checklist-row"]')
+      .filter((row) => row.get('[data-testid="assisted-checklist-done"]').attributes('data-done') === 'true');
+    expect(done).toHaveLength(1);
   });
 
   it('verifies the manual state through management before asking the baseline question', async () => {

@@ -1,5 +1,5 @@
 import { storage } from 'wxt/utils/storage';
-import type { ManagementExtensionInfo, ManagementSurface } from './management-port';
+import type { ManagementEventSurface, ManagementExtensionInfo, ManagementSurface } from './management-port';
 
 /**
  * Test-mode-only management overlay for the assisted Firefox E2E. Firefox cannot
@@ -86,10 +86,61 @@ function withOverlay(info: ManagementExtensionInfo, store: TestDriverStore): Man
   return overridden === undefined || overridden === info.enabled ? info : { ...info, enabled: overridden };
 }
 
+type InfoListener = (info: ManagementExtensionInfo) => void;
+
+/**
+ * The real `management.onEnabled`/`onDisabled` never fire for the overlay's storage-backed
+ * manual state, because no browser toggle happened. The assisted rail's completion signal
+ * is exactly those two events, so the overlay publishes them itself: it watches the store
+ * and, for each id whose recorded state changed, emits the event an Add-ons Manager toggle
+ * would have.
+ *
+ * Without this an E2E that "drives the manual state" would prove nothing about SPEC
+ * §Management port, because the debounced re-verify would never be scheduled at all.
+ */
+function createOverlayEventSurface(
+  eventName: 'enabled' | 'disabled',
+  management: ManagementSurface,
+): ManagementEventSurface<ManagementExtensionInfo> {
+  const listeners = new Set<InfoListener>();
+  let unwatch: (() => void) | null = null;
+
+  const broadcast = (info: ManagementExtensionInfo): void => {
+    for (const listener of listeners) listener(info);
+  };
+
+  const subscribe = (): (() => void) =>
+    storage.defineItem<TestDriverStore>(TEST_DRIVER_KEY, { fallback: { enabledById: {} } }).watch(async (value) => {
+      const store = normalizeStore(value);
+      const all = await management.getAll().catch(() => []);
+      for (const [extensionId, enabled] of Object.entries(store.enabledById)) {
+        const info = all.find((entry) => entry.id === extensionId);
+        if (info === undefined || info.enabled === enabled) continue;
+        if ((eventName === 'enabled') !== enabled) continue;
+        broadcast({ ...info, enabled });
+      }
+    });
+
+  return {
+    addListener: (listener: InfoListener) => {
+      listeners.add(listener);
+      if (unwatch === null) unwatch = subscribe();
+    },
+    removeListener: (listener: InfoListener) => {
+      listeners.delete(listener);
+      if (listeners.size === 0 && unwatch !== null) {
+        unwatch();
+        unwatch = null;
+      }
+    },
+  };
+}
+
 /**
  * Merges the recorded manual state into `getAll` so the adapter observes it as the
- * real enabled state. Toggles stay browser-rejected, so the assisted rail is still
- * exercised end to end: the add-on can only observe.
+ * real enabled state, and publishes the `onEnabled`/`onDisabled` events a real
+ * Add-ons Manager toggle would have. Toggles stay browser-rejected, so the assisted rail
+ * is still exercised end to end: the add-on can only observe.
  *
  * On the automated rail the overlay also honours an armed `setEnabled` rejection. That
  * is the only way to drive the failure paths in a real browser — Chrome cannot be asked
@@ -110,6 +161,8 @@ export function withTestDriverOverlay(management: ManagementSurface): Management
       if (armed !== undefined) throw new Error(armed);
       await management.setEnabled(extensionId, enabled);
     },
+    onEnabled: createOverlayEventSurface('enabled', management),
+    onDisabled: createOverlayEventSurface('disabled', management),
   };
 }
 
