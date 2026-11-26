@@ -240,9 +240,9 @@ The machine-readable half of the fault extension's contract — `data-bad-extens
 _Avoid_: detection signal, error flag
 
 **Full bisect**:
-The automated run in `tests/e2e/verify-full.mjs` (`npm run test:e2e-full`, part of `npm run agent:verify-full`) that installs the curated set plus the fault extension and answers every question from the symptom marker with no human in the loop.
+The automated run in `tests/e2e/verify-real.mjs` (`npm run test:e2e:real`, part of `npm run agent:verify:real`) that installs the curated set plus the fault extension and answers every question from the symptom marker with no human in the loop.
 _Avoid_: real E2E, full gate (in prose), integration test
 
 **Policy rail**:
-The Firefox-only path in `tests/e2e/firefox-policy.mjs` that writes `<install>/distribution/policies.json` so this add-on reports `installType: 'admin'` and may toggle other extensions; the only supported way to automate Firefox, and Nightly-only.
+The Firefox-only path in `tests/e2e/firefox-policy.mjs` that writes `<install>/distribution/policies.json` so this add-on reports `installType: 'admin'` and may toggle other extensions; the only supported way to automate Firefox, and it runs on a project-local portable Nightly downloaded by `npm run firefox:install`.
 _Avoid_: enterprise hack, firefox workaround

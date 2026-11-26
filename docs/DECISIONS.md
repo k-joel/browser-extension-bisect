@@ -152,6 +152,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 | [023](#adr-023-install-unpacked-directories-not-store-archives) | Install unpacked directories, not store archives |
 | [024](#adr-024-drive-the-full-bisect-from-the-fault-extensions-own-symptom) | Drive the full bisect from the fault extension's own symptom |
 | [025](#adr-025-policy-install-firefox-for-automatic-toggling) | Policy-install Firefox for automatic toggling |
+| [026](#adr-026-keep-the-policy-rails-nightly-inside-the-repository) | Keep the policy rail's Nightly inside the repository |
 
 ---
 
@@ -671,7 +672,7 @@ Every existing gate installed the same four hand-written fixtures (`fixture-alph
 
 ### Decision
 
-Add a separate, opt-in gate (`npm run agent:verify-full`) that installs 20 curated marketplace extensions plus one deliberately faulty extension and runs the complete bisect. The curated set is pinned by URL in `tests/e2e/curated-extensions.json`, fetched by `tools/download_good_extensions.py` into a gitignored `good_extensions/`, and installed from unpacked directories. The fault is a purpose-built extension in `bad_extension/` whose only job is to be reliably detectable. The gate is not part of CI: it downloads tens of megabytes from two stores on every run, depends on third-party network availability, and would make a push-to-main pipeline fail for reasons the repository cannot control.
+Add a separate, opt-in gate (`npm run agent:verify:real`) that installs 20 curated marketplace extensions plus one deliberately faulty extension and runs the complete bisect. The curated set is pinned by URL in `tests/e2e/curated-extensions.json`, fetched by `tools/download_good_extensions.py` into a gitignored `good_extensions/`, and installed from unpacked directories. The fault is a purpose-built extension in `bad_extension/` whose only job is to be reliably detectable. The gate is not part of CI: it downloads tens of megabytes from two stores on every run, depends on third-party network availability, and would make a push-to-main pipeline fail for reasons the repository cannot control.
 
 ### Consequences
 
@@ -719,7 +720,7 @@ The existing E2E answers bisect questions by checking whether the known culprit'
 
 ### Decision
 
-`verify-full.mjs` derives every verdict from the fault extension's machine-readable symptom, and nothing else. `bad_extension/src/content.js` sets `data-bad-extension="active"` on `<html>`, adds a `<meta name="bad-extension-state">` tag, logs `[BAD_EXT_ACTIVE]`, and renders a red `Bad extension enabled` banner for a human. The runner reads the attribute after each applied batch and answers `persists` when it is present. It never inspects `culpritName` to decide an answer; that field is only asserted at the end. The same marker gives the extension its second audience: `tools/bad-extension-probe.mjs` exposes it as a CLI verdict for diagnosing a page without a browser window.
+`verify-real.mjs` derives every verdict from the fault extension's machine-readable symptom, and nothing else. `bad_extension/src/content.js` sets `data-bad-extension="active"` on `<html>`, adds a `<meta name="bad-extension-state">` tag, logs `[BAD_EXT_ACTIVE]`, and renders a red `Bad extension enabled` banner for a human. The runner reads the attribute after each applied batch and answers `persists` when it is present. It never inspects `culpritName` to decide an answer; that field is only asserted at the end. The same marker gives the extension its second audience: `tools/bad-extension-probe.mjs` exposes it as a CLI verdict for diagnosing a page without a browser window.
 
 ### Consequences
 
@@ -733,24 +734,47 @@ The existing E2E answers bisect questions by checking whether the known culprit'
 
 ## ADR-025: Policy-install Firefox for automatic toggling
 
-**Status**: Accepted
-**Date**: 2026-11-25
+**Status**: Accepted (revised 2026-11-26: the policy build is a project-local portable Nightly, ADR-026)
+**Date**: 2026-11-26
 **Deciders**: Real-world verification request (LLM-driven, user-approved)
 
 ### Context
 
-On Firefox, `management.setEnabled` refuses to touch a normal extension: it answers *"setEnabled can only be used for themes or by addons installed by enterprise policy"*. Every add-on `Browser.installExtension` installs is *temporary* (`installType: 'development'`), and a temporary add-on is permanently enabled — so the existing Firefox E2E answers every question through the assisted/manual rail and a test-mode driver, never through a real toggle. A zero-human real-world bisect is therefore impossible on Firefox without changing how the add-on itself is installed. MDN's compatibility data records the escape hatch: from Firefox 140, an add-on installed *by policy* may enable and disable any extension.
+On Firefox, `management.setEnabled` refuses to touch a normal extension: it answers *"setEnabled can only be used for themes or by addons installed by enterprise policy"*. Every add-on `Browser.installExtension` installs is *temporary* (`installType: 'development'`), and a temporary add-on is permanently enabled — so the existing Firefox E2E answers every question through the assisted/manual rail and a test-mode driver, never through a real toggle. A zero-human real-world bisect is therefore impossible on Firefox without changing how the add-on itself is installed. MDN's compatibility data records the escape hatch: from Firefox 140, an add-on installed *by policy* may enable and disable any extension. A private copy of a Nightly build is not a static artifact, however: it inherits the staged update from the shared Puppeteer installation and applies it to itself, swapping the whole installation directory — `distribution/policies.json` included — and exiting with code 0 before any client attaches.
 
 ### Decision
 
-`tests/e2e/firefox-policy.mjs` runs the automated Firefox gate on a **private copy** of the Puppeteer Firefox, into which it writes `<install>/distribution/policies.json`. That file `force_installed`s this add-on from a locally built XPI (so `getSelf().installType === 'admin'`) and `normal_installed`s the 20 curated extensions and the fault extension from their signed archives. `normal_installed` keeps the candidates user-disableable, so they stay eligible instead of landing in the `policy-locked` bucket. `launchTestBrowser({ policyInstalledSelf: true })` skips `installExtension`, because installing again over BiDi would downgrade the add-on back to temporary. Before any assertion the runner proves `installType === 'admin'` and fails with an actionable message otherwise.
+`tests/e2e/firefox-policy.mjs` runs the automated Firefox gate on a **private, project-local** Puppeteer Firefox (ADR-026), into which it writes `<install>/distribution/policies.json`. That file `force_installed`s this add-on from a locally built XPI (so `getSelf().installType === 'admin'`) and `normal_installed`s the 20 curated extensions and the fault extension from their signed archives. `normal_installed` keeps the candidates user-disableable, so they stay eligible instead of landing in the `policy-locked` bucket. The policy also sets `DisableAppUpdate`, so the installation can never apply a staged update to itself. `launchTestBrowser({ policyInstalledSelf: true })` skips `installExtension`, because installing again over BiDi would downgrade the add-on back to temporary. Before any assertion the runner proves `installType === 'admin'` and fails with an actionable message otherwise.
 
 ### Consequences
 
-**Good**: Firefox now runs the same automatic toggle path Chrome always had, so the real-world gate means the same thing on both browsers; the private copy keeps a shared Puppeteer cache untouched, so other projects on the machine never inherit this policy; the fault extension is policy-installed too, which is the only way the all-off baseline can hold on Firefox.
+**Good**: Firefox now runs the same automatic toggle path Chrome always had, so the real-world gate means the same thing on both browsers; the project-local browser keeps machine-wide Puppeteer caches and Firefox profiles untouched; the fault extension is policy-installed too, which is the only way the all-off baseline can hold on Firefox.
 
-**Bad**: The rail depends on an unsigned build being installable, which only Nightly honours, so the Firefox half of the gate requires `npx puppeteer browsers install firefox@nightly`; it copies roughly 360 MB of browser once into `.cache/firefox-policy/`; it writes a file into a browser installation directory, which is inherently fragile across Firefox releases; it only proves the *policy* path, so the ordinary temporary-add-on path still has no automatic coverage.
+**Bad**: The rail depends on an unsigned build being installable, which only Nightly honours, so the Firefox half of the gate requires a separate ~360 MB `npm run firefox:install` download; it writes a file into a browser installation directory, which is inherently fragile across Firefox releases; it only proves the *policy* path, so the ordinary temporary-add-on path still has no automatic coverage.
 
-**Mitigations**: The copy is created once and reused, and its `.source` marker invalidates it when the Puppeteer build changes; `policies.json` is backed up and restored in `finally`; the preflight probe converts a policy regression into one diagnostic paragraph instead of a confusing mid-search failure; the fixture suite continues to cover the assisted rail, so both paths stay exercised.
+**Mitigations**: The portable build is downloaded once into `.cache/puppeteer` and reused; a non-portable source is still copied into `.cache/firefox-policy/`, where a `.source` marker invalidates the copy when the Puppeteer build changes, and the copy's `application.ini` `BuildID` is compared with its source's so a copy that self-updated in place is re-created rather than reused — an update swaps the installation directory, `policies.json` included, and the browser exits with code 0 before Puppeteer attaches, which surfaces as `Failed to launch the browser process: Code: 0` with no stderr; `DisableAppUpdate` prevents that from recurring, and `policies.json` is backed up and restored in `finally`; the preflight probe converts a policy regression into one diagnostic paragraph instead of a confusing mid-search failure; the fixture suite continues to cover the assisted rail, so both paths stay exercised.
 
+---
+
+## ADR-026: Keep the policy rail's Nightly inside the repository
+
+**Status**: Accepted
+**Date**: 2026-11-26
+**Deciders**: Global-Nightly workaround request (LLM-driven, user-approved)
+
+### Context
+
+The policy rail needs a Firefox that honours `xpinstall.signatures.required=false`, because the add-on's own XPI is unsigned and a policy `force_installed` add-on must be signed on stable Firefox (ADR-025). Re-investigation on 2026-11-26 confirmed that Puppeteer's pinned stable Firefox 160 cannot substitute: it does not even read `distribution/policies.json` (`about:policies` reports "The Enterprise Policies service is inactive"), so `management.getSelf()` never reports `installType: 'admin'`. The previous prerequisite, `npx puppeteer browsers install firefox@nightly`, put Nightly in the user's shared `~/.cache/puppeteer`; running it interfered with the maintainer's normal Firefox installation, which made the opt-in gate hostile to the machine it ran on.
+
+### Decision
+
+The policy rail runs only a **project-local portable Nightly**. `npm run firefox:install` invokes Puppeteer's installer with `PUPPETEER_CACHE_DIR=.cache/puppeteer`, so the browser lands in the repository's gitignored cache and never in the user profile. `resolveFirefoxSourceDir()` scans only that cache and accepts only `nightly` entries; it deliberately ignores stable builds and the shared Puppeteer cache. `ensurePolicyFirefox()` treats a source inside `.cache/puppeteer` as already private and writes `policies.json` into it in place, while any other source keeps the existing copy-into-`.cache/firefox-policy` path. `DisableAppUpdate` and the policy backup/restore continue to guard the installation.
+
+### Consequences
+
+**Good**: The opt-in real-world gate no longer requires a machine-wide Firefox download and cannot disturb the user's normal Firefox profile or the shared Puppeteer cache; deleting `.cache/` removes the browser, its policies, and every test profile completely; the portable build is launched in place, so there is no duplicate 360 MB copy; stable-only caches fail fast with an actionable message instead of reaching the policy step and reporting a misleading `installType`.
+
+**Bad**: Every checkout downloads its own ~360 MB Nightly, and the download must be repeated when the cache is cleaned; the rail remains tied to Nightly's signature-pref behaviour; the policy is still written into a browser installation directory, which a Firefox self-update could replace.
+
+**Mitigations**: `npm run firefox:install` reuses the cache on later runs; `.cache/` is gitignored and documented as disposable; `DisableAppUpdate` plus the `policies.json` backup/restore keep the in-place policy safe; the preflight `installType` assertion names the missing install command; the unit test covers resolution order, the stable exclusion, and the in-place decision.
 

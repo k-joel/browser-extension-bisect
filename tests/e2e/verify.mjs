@@ -121,6 +121,12 @@ async function waitForScreen(surface, screen, timeout = 20000) {
 }
 
 async function startSessionAndBind(surface, testPage, { baselineScreen = 'baseline' } = {}) {
+  /**
+   * The picker renders from an async `management.getAll()`, so a panel opened moments
+   * ago shows no "Review N candidates" button at all. Waiting for `ready` here rather
+   * than at each call site is what keeps a fresh panel from racing the first click.
+   */
+  await waitForCandidateState(surface, (state) => state.state === 'ready');
   await clickTestId(surface, 'picker-start');
   await waitForScreen(surface, 'preflight');
   const testTabId = await focusTestTab(surface, testPage);

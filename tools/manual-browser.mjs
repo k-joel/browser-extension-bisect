@@ -51,6 +51,7 @@ Options:
 --extensions=real requires:
   npm run extensions:download
   npm run bad-extension:build
+  npm run firefox:install      (Firefox policy rail only)
 `;
 
 function parseArgs(argv) {

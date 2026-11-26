@@ -35,7 +35,7 @@ const BAD_EXTENSION_NAME = 'Bad Extension';
 const SCREEN_SETTLE_TIMEOUT_MS = 60000;
 const VERDICT_TIMEOUT_MS = 20000;
 
-const USAGE = `Usage: node tests/e2e/verify-full.mjs [options]
+const USAGE = `Usage: node tests/e2e/verify-real.mjs [options]
 
 Runs the real-extension bisect: 20 curated marketplace extensions plus one deliberately
 faulty extension, then answers every bisect question from the faulty extension's own
@@ -53,6 +53,7 @@ Prerequisites:
   npm run extensions:download     unpack the curated extensions
   npm run bad-extension:build     build the faulty extension
   npm run build:all               build this add-on (test mode)
+  npm run firefox:install         project-local Nightly for the Firefox policy rail (once)
 `;
 
 function parseArgs(argv) {

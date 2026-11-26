@@ -1,66 +1,114 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import process from 'node:process';
 import { archivePathFor, PreflightError, readCatalog, toFileUrl } from './real-extensions.mjs';
 import { buildXpi } from './xpi-writer.mjs';
 
 export const FIREFOX_GECKO_ID = 'dev-test@my-browser-extension.local';
 const DISTRIBUTION_DIR = 'distribution';
 const POLICY_FILE = 'policies.json';
+/**
+ * The policy rail needs a Firefox that honours `xpinstall.signatures.required=false`:
+ * stable and beta releases ignore the pref, so a policy `force_installed` add-on must
+ * be signed there and this add-on's own XPI deliberately is not. Only Nightly qualifies.
+ *
+ * Its download is kept inside the repository rather than in `~/.cache/puppeteer`,
+ * which every project on the machine shares. Keeping it here makes the browser a
+ * disposable project artefact: no installer, no registry entry, no shared profile,
+ * and deleting `.cache/` removes it completely.
+ */
+const PORTABLE_CACHE_DIR = path.resolve('.cache/puppeteer');
 const CACHE_DIR = path.resolve('.cache/firefox-policy');
 
-/**
- * `policies.json` is only read from the installation directory, so the policy has to
- * sit next to the binary that runs. Puppeteer's Firefox lives in a cache shared by
- * every project on the machine, so the runner works on a private copy instead of
- * mutating a directory it does not own.
- *
- * Nightly is required: a policy `force_installed` add-on must be signed on stable
- * Firefox, and this add-on is deliberately unsigned. Nightly honours
- * `xpinstall.signatures.required=false`, which the harness already sets.
- */
-export function resolveFirefoxSourceDir() {
-  const cacheRoot = path.join(process.env.USERPROFILE ?? process.env.HOME ?? '', '.cache', 'puppeteer', 'firefox');
+function isWithin(dir, root) {
+  if (root === undefined) return false;
+  const relative = path.relative(path.resolve(root), path.resolve(dir));
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
 
-  if (fs.existsSync(cacheRoot)) {
-    const builds = fs
-      .readdirSync(cacheRoot)
-      .filter((entry) => entry.startsWith('win64-') || entry.startsWith('mac-') || entry.startsWith('linux-'))
-      .map((entry) => ({ entry, nightly: entry.includes('nightly') }))
-      .sort((left, right) => Number(right.nightly) - Number(left.nightly) || right.entry.localeCompare(left.entry));
+function findNightlyInstall(cacheRoot) {
+  const root = path.join(path.resolve(cacheRoot), 'firefox');
+  if (!fs.existsSync(root)) return null;
 
-    for (const { entry } of builds) {
-      for (const inner of ['core', 'firefox', '']) {
-        const dir = path.join(cacheRoot, entry, inner);
-        if (fs.existsSync(path.join(dir, 'firefox.exe'))) return dir;
-        if (fs.existsSync(path.join(dir, 'firefox'))) return dir;
-      }
+  const builds = fs
+    .readdirSync(root)
+    .filter(
+      (entry) =>
+        entry.includes('nightly') &&
+        (entry.startsWith('win64-') || entry.startsWith('mac-') || entry.startsWith('linux-')),
+    )
+    .sort((left, right) => right.localeCompare(left));
+
+  for (const entry of builds) {
+    for (const inner of ['core', 'firefox', '']) {
+      const dir = path.join(root, entry, inner);
+      if (fs.existsSync(path.join(dir, 'firefox.exe')) || fs.existsSync(path.join(dir, 'firefox'))) return dir;
     }
+  }
+  return null;
+}
+
+/**
+ * Locates the project-local Nightly that `npm run firefox:install` downloads. It never
+ * looks at a system installation or the shared Puppeteer cache: using either would
+ * reintroduce the machine-wide side effects this project keeps out of its test setup.
+ */
+export function resolveFirefoxSourceDir({ cacheRoots = [PORTABLE_CACHE_DIR] } = {}) {
+  const seen = new Set();
+
+  for (const cacheRoot of cacheRoots) {
+    const root = path.resolve(cacheRoot);
+    if (seen.has(root)) continue;
+    seen.add(root);
+
+    const install = findNightlyInstall(root);
+    if (install !== null) return install;
   }
 
   throw new PreflightError(
-    'Puppeteer could not find a Firefox install. Run "npx puppeteer browsers install firefox@nightly" and retry.',
+    'Puppeteer could not find a project-local Nightly Firefox. Run "npm run firefox:install" and retry.',
   );
 }
 
 /**
- * Copies the Puppeteer Firefox into `.cache/firefox-policy/` once and reuses it, so
- * the policy file never touches a shared installation.
+ * The build a Firefox installation actually is. A self-update rewrites it, which is the
+ * only in-place signal that the copy no longer matches the source it came from.
  */
-export function ensurePolicyFirefox(sourceDir) {
-  const markerPath = path.join(CACHE_DIR, '.source');
-  const marker = `${sourceDir}\n`;
-  const cached = fs.existsSync(path.join(CACHE_DIR, 'firefox.exe')) || fs.existsSync(path.join(CACHE_DIR, 'firefox'));
-  const markerMatches = fs.existsSync(markerPath) && fs.readFileSync(markerPath, 'utf8') === marker;
+function readBuildId(installDir) {
+  const iniPath = path.join(installDir, 'application.ini');
+  if (!fs.existsSync(iniPath)) return null;
+  const match = /^BuildID=(.+)$/m.exec(fs.readFileSync(iniPath, 'utf8'));
+  return match === null ? null : match[1].trim();
+}
 
-  if (!(cached && markerMatches)) {
-    fs.rmSync(CACHE_DIR, { recursive: true, force: true });
-    fs.mkdirSync(CACHE_DIR, { recursive: true });
-    fs.cpSync(sourceDir, CACHE_DIR, { recursive: true });
+/**
+ * A project-local Nightly is already a private, disposable copy, so the policy is
+ * written into it directly. Any other source — notably a shared Puppeteer cache — is
+ * copied into `.cache/firefox-policy/` first, so the policy never touches a directory
+ * this project does not own.
+ *
+ * The copy is the one that gets launched, so it is the one that can try to update
+ * itself. `DisableAppUpdate` in the policy stops that, but a copy updated before that
+ * policy existed — or by a build that ignored it — has already been replaced in place,
+ * so the cached build id is compared with the source's and a mismatch re-copies.
+ */
+export function ensurePolicyFirefox(sourceDir, { cacheDir = CACHE_DIR, portableRoot = PORTABLE_CACHE_DIR } = {}) {
+  const source = path.resolve(sourceDir);
+  if (isWithin(source, portableRoot)) return source;
+
+  const markerPath = path.join(cacheDir, '.source');
+  const marker = `${sourceDir}\n`;
+  const cached = fs.existsSync(path.join(cacheDir, 'firefox.exe')) || fs.existsSync(path.join(cacheDir, 'firefox'));
+  const markerMatches = fs.existsSync(markerPath) && fs.readFileSync(markerPath, 'utf8') === marker;
+  const buildMatches = cached && readBuildId(cacheDir) === readBuildId(sourceDir);
+
+  if (!(cached && markerMatches && buildMatches)) {
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+    fs.mkdirSync(cacheDir, { recursive: true });
+    fs.cpSync(sourceDir, cacheDir, { recursive: true });
     fs.writeFileSync(markerPath, marker);
   }
 
-  return CACHE_DIR;
+  return cacheDir;
 }
 
 /**
@@ -93,6 +141,12 @@ function extensionSettings(extensions) {
  * Candidates are `normal_installed`, not `force_installed`: a forced install is
  * policy-locked and would land in the `policy-locked` ineligible bucket instead of
  * being a candidate the bisect can turn off.
+ *
+ * `DisableAppUpdate` is not about the add-on at all: this Firefox is a private copy in
+ * `.cache/`, and an in-place self-update replaces the whole installation directory —
+ * `distribution/policies.json` included — then exits immediately. Puppeteer reports that
+ * as "Failed to launch the browser process: Code: 0" with an empty stderr, because
+ * handing off to the updater is a clean exit for the process it spawned.
  */
 export function writeFirefoxPolicy({ installDir, selfXpi, candidateXpis, badXpi = null, badExtensionId = null }) {
   const distribution = path.join(installDir, DISTRIBUTION_DIR);
@@ -109,6 +163,7 @@ export function writeFirefoxPolicy({ installDir, selfXpi, candidateXpis, badXpi 
 
   const policy = {
     policies: {
+      DisableAppUpdate: true,
       ExtensionSettings: extensionSettings([
         ...(selfXpi === null ? [] : [{ id: FIREFOX_GECKO_ID, mode: 'force_installed', xpi: selfXpi }]),
         ...candidateXpis.map((entry) => ({ id: entry.id, mode: 'normal_installed', xpi: entry.xpi })),
@@ -156,7 +211,7 @@ export async function assertPolicyAdmin(surface) {
   if (info.installType !== 'admin') {
     throw new PreflightError(
       `Firefox reports installType "${info.installType}" for this add-on, so it cannot toggle other extensions. ` +
-        'The policy install did not take: check that "npx puppeteer browsers install firefox@nightly" ran and that ' +
+        'The policy install did not take: check that "npm run firefox:install" ran and that ' +
         '<firefox>/distribution/policies.json is valid.',
     );
   }

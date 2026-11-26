@@ -13,9 +13,10 @@ Node.js **22 or newer**, then `npm install`. Full instructions: RUN-001 in
 - While iterating: RUN-002 (the fast inner loop); RUN-004 to iterate on a single browser.
 - Before handing anything over: RUN-003 — `npm run agent:verify` runs lint, typecheck, unit
   tests, both builds, and E2E in both browsers.
-- When the change touches the search itself: also RUN-011 — `npm run agent:verify-full`
+- When the change touches the search itself: also RUN-011 — `npm run agent:verify:real`
   bisects 20 real marketplace extensions plus a deliberately faulty one on both browsers.
-  It is opt-in, needs RUN-008 and a Nightly Firefox, and is not part of CI.
+  It is opt-in, needs RUN-008 plus `npm run firefox:install` (a project-local Nightly),
+  and is not part of CI.
 
 ## Code conventions
 

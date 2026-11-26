@@ -173,5 +173,8 @@ bad_extension/dist/
 .commandcode/
 .goose/
 
+# Simple CI
+.simple-ci/
+
 # Temp
 artifacts/

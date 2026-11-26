@@ -121,11 +121,12 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ### Added
 
-- `npm run agent:verify-full` proves the add-on bisects a genuinely broken browser: it installs 20 curated marketplace extensions plus one deliberately faulty extension, answers every question from that extension's own symptom marker, and asserts the search names the injected fault and restores the other 20. Runs on Chrome and Firefox ([ADR-024](DECISIONS.md), [ADR-025](DECISIONS.md)); it is a local gate, not part of CI.
+- `npm run agent:verify:real` proves the add-on bisects a genuinely broken browser: it installs 20 curated marketplace extensions plus one deliberately faulty extension, answers every question from that extension's own symptom marker, and asserts the search names the injected fault and restores the other 20. Runs on Chrome and Firefox ([ADR-024](DECISIONS.md), [ADR-025](DECISIONS.md)); it is a local gate, not part of CI.
 - `npm run extensions:download` fetches the curated set from the Chrome Web Store and addons.mozilla.org, unpacking each archive into the directory layout Puppeteer loads and recording the result in `good_extensions/catalog.json` (RUN-008).
+- `npm run firefox:install` downloads the Nightly Firefox the real-extension gate needs into the repository's `.cache/puppeteer`, so nothing is installed system-wide ([ADR-026](DECISIONS.md)).
 - A reference fault extension in `bad_extension/` with two simultaneous error modes: a red `Bad extension enabled` banner for a human, and a `data-bad-extension` marker plus `[BAD_EXT_ACTIVE]` console line for a program. It answers whether a page is broken, never which extension broke it.
 - `npm run bad-extension:probe` reports, from a command line, whether the fault is currently visible on a page, so a person or an agent can confirm the symptom without reading the screen (RUN-010).
-- `npm run manual:chrome-full` and `npm run manual:firefox-full` launch a browser with the curated extensions and the fault extension installed and start the bisect at the baseline question, so the real-world flow can be worked by hand (RUN-009).
+- `npm run manual:chrome:real` and `npm run manual:firefox:real` launch a browser with the curated extensions and the fault extension installed and start the bisect at the baseline question, so the real-world flow can be worked by hand (RUN-009).
 - `tools/manual-browser.mjs --extensions=<fixtures|real|none>` selects what a manual session installs; `real` always includes the fault extension, so a manual session can never be accidentally symptom-free.
 - `npm run manual:chrome` and `npm run manual:firefox` launch a visible browser with the built add-on and its fixture extensions installed, a fixture page pre-bound as the test tab, and the panel open, so the product can be exercised by hand without installing anything into a personal browser profile; `--smoke` runs the same path headless as a self-check (RUN-007).
 - Cross-browser Browser Extension Bisect add-on built on WXT, producing Chrome (Manifest V3) and Firefox (Manifest V2) builds from one TypeScript codebase.
@@ -187,6 +188,7 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 ### Changed
 
+- `npm run agent:verify:real` no longer looks for a Nightly in the shared `~/.cache/puppeteer`: the Firefox policy rail resolves only the project-local portable build and fails with an actionable message when `npm run firefox:install` has not run ([ADR-026](DECISIONS.md)).
 - The extension requests only `storage` and `management`, plus Chrome's `sidePanel`; the `tabs` permission and the `<all_urls>` host permission are gone, so the add-on cannot see page content, URLs, or tab titles ([ADR-012](DECISIONS.md)).
 - Chrome's toolbar action now opens the side panel (`sidePanel.setPanelBehavior({ openPanelOnActionClick: true })`), which the retired popup used to occupy ([ADR-009](DECISIONS.md)).
 - `BisectConfig.testTab.url` is `string | null`: without the `tabs` permission neither browser exposes `tab.url`, so the binding records the tab id and the panel shows `Tab #N` when no URL is available ([ADR-017](DECISIONS.md)).
@@ -211,4 +213,5 @@ EXAMPLE LAYOUT (4-SPACE INDENTED)
 
 - Candidate eligibility no longer treats a user exclusion as an eligibility failure, so `listCandidates().eligible` is the single source for pickable candidates and the picker renders excluded rows from it instead of re-merging them out of the ineligible list ([ADR-016](DECISIONS.md), ISS-016).
 - Firefox builds no longer warn about the missing `data_collection_permissions` declaration: the manifest now states that the add-on collects no data (`required: ["none"]`), which new AMO submissions require.
+- A Firefox real-extension run no longer fails to launch with `Failed to launch the browser process: Code: 0` and an empty stderr: the private policy copy could update itself in place, replacing the installation and exiting before Puppeteer attached. The policy now sets `DisableAppUpdate: true`, and a copy whose build id no longer matches its source is re-created instead of reused.
 

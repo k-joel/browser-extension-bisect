@@ -347,9 +347,9 @@ Opens a visible browser with the 20 curated extensions **and** the fault extensi
 1. Launch:
 
    ```
-   npm run manual:chrome-full
+   npm run manual:chrome:real
    # or
-   npm run manual:firefox-full
+   npm run manual:firefox:real
    ```
 
    Expected: a visible window on the panel tab, already past the picker and waiting on the baseline question. The banner reports `21 extensions (names hidden on purpose)` — the names are withheld because one of them is the injected fault.
@@ -360,13 +360,14 @@ Opens a visible browser with the 20 curated extensions **and** the fault extensi
 
    Expected: after about five questions the panel names **Bad Extension** and leaves it disabled. Press **Restore** to put the other 20 back. Close the window to end the session.
 
-On Firefox the run requires the policy rail (ADR-025), so Firefox must be a Nightly install; `npm run manual:firefox-full` otherwise reports that it cannot toggle extensions.
+On Firefox the run requires the policy rail (ADR-025), so Firefox must be the project-local Nightly downloaded by `npm run firefox:install`; `npm run manual:firefox:real` otherwise reports that it cannot toggle extensions.
 
 **Troubleshooting**
 
 - **`Catalog has N chrome extension(s) but 20 are required`** or **`The bad extension is not built at ...`**: the prerequisite step was skipped. Fix: run RUN-008 and `npm run bad-extension:build`.
 - **The picker shows fewer than 21 candidates**: an extension was ineligible at start (for example, disabled in the profile) or did not install. Fix: check the panel's "Not eligible" list, or run the automated gate (RUN-011) which names the missing id.
-- **`Firefox reports installType "development"`**: the policy file did not take effect, so the add-on is temporary and cannot toggle anything. Fix: `npx puppeteer browsers install firefox@nightly` and re-run.
+- **`Firefox reports installType "development"`**: the policy file did not take effect, so the add-on is temporary and cannot toggle anything. Fix: run `npm run firefox:install` and re-run.
+- **`Failed to launch the browser process: Code: 0` with an empty stderr**: the portable Nightly under `.cache/puppeteer/` updated itself in place, replacing the installation directory and exiting before Puppeteer attached. Fix: delete `.cache/puppeteer/`, run `npm run firefox:install`, and re-run; `npm run bad-extension:build` and the other inputs are untouched.
 - **The page never shows the red bar**: the test tab is not the fixture page, or the fault extension is disabled. Fix: press the panel's reload action; if it persists, run RUN-010 against the same URL.
 
 ---
@@ -399,26 +400,29 @@ Answers one question without a browser window or a human looking at the screen: 
 
 ## RUN-011 (SAFE): Run the real-extension bisect gate
 
-Runs the complete automated bisect over 20 curated marketplace extensions plus the fault extension, on Chrome and Firefox, with no human answering any question. Slower and more network-dependent than RUN-003, and deliberately not part of CI. Rollback: none; regenerates `.agent-artifacts/` and the Firefox policy copy under `.cache/firefox-policy/`.
+Runs the complete automated bisect over 20 curated marketplace extensions plus the fault extension, on Chrome and Firefox, with no human answering any question. Slower and more network-dependent than RUN-003, and deliberately not part of CI. Rollback: none; regenerates `.agent-artifacts/` and restores `policies.json` inside the project-local Nightly under `.cache/puppeteer/`.
 
 1. Prepare the inputs (once per machine, and again after a browser or dependency update):
 
    ```
    npm run extensions:download
-   npx puppeteer browsers install firefox@nightly
+   npm run firefox:install
    ```
+
+   `firefox:install` downloads Nightly into the repository's own `.cache/puppeteer`; it
+   installs nothing system-wide and never touches `~/.cache/puppeteer`.
 
 2. Run the gate:
 
    ```
-   npm run agent:verify-full
+   npm run agent:verify:real
    ```
 
    Expected: lint, typecheck, unit tests, both builds, the fault-extension build, then a JSON verdict with `"ok": true` and 21-candidate runs for `chrome` and `firefox`. Each run answers five questions, names `Bad Extension`, leaves it disabled, and restores the other 20.
 3. Iterate on one browser:
 
    ```
-   node tests/e2e/verify-full.mjs --browser=chrome
+   node tests/e2e/verify-real.mjs --browser=chrome
    ```
 
    Expected: a human-readable `[PASS] chrome (real-extension bisect)` with one line per assertion, and an `info:` line counting third-party console errors and request failures — those are reported, never fatal, because the installed extensions own that noise. Add `--headed` to watch it run.
@@ -427,6 +431,7 @@ Runs the complete automated bisect over 20 curated marketplace extensions plus t
 
 - **`No catalog at ...good_extensions/catalog.json`**: RUN-008 has not run. Fix: run it, then retry.
 - **`Catalog has N ... but 20 are required`**: some curated entries failed to download. Fix: fix the named slugs and re-run RUN-008.
-- **`Firefox could not find a Firefox install. Run "npx puppeteer browsers install firefox@nightly"`**: the policy rail needs Nightly (ADR-025). Fix: install it.
+- **`Puppeteer could not find a project-local Nightly Firefox. Run "npm run firefox:install" and retry.`**: the project cache is empty. Fix: run `npm run firefox:install`; the ~360 MB download stays under `.cache/puppeteer`.
+- **`Failed to launch the browser process: Code: 0` with an empty stderr**: the portable Nightly under `.cache/puppeteer/` updated itself in place and exited before Puppeteer attached. Fix: delete `.cache/puppeteer/` and re-run `npm run firefox:install`; `npm run bad-extension:build` and the other inputs are untouched.
 - **`Timed out waiting for the "baseline" screen` with screenshots in `.agent-artifacts/`**: inspect `failure-<browser>-full-panel.png`; a `host-issue` screen means the fault extension was not installed before the session snapshot, and a picker with fewer than 21 rows means an extension was ineligible. Fix: check the assertion detail in the JSON, which names the missing ids.
 - **Chrome reports 20 candidates but no fault**: `--extensions-dir` pointed at a stale tree. Fix: re-run RUN-008 with `--force`.
